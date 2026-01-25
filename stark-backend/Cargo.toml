@@ -31,3 +31,6 @@ slack-morphism = { version = "2", features = ["hyper"] }
 
 # Concurrent state management
 dashmap = "5"
+
+# Regex for memory marker parsing
+regex = "1"

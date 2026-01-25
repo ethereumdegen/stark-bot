@@ -75,6 +75,9 @@ async fn main() -> std::io::Result<()> {
             .configure(controllers::api_keys::config)
             .configure(controllers::channels::config)
             .configure(controllers::agent_settings::configure)
+            .configure(controllers::sessions::config)
+            .configure(controllers::memories::config)
+            .configure(controllers::identity::config)
             .service(Files::new("/", "./stark-frontend").index_file("index.html"))
     })
     .bind(("0.0.0.0", port))?

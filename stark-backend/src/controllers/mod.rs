@@ -5,3 +5,6 @@ pub mod channels;
 pub mod chat;
 pub mod dashboard;
 pub mod health;
+pub mod identity;
+pub mod memories;
+pub mod sessions;
