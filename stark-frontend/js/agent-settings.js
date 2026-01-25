@@ -6,7 +6,7 @@ let currentSettings = null;
 
 // Check authentication on page load
 document.addEventListener('DOMContentLoaded', async () => {
-    const token = localStorage.getItem('starkbot_token');
+    const token = localStorage.getItem('stark_token');
     if (!token) {
         window.location.href = '/';
         return;
@@ -22,7 +22,7 @@ async function loadProviders() {
     try {
         const response = await fetch(`${API_BASE}/api/agent-settings/providers`, {
             headers: {
-                'Authorization': `Bearer ${localStorage.getItem('starkbot_token')}`
+                'Authorization': `Bearer ${localStorage.getItem('stark_token')}`
             }
         });
 
@@ -56,7 +56,7 @@ async function loadCurrentSettings() {
     try {
         const response = await fetch(`${API_BASE}/api/agent-settings`, {
             headers: {
-                'Authorization': `Bearer ${localStorage.getItem('starkbot_token')}`
+                'Authorization': `Bearer ${localStorage.getItem('stark_token')}`
             }
         });
 
@@ -149,7 +149,7 @@ function setupEventListeners() {
 
     // Logout button
     document.getElementById('logout-btn').addEventListener('click', () => {
-        localStorage.removeItem('starkbot_token');
+        localStorage.removeItem('stark_token');
         window.location.href = '/';
     });
 }
@@ -183,7 +183,7 @@ async function saveSettings() {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${localStorage.getItem('starkbot_token')}`
+                'Authorization': `Bearer ${localStorage.getItem('stark_token')}`
             },
             body: JSON.stringify(requestBody)
         });
@@ -216,7 +216,7 @@ async function disableAgent() {
         const response = await fetch(`${API_BASE}/api/agent-settings/disable`, {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${localStorage.getItem('starkbot_token')}`
+                'Authorization': `Bearer ${localStorage.getItem('stark_token')}`
             }
         });
 

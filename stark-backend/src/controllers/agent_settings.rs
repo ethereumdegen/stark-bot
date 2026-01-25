@@ -1,13 +1,12 @@
 use actix_web::{web, HttpResponse, Responder};
-use crate::db::Database;
 use crate::models::{AgentSettingsResponse, AiProvider, UpdateAgentSettingsRequest};
-use std::sync::Arc;
+use crate::AppState;
 
 /// Get current agent settings (active provider)
 pub async fn get_agent_settings(
-    db: web::Data<Arc<Database>>,
+    state: web::Data<AppState>,
 ) -> impl Responder {
-    match db.get_active_agent_settings() {
+    match state.db.get_active_agent_settings() {
         Ok(Some(settings)) => {
             let response: AgentSettingsResponse = settings.into();
             HttpResponse::Ok().json(response)
@@ -29,9 +28,9 @@ pub async fn get_agent_settings(
 
 /// List all configured providers
 pub async fn list_agent_settings(
-    db: web::Data<Arc<Database>>,
+    state: web::Data<AppState>,
 ) -> impl Responder {
-    match db.list_agent_settings() {
+    match state.db.list_agent_settings() {
         Ok(settings) => {
             let responses: Vec<AgentSettingsResponse> = settings
                 .into_iter()
@@ -76,7 +75,7 @@ pub async fn get_available_providers() -> impl Responder {
 
 /// Update agent settings (set active provider)
 pub async fn update_agent_settings(
-    db: web::Data<Arc<Database>>,
+    state: web::Data<AppState>,
     body: web::Json<UpdateAgentSettingsRequest>,
 ) -> impl Responder {
     let request = body.into_inner();
@@ -109,7 +108,7 @@ pub async fn update_agent_settings(
     let model = request.model.unwrap_or_else(|| provider.default_model().to_string());
 
     // Save settings
-    match db.save_agent_settings(&request.provider, &request.endpoint, &request.api_key, &model) {
+    match state.db.save_agent_settings(&request.provider, &request.endpoint, &request.api_key, &model) {
         Ok(settings) => {
             log::info!("Updated agent settings to use {} provider", request.provider);
             let response: AgentSettingsResponse = settings.into();
@@ -126,9 +125,9 @@ pub async fn update_agent_settings(
 
 /// Disable agent (set no active provider)
 pub async fn disable_agent(
-    db: web::Data<Arc<Database>>,
+    state: web::Data<AppState>,
 ) -> impl Responder {
-    match db.disable_agent_settings() {
+    match state.db.disable_agent_settings() {
         Ok(_) => {
             log::info!("Disabled AI agent");
             HttpResponse::Ok().json(serde_json::json!({

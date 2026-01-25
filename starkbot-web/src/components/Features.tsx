@@ -51,7 +51,7 @@ export function Features() {
                 Always run Starkbot in a sandboxed VPS container.
                 Feel free to contribute to development with a{' '}
                 <a
-                  href="https://github.com/your-repo/starkbot"
+                  href="https://github.com/ethereumdegen/stark-bot"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-yellow-500 hover:text-yellow-400 underline"

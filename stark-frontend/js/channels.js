@@ -21,7 +21,7 @@ const MAX_ACTIVITY = 50;
  */
 async function init() {
     // Check authentication
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem('stark_token');
     if (!token) {
         window.location.href = '/';
         return;
@@ -34,13 +34,13 @@ async function init() {
         });
         const data = await response.json();
         if (!data.valid) {
-            localStorage.removeItem('token');
+            localStorage.removeItem('stark_token');
             window.location.href = '/';
             return;
         }
     } catch (error) {
         console.error('Session validation error:', error);
-        localStorage.removeItem('token');
+        localStorage.removeItem('stark_token');
         window.location.href = '/';
         return;
     }
@@ -61,7 +61,7 @@ async function init() {
 function setupEventListeners() {
     // Logout button
     document.getElementById('logout-btn').addEventListener('click', async () => {
-        const token = localStorage.getItem('token');
+        const token = localStorage.getItem('stark_token');
         try {
             await fetch(`${API_BASE}/auth/logout`, {
                 method: 'POST',
@@ -71,7 +71,7 @@ function setupEventListeners() {
         } catch (error) {
             console.error('Logout error:', error);
         }
-        localStorage.removeItem('token');
+        localStorage.removeItem('stark_token');
         window.location.href = '/';
     });
 
@@ -162,7 +162,7 @@ function updateGatewayStatus(connected) {
  * Load channels from API
  */
 async function loadChannels() {
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem('stark_token');
     const loading = document.getElementById('loading');
     const channelsList = document.getElementById('channels-list');
     const noChannels = document.getElementById('no-channels');
@@ -249,7 +249,7 @@ function getChannelIcon(type) {
  * Add a new channel
  */
 async function addChannel() {
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem('stark_token');
     const channelType = document.getElementById('channel-type').value;
     const name = document.getElementById('channel-name').value.trim();
     const botToken = document.getElementById('bot-token').value.trim();
@@ -310,7 +310,7 @@ async function addChannel() {
  * Start a channel
  */
 async function startChannel(id) {
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem('stark_token');
 
     try {
         const response = await fetch(`${API_BASE}/channels/${id}/start`, {
@@ -336,7 +336,7 @@ async function startChannel(id) {
  * Stop a channel
  */
 async function stopChannel(id) {
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem('stark_token');
 
     try {
         const response = await fetch(`${API_BASE}/channels/${id}/stop`, {
@@ -366,7 +366,7 @@ async function deleteChannel(id, name) {
         return;
     }
 
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem('stark_token');
 
     try {
         const response = await fetch(`${API_BASE}/channels/${id}`, {
