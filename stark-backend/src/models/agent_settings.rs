@@ -68,6 +68,8 @@ pub struct AgentSettings {
     pub api_key: String,
     pub model: String,
     pub enabled: bool,
+    pub bot_name: String,
+    pub bot_email: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -87,6 +89,8 @@ pub struct AgentSettingsResponse {
     pub api_key: String,
     pub model: String,
     pub enabled: bool,
+    pub bot_name: String,
+    pub bot_email: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -100,6 +104,8 @@ impl From<AgentSettings> for AgentSettingsResponse {
             api_key: settings.api_key,
             model: settings.model,
             enabled: settings.enabled,
+            bot_name: settings.bot_name,
+            bot_email: settings.bot_email,
             created_at: settings.created_at,
             updated_at: settings.updated_at,
         }
@@ -113,4 +119,6 @@ pub struct UpdateAgentSettingsRequest {
     pub endpoint: String,
     pub api_key: String,
     pub model: Option<String>,
+    pub bot_name: Option<String>,
+    pub bot_email: Option<String>,
 }

@@ -12,31 +12,91 @@ tags: [github, git, pr, version-control]
 You have access to git and gh (GitHub CLI) commands via the exec tool.
 Authentication is handled automatically via the stored GitHub API key.
 
-## Workflow: Clone, Modify, and Create PR
+## IMPORTANT: Workspace Management
 
-### 1. Clone the Repository
-```
-exec command: "git" args: ["clone", "https://github.com/owner/repo.git", "repos/owner/repo"]
+Before cloning, check if the repo already exists in the workspace:
+```bash
+ls -la repo-name
 ```
 
-### 2. Create a Feature Branch
+**If the repo already exists:**
+```bash
+cd repo-name
+git fetch --all
+git checkout main || git checkout master  # Go to default branch
+git reset --hard origin/main || git reset --hard origin/master  # Reset to remote state
+git clean -fd  # Remove untracked files
 ```
-exec command: "git" args: ["-C", "repos/owner/repo", "checkout", "-b", "feature/your-change"]
+
+**If the repo doesn't exist:** Clone it fresh (see workflows below).
+
+---
+
+## Workflow: Contributing to Someone Else's Repo (Fork Workflow)
+
+Use this workflow when you DON'T have write access to the repository.
+
+### 1. Fork and Clone the Repository
+```bash
+gh repo fork owner/repo --clone=true --remote=true
+cd repo
+```
+This creates a fork under your account and clones it locally.
+
+**If repo already exists locally:** Reset it and sync with upstream:
+```bash
+cd repo
+git remote add upstream https://github.com/owner/repo.git 2>/dev/null || true
+git fetch upstream
+git checkout main || git checkout master
+git reset --hard upstream/main || git reset --hard upstream/master
+```
+
+### 2. Create a Feature Branch (use unique name with timestamp)
+```bash
+git checkout -b feature/change-$(date +%s)
 ```
 
 ### 3. Make Changes
 Use read_file, write_file, and list_files tools to modify the code.
 
 ### 4. Commit Changes
-```
-exec command: "git" args: ["-C", "repos/owner/repo", "add", "-A"]
-exec command: "git" args: ["-C", "repos/owner/repo", "commit", "-m", "Description of changes"]
+```bash
+git add -A
+git commit -m "Description of changes"
 ```
 
-### 5. Push and Create PR
+### 5. Push to Your Fork and Create PR
+```bash
+git push -u origin HEAD
+gh pr create --title "PR Title" --body "Description"
 ```
-exec command: "git" args: ["-C", "repos/owner/repo", "push", "-u", "origin", "feature/your-change"]
-exec command: "gh" args: ["pr", "create", "--repo", "owner/repo", "--title", "PR Title", "--body", "Description"]
+The `gh pr create` command automatically creates a PR from your fork to the original repo.
+
+---
+
+## Workflow: Your Own Repos (Direct Push)
+
+Use this workflow when you HAVE write access to the repository.
+
+### 1. Clone the Repository
+```bash
+gh repo clone owner/repo
+cd repo
+```
+**If already exists:** `cd repo && git fetch && git checkout main && git pull`
+
+### 2. Create a Feature Branch (use unique name)
+```bash
+git checkout -b feature/change-$(date +%s)
+```
+
+### 3. Make Changes, Commit, Push, and Create PR
+```bash
+git add -A
+git commit -m "Description of changes"
+git push -u origin HEAD
+gh pr create --title "PR Title" --body "Description"
 ```
 
 ## Useful Commands

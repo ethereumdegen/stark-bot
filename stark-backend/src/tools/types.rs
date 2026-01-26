@@ -252,6 +252,29 @@ impl ToolContext {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
     }
+
+    /// Add bot config to the context (for use by tools like exec for git commits)
+    pub fn with_bot_config(mut self, bot_name: String, bot_email: String) -> Self {
+        self.extra.insert("bot_name".to_string(), serde_json::json!(bot_name));
+        self.extra.insert("bot_email".to_string(), serde_json::json!(bot_email));
+        self
+    }
+
+    /// Get bot name from the context
+    pub fn get_bot_name(&self) -> String {
+        self.extra.get("bot_name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "StarkBot".to_string())
+    }
+
+    /// Get bot email from the context
+    pub fn get_bot_email(&self) -> String {
+        self.extra.get("bot_email")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "starkbot@users.noreply.github.com".to_string())
+    }
 }
 
 /// Tool configuration stored in database

@@ -303,6 +303,11 @@ impl MessageDispatcher {
             }
         }
 
+        // Load bot config from agent settings for git commits etc.
+        if let Ok(Some(settings)) = self.db.get_active_agent_settings() {
+            tool_context = tool_context.with_bot_config(settings.bot_name, settings.bot_email);
+        }
+
         // Generate response with optional tool execution loop
         let final_response = if use_tools {
             self.generate_with_tool_loop(
@@ -488,13 +493,35 @@ impl MessageDispatcher {
                         });
 
                         // Add tool result as user message for next iteration
-                        conversation.push(Message {
-                            role: MessageRole::User,
-                            content: format!(
+                        let followup_prompt = if tool_result.success {
+                            format!(
                                 "Tool '{}' returned:\n{}\n\nNow provide your final response to the user based on this result. Remember to respond in JSON format.",
                                 tool_call.tool_name,
                                 tool_result.content
-                            ),
+                            )
+                        } else {
+                            // Check if this is a git permission error (can be solved by forking)
+                            let error_lower = tool_result.content.to_lowercase();
+                            let is_git_permission = (error_lower.contains("permission") || error_lower.contains("403") || error_lower.contains("denied"))
+                                && (error_lower.contains("git") || error_lower.contains("github") || error_lower.contains("push"));
+
+                            if is_git_permission {
+                                format!(
+                                    "Tool '{}' FAILED with error:\n{}\n\nYou don't have push access to this repository. To contribute to repos you don't own, use the FORK workflow:\n1. Fork the repo: `gh repo fork OWNER/REPO --clone`\n2. Make changes in the forked repo\n3. Push to YOUR fork\n4. Create PR: `gh pr create --repo OWNER/REPO`\n\nTry the fork workflow. Remember to respond in JSON format.",
+                                    tool_call.tool_name,
+                                    tool_result.content
+                                )
+                            } else {
+                                format!(
+                                    "Tool '{}' FAILED with error:\n{}\n\nTry a different approach if possible. Common fixes:\n- If directory exists: cd into it instead of cloning\n- If command not found: try alternative command\n- If permission denied: check if you need to fork the repo first\n\nIf truly impossible, explain why. Remember to respond in JSON format.",
+                                    tool_call.tool_name,
+                                    tool_result.content
+                                )
+                            }
+                        };
+                        conversation.push(Message {
+                            role: MessageRole::User,
+                            content: followup_prompt,
                         });
 
                         // Continue loop to get final response
@@ -582,6 +609,39 @@ impl MessageDispatcher {
             return Some(response);
         }
 
+        // Try to parse as typed JSON response
+        // {"type": "message", "content": "..."} or {"type": "function", ...}
+        if let Ok(json) = serde_json::from_str::<Value>(content) {
+            if let Some(msg_type) = json.get("type").and_then(|v| v.as_str()) {
+                // Handle message type - just extract content
+                if msg_type == "message" {
+                    if let Some(content_str) = json.get("content").and_then(|v| v.as_str()) {
+                        log::info!("[PARSE] Extracted message content from type:message format");
+                        return Some(AgentResponse {
+                            body: content_str.to_string(),
+                            tool_call: None,
+                        });
+                    }
+                }
+                // Handle function call type
+                if msg_type == "function" {
+                    if let (Some(name), Some(params)) = (
+                        json.get("name").and_then(|v| v.as_str()),
+                        json.get("parameters"),
+                    ) {
+                        log::info!("[PARSE] Converted native function call format: {}", name);
+                        return Some(AgentResponse {
+                            body: format!("Executing {}...", name),
+                            tool_call: Some(TextToolCall {
+                                tool_name: name.to_string(),
+                                tool_params: params.clone(),
+                            }),
+                        });
+                    }
+                }
+            }
+        }
+
         // Try to extract JSON from markdown code blocks
         let json_patterns = [
             // ```json ... ```
@@ -591,8 +651,38 @@ impl MessageDispatcher {
         for pattern in &json_patterns {
             if let Some(captures) = pattern.captures(content) {
                 if let Some(json_match) = captures.get(1) {
-                    if let Ok(response) = serde_json::from_str::<AgentResponse>(json_match.as_str().trim()) {
+                    let json_str = json_match.as_str().trim();
+                    if let Ok(response) = serde_json::from_str::<AgentResponse>(json_str) {
                         return Some(response);
+                    }
+                    // Also try typed JSON format in code blocks
+                    if let Ok(json) = serde_json::from_str::<Value>(json_str) {
+                        if let Some(msg_type) = json.get("type").and_then(|v| v.as_str()) {
+                            // Handle message type
+                            if msg_type == "message" {
+                                if let Some(content_str) = json.get("content").and_then(|v| v.as_str()) {
+                                    return Some(AgentResponse {
+                                        body: content_str.to_string(),
+                                        tool_call: None,
+                                    });
+                                }
+                            }
+                            // Handle function type
+                            if msg_type == "function" {
+                                if let (Some(name), Some(params)) = (
+                                    json.get("name").and_then(|v| v.as_str()),
+                                    json.get("parameters"),
+                                ) {
+                                    return Some(AgentResponse {
+                                        body: format!("Executing {}...", name),
+                                        tool_call: Some(TextToolCall {
+                                            tool_name: name.to_string(),
+                                            tool_params: params.clone(),
+                                        }),
+                                    });
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -620,6 +710,35 @@ impl MessageDispatcher {
                 let json_str = &content[start..end];
                 if let Ok(response) = serde_json::from_str::<AgentResponse>(json_str) {
                     return Some(response);
+                }
+                // Also try typed JSON format
+                if let Ok(json) = serde_json::from_str::<Value>(json_str) {
+                    if let Some(msg_type) = json.get("type").and_then(|v| v.as_str()) {
+                        // Handle message type
+                        if msg_type == "message" {
+                            if let Some(content_str) = json.get("content").and_then(|v| v.as_str()) {
+                                return Some(AgentResponse {
+                                    body: content_str.to_string(),
+                                    tool_call: None,
+                                });
+                            }
+                        }
+                        // Handle function type
+                        if msg_type == "function" {
+                            if let (Some(name), Some(params)) = (
+                                json.get("name").and_then(|v| v.as_str()),
+                                json.get("parameters"),
+                            ) {
+                                return Some(AgentResponse {
+                                    body: format!("Executing {}...", name),
+                                    tool_call: Some(TextToolCall {
+                                        tool_name: name.to_string(),
+                                        tool_params: params.clone(),
+                                    }),
+                                });
+                            }
+                        }
+                    }
                 }
             }
         }

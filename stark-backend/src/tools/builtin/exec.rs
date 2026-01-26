@@ -206,6 +206,22 @@ impl Tool for ExecTool {
         if let Some(github_token) = context.get_api_key("github") {
             cmd.env("GH_TOKEN", &github_token);
             cmd.env("GITHUB_TOKEN", &github_token);
+            // Disable git terminal prompts (would hang in non-interactive mode)
+            cmd.env("GIT_TERMINAL_PROMPT", "0");
+            // Configure git to rewrite github HTTPS URLs to include the token
+            // This allows git clone/push to authenticate automatically
+            cmd.env("GIT_CONFIG_COUNT", "2");
+            cmd.env("GIT_CONFIG_KEY_0", "url.https://x-access-token:".to_string() + &github_token + "@github.com/.insteadOf");
+            cmd.env("GIT_CONFIG_VALUE_0", "https://github.com/");
+            cmd.env("GIT_CONFIG_KEY_1", "url.https://x-access-token:".to_string() + &github_token + "@github.com/.insteadOf");
+            cmd.env("GIT_CONFIG_VALUE_1", "git@github.com:");
+            // Set git author/committer info for commits (from bot config)
+            let bot_name = context.get_bot_name();
+            let bot_email = context.get_bot_email();
+            cmd.env("GIT_AUTHOR_NAME", &bot_name);
+            cmd.env("GIT_AUTHOR_EMAIL", &bot_email);
+            cmd.env("GIT_COMMITTER_NAME", &bot_name);
+            cmd.env("GIT_COMMITTER_EMAIL", &bot_email);
         }
 
         if let Some(openai_key) = context.get_api_key("openai") {

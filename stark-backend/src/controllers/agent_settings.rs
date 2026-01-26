@@ -188,7 +188,14 @@ pub async fn update_agent_settings(
         model
     );
 
-    match state.db.save_agent_settings(&request.provider, &request.endpoint, &api_key, &model) {
+    match state.db.save_agent_settings(
+        &request.provider,
+        &request.endpoint,
+        &api_key,
+        &model,
+        request.bot_name.as_deref(),
+        request.bot_email.as_deref(),
+    ) {
         Ok(settings) => {
             log::info!("Updated agent settings to use {} provider, api_key stored: {}", request.provider, !settings.api_key.is_empty());
             let response: AgentSettingsResponse = settings.into();
