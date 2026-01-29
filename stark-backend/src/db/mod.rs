@@ -1,4 +1,4 @@
 pub mod sqlite;
-mod models;
+mod tables;
 
 pub use sqlite::Database;

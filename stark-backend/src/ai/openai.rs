@@ -242,10 +242,22 @@ impl OpenAIClient {
                             parameters: json!({
                                 "type": t.input_schema.schema_type,
                                 "properties": t.input_schema.properties.iter().map(|(k, v)| {
-                                    (k.clone(), json!({
-                                        "type": v.schema_type,
-                                        "description": v.description
-                                    }))
+                                    let mut prop = serde_json::Map::new();
+                                    prop.insert("type".to_string(), json!(v.schema_type));
+                                    prop.insert("description".to_string(), json!(v.description));
+                                    if let Some(ref enum_vals) = v.enum_values {
+                                        prop.insert("enum".to_string(), json!(enum_vals));
+                                    }
+                                    if let Some(ref default_val) = v.default {
+                                        prop.insert("default".to_string(), default_val.clone());
+                                    }
+                                    if let Some(ref items) = v.items {
+                                        prop.insert("items".to_string(), json!({
+                                            "type": items.schema_type,
+                                            "description": items.description
+                                        }));
+                                    }
+                                    (k.clone(), Value::Object(prop))
                                 }).collect::<serde_json::Map<String, Value>>(),
                                 "required": t.input_schema.required
                             }),

@@ -100,6 +100,7 @@ async fn handle_connection(
                 RpcError::new(-32000, "Authentication timeout".to_string()),
             );
             if let Ok(json) = serde_json::to_string(&timeout_response) {
+                log::debug!("[DATAGRAM] >>> TO AGENT (auth timeout):\n{}", json);
                 let _ = ws_sender.send(Message::Text(json)).await;
             }
             return Ok(());
@@ -125,6 +126,9 @@ async fn handle_connection(
             tokio::select! {
                 // Forward RPC responses
                 Some(msg) = rx.recv() => {
+                    if let Message::Text(ref text) = msg {
+                        log::debug!("[DATAGRAM] >>> TO AGENT (RPC response):\n{}", text);
+                    }
                     if ws_sender.send(msg).await.is_err() {
                         break;
                     }
@@ -132,6 +136,7 @@ async fn handle_connection(
                 // Forward events
                 Some(event) = event_rx.recv() => {
                     if let Ok(json) = serde_json::to_string(&event) {
+                        log::debug!("[DATAGRAM] >>> TO AGENT (event: {}):\n{}", event.event, json);
                         if ws_sender.send(Message::Text(json)).await.is_err() {
                             break;
                         }
@@ -146,6 +151,7 @@ async fn handle_connection(
     while let Some(msg_result) = ws_receiver.next().await {
         match msg_result {
             Ok(Message::Text(text)) => {
+                log::debug!("[DATAGRAM] <<< FROM AGENT (RPC request):\n{}", text);
                 let response = process_request(&text, &db, &channel_manager, &broadcaster).await;
                 if let Ok(json) = serde_json::to_string(&response) {
                     let _ = tx.send(Message::Text(json)).await;
@@ -187,13 +193,14 @@ where
     while let Some(msg_result) = ws_receiver.next().await {
         match msg_result {
             Ok(Message::Text(text)) => {
-                log::debug!("[Gateway Auth] Received message: {}", text);
+                log::debug!("[DATAGRAM] <<< FROM AGENT (auth phase):\n{}", text);
                 // Try to parse as RPC request
                 let request: RpcRequest = match serde_json::from_str(&text) {
                     Ok(req) => req,
                     Err(_) => {
                         let response = RpcResponse::error("".to_string(), RpcError::parse_error());
                         if let Ok(json) = serde_json::to_string(&response) {
+                            log::debug!("[DATAGRAM] >>> TO AGENT (parse error):\n{}", json);
                             let _ = ws_sender.send(Message::Text(json)).await;
                         }
                         continue;
@@ -211,6 +218,7 @@ where
                                     RpcError::invalid_params(format!("Missing or invalid token: {}", e)),
                                 );
                                 if let Ok(json) = serde_json::to_string(&response) {
+                                    log::debug!("[DATAGRAM] >>> TO AGENT (invalid token params):\n{}", json);
                                     let _ = ws_sender.send(Message::Text(json)).await;
                                 }
                                 continue;
@@ -226,6 +234,7 @@ where
                                     serde_json::json!({"authenticated": true}),
                                 );
                                 if let Ok(json) = serde_json::to_string(&response) {
+                                    log::debug!("[DATAGRAM] >>> TO AGENT (auth success):\n{}", json);
                                     let _ = ws_sender.send(Message::Text(json)).await;
                                 }
                                 return Ok(true);
@@ -237,6 +246,7 @@ where
                                     RpcError::new(-32001, "Invalid or expired token".to_string()),
                                 );
                                 if let Ok(json) = serde_json::to_string(&response) {
+                                    log::debug!("[DATAGRAM] >>> TO AGENT (auth failed - invalid/expired):\n{}", json);
                                     let _ = ws_sender.send(Message::Text(json)).await;
                                 }
                                 return Ok(false);
@@ -248,6 +258,7 @@ where
                                     RpcError::internal_error(format!("Database error: {}", e)),
                                 );
                                 if let Ok(json) = serde_json::to_string(&response) {
+                                    log::debug!("[DATAGRAM] >>> TO AGENT (auth db error):\n{}", json);
                                     let _ = ws_sender.send(Message::Text(json)).await;
                                 }
                                 return Ok(false);
@@ -258,6 +269,7 @@ where
                         // Allow ping before auth
                         let response = RpcResponse::success(request.id, serde_json::json!("pong"));
                         if let Ok(json) = serde_json::to_string(&response) {
+                            log::debug!("[DATAGRAM] >>> TO AGENT (ping response):\n{}", json);
                             let _ = ws_sender.send(Message::Text(json)).await;
                         }
                     }
@@ -268,6 +280,7 @@ where
                             RpcError::new(-32002, "Authentication required. Call 'auth' method first.".to_string()),
                         );
                         if let Ok(json) = serde_json::to_string(&response) {
+                            log::debug!("[DATAGRAM] >>> TO AGENT (auth required):\n{}", json);
                             let _ = ws_sender.send(Message::Text(json)).await;
                         }
                     }

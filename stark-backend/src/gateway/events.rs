@@ -35,6 +35,16 @@ impl EventBroadcaster {
         let event_name = event.event.clone();
         let mut failed_clients = Vec::new();
 
+        // Log the full event payload for debugging
+        if let Ok(json) = serde_json::to_string_pretty(&event) {
+            log::debug!(
+                "[DATAGRAM] BROADCAST event '{}' to {} clients:\n{}",
+                event_name,
+                self.clients.len(),
+                json
+            );
+        }
+
         for entry in self.clients.iter() {
             let client_id = entry.key().clone();
             let sender = entry.value();
@@ -50,12 +60,6 @@ impl EventBroadcaster {
             self.clients.remove(&client_id);
             log::debug!("Removed disconnected client {}", client_id);
         }
-
-        log::debug!(
-            "Broadcast event '{}' to {} clients",
-            event_name,
-            self.clients.len()
-        );
     }
 
     /// Get the number of connected clients

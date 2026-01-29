@@ -15,7 +15,6 @@ pub fn create_default_registry() -> ToolRegistry {
     let mut registry = ToolRegistry::new();
 
     // Register web tools
-    registry.register(Arc::new(builtin::WebSearchTool::new()));
     registry.register(Arc::new(builtin::WebFetchTool::new()));
 
     // Register filesystem tools
@@ -42,7 +41,6 @@ pub fn create_registry_with_config(config: ToolConfig) -> ToolRegistry {
     let mut registry = ToolRegistry::with_config(config);
 
     // Register web tools
-    registry.register(Arc::new(builtin::WebSearchTool::new()));
     registry.register(Arc::new(builtin::WebFetchTool::new()));
 
     // Register filesystem tools
