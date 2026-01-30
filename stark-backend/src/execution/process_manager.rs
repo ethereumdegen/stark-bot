@@ -111,7 +111,7 @@ pub struct ProcessManager {
     /// Event broadcaster for sending gateway events
     broadcaster: Arc<EventBroadcaster>,
     /// Active and completed processes indexed by process ID
-    processes: DashMap<String, ProcessHandle>,
+    processes: Arc<DashMap<String, ProcessHandle>>,
     /// Semaphore to limit concurrent processes
     semaphore: Arc<Semaphore>,
     /// Counter for generating unique process IDs
@@ -123,7 +123,7 @@ impl ProcessManager {
     pub fn new(broadcaster: Arc<EventBroadcaster>) -> Self {
         Self {
             broadcaster,
-            processes: DashMap::new(),
+            processes: Arc::new(DashMap::new()),
             semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_PROCESSES)),
             id_counter: AtomicU64::new(1),
         }
