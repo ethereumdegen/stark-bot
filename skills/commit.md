@@ -53,8 +53,22 @@ operation: add
 files: ["src/main.rs", "src/lib.rs"]
 ```
 
-### Step 5: Create Commit
+### Step 5: Create Commit (Recommended: Use Committer Tool)
 
+**PREFERRED: Use the `committer` tool for safe commits with secret detection:**
+```tool:committer
+message: "feat(auth): add user authentication"
+files: ["src/auth.rs", "src/middleware.rs", "src/routes/login.rs"]
+```
+
+The committer tool provides:
+- Secret detection (blocks API keys, tokens, passwords)
+- Sensitive file blocking (.env, credentials.json)
+- Conventional commit format validation
+- Protected branch protection
+- Automatic Co-Authored-By attribution
+
+**Alternative: Direct git commit (less safe):**
 ```tool:git
 operation: commit
 message: |

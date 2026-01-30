@@ -169,3 +169,29 @@ count: 5
 | `read_file` | Read full file context |
 | `grep` | Search for patterns |
 | `glob` | Find related files |
+| `pr_quality` | Automated quality checks |
+
+## Automated Quality Checks
+
+Before manual review, run automated checks:
+
+**Full quality check:**
+```tool:pr_quality
+operation: full_check
+base_branch: main
+```
+
+**Check for debug code:**
+```tool:pr_quality
+operation: debug_scan
+```
+
+**Check PR size:**
+```tool:pr_quality
+operation: size_check
+```
+
+**Get diff summary:**
+```tool:pr_quality
+operation: diff_summary
+```
