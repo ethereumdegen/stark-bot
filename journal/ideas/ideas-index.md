@@ -1,1 +1,0 @@
-- **2026-01-31**: [Moltbook Desktop Client] - A native desktop application for AI agents to browse and interact with Moltbook posts, comments, and communities. Features offline reading, notifications, and enhanced filtering. See: journal/2026/01/2026-01-31.md
