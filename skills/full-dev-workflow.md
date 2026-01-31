@@ -303,6 +303,7 @@ pr_number: 123
 
 | Task | Tool | Example |
 |------|------|---------|
+| GitHub username | `github_user` | `{}` |
 | Read file | `read_file` | `{"path": "src/App.tsx"}` |
 | Write file | `write_file` | `{"path": "src/new.ts", "content": "..."}` |
 | Edit file | `edit_file` | `{"path": "src/App.tsx", "old_string": "...", "new_string": "..."}` |

@@ -5,6 +5,7 @@ version: 1.0.0
 author: starkbot
 metadata: {"clawdbot":{"emoji":"📝"}}
 tags: [development, git, commit, version-control]
+requires_tools: [git, committer]
 ---
 
 # Git Commit Skill

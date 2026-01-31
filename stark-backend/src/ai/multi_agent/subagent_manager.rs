@@ -572,6 +572,47 @@ impl SubAgentManager {
         }
     }
 
+    /// Cancel all running sub-agents
+    /// Returns the number of agents cancelled
+    pub fn cancel_all(&self) -> usize {
+        let mut count = 0;
+        // Collect all IDs first to avoid holding the lock during cancellation
+        let agent_ids: Vec<String> = self.active_agents.iter().map(|entry| entry.key().clone()).collect();
+
+        for id in agent_ids {
+            if let Some((_, handle)) = self.active_agents.remove(&id) {
+                log::info!("[SUBAGENT_MANAGER] Cancelling subagent: {}", id);
+                handle.cancel();
+                count += 1;
+            }
+        }
+
+        log::info!("[SUBAGENT_MANAGER] Cancelled {} running subagents", count);
+        count
+    }
+
+    /// Cancel all running sub-agents for a specific channel
+    /// Returns the number of agents cancelled
+    pub fn cancel_all_for_channel(&self, channel_id: i64) -> usize {
+        let mut count = 0;
+        // We need to check which agents belong to this channel
+        // Since we store channel_id in the handle context, we check the database
+        if let Ok(agents) = self.list_by_channel(channel_id) {
+            for agent in agents {
+                if agent.status == SubAgentStatus::Running {
+                    if let Some((_, handle)) = self.active_agents.remove(&agent.id) {
+                        log::info!("[SUBAGENT_MANAGER] Cancelling subagent {} for channel {}", agent.id, channel_id);
+                        handle.cancel();
+                        count += 1;
+                    }
+                }
+            }
+        }
+
+        log::info!("[SUBAGENT_MANAGER] Cancelled {} running subagents for channel {}", count, channel_id);
+        count
+    }
+
     /// Get count of active (running) sub-agents
     pub fn active_count(&self) -> usize {
         self.active_agents.len()

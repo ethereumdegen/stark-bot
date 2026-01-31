@@ -112,7 +112,7 @@ impl MemoryGetTool {
         MemoryGetTool {
             definition: ToolDefinition {
                 name: "memory_get".to_string(),
-                description: "Retrieve specific memories by ID or browse memories with filters. Use this to access stored information about the user, entities, preferences, facts, or tasks.".to_string(),
+                description: "Retrieve specific memories by ID or browse with filters. Only use when you know specific memories exist. If memory_search found nothing, don't follow up with memory_get - move on.".to_string(),
                 input_schema: ToolInputSchema {
                     schema_type: "object".to_string(),
                     properties,

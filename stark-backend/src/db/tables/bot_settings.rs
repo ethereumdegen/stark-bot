@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::Result as SqliteResult;
 use std::collections::HashMap;
 
-use crate::models::BotSettings;
+use crate::models::{BotSettings, DEFAULT_MAX_TOOL_ITERATIONS};
 use super::super::Database;
 
 impl Database {
@@ -13,14 +13,15 @@ impl Database {
         let conn = self.conn.lock().unwrap();
 
         let result = conn.query_row(
-            "SELECT id, bot_name, bot_email, web3_tx_requires_confirmation, rpc_provider, custom_rpc_endpoints, created_at, updated_at FROM bot_settings LIMIT 1",
+            "SELECT id, bot_name, bot_email, web3_tx_requires_confirmation, rpc_provider, custom_rpc_endpoints, max_tool_iterations, created_at, updated_at FROM bot_settings LIMIT 1",
             [],
             |row| {
                 let web3_tx_confirmation: i64 = row.get(3)?;
                 let rpc_provider: String = row.get::<_, Option<String>>(4)?.unwrap_or_else(|| "defirelay".to_string());
                 let custom_rpc_endpoints_json: Option<String> = row.get(5)?;
-                let created_at_str: String = row.get(6)?;
-                let updated_at_str: String = row.get(7)?;
+                let max_tool_iterations: i32 = row.get::<_, Option<i32>>(6)?.unwrap_or(DEFAULT_MAX_TOOL_ITERATIONS);
+                let created_at_str: String = row.get(7)?;
+                let updated_at_str: String = row.get(8)?;
 
                 let custom_rpc_endpoints: Option<HashMap<String, String>> = custom_rpc_endpoints_json
                     .and_then(|json| serde_json::from_str(&json).ok());
@@ -32,6 +33,7 @@ impl Database {
                     web3_tx_requires_confirmation: web3_tx_confirmation != 0,
                     rpc_provider,
                     custom_rpc_endpoints,
+                    max_tool_iterations,
                     created_at: DateTime::parse_from_rfc3339(&created_at_str)
                         .unwrap()
                         .with_timezone(&Utc),
@@ -55,7 +57,7 @@ impl Database {
         bot_email: Option<&str>,
         web3_tx_requires_confirmation: Option<bool>,
     ) -> SqliteResult<BotSettings> {
-        self.update_bot_settings_full(bot_name, bot_email, web3_tx_requires_confirmation, None, None)
+        self.update_bot_settings_full(bot_name, bot_email, web3_tx_requires_confirmation, None, None, None)
     }
 
     /// Update bot settings with all fields including RPC config
@@ -66,6 +68,7 @@ impl Database {
         web3_tx_requires_confirmation: Option<bool>,
         rpc_provider: Option<&str>,
         custom_rpc_endpoints: Option<&HashMap<String, String>>,
+        max_tool_iterations: Option<i32>,
     ) -> SqliteResult<BotSettings> {
         let conn = self.conn.lock().unwrap();
         let now = Utc::now().to_rfc3339();
@@ -111,17 +114,24 @@ impl Database {
                     [&endpoints_json, &now],
                 )?;
             }
+            if let Some(max_iterations) = max_tool_iterations {
+                conn.execute(
+                    "UPDATE bot_settings SET max_tool_iterations = ?1, updated_at = ?2",
+                    rusqlite::params![max_iterations, &now],
+                )?;
+            }
         } else {
             // Insert new
             let name = bot_name.unwrap_or("StarkBot");
             let email = bot_email.unwrap_or("starkbot@users.noreply.github.com");
             let confirmation = web3_tx_requires_confirmation.unwrap_or(false);
             let provider = rpc_provider.unwrap_or("defirelay");
+            let max_iterations = max_tool_iterations.unwrap_or(DEFAULT_MAX_TOOL_ITERATIONS);
             let endpoints_json = custom_rpc_endpoints
                 .map(|e| serde_json::to_string(e).unwrap_or_else(|_| "{}".to_string()));
             conn.execute(
-                "INSERT INTO bot_settings (bot_name, bot_email, web3_tx_requires_confirmation, rpc_provider, custom_rpc_endpoints, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                rusqlite::params![name, email, if confirmation { 1 } else { 0 }, provider, endpoints_json, &now, &now],
+                "INSERT INTO bot_settings (bot_name, bot_email, web3_tx_requires_confirmation, rpc_provider, custom_rpc_endpoints, max_tool_iterations, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![name, email, if confirmation { 1 } else { 0 }, provider, endpoints_json, max_iterations, &now, &now],
             )?;
         }
 

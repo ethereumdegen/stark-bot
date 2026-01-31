@@ -8,6 +8,24 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+/// Intrinsic files mapping: (virtual_name, actual_path_from_repo_root)
+const INTRINSIC_FILES: &[(&str, &str)] = &[
+    ("SOUL.md", "SOUL.md"),
+];
+
+/// Get the repo root directory (where SOUL.md lives)
+fn get_repo_root() -> Option<PathBuf> {
+    // Check common locations
+    let candidates = [".", "..", "../..", "../../.."];
+    for candidate in candidates {
+        let path = PathBuf::from(candidate).join("SOUL.md");
+        if path.exists() {
+            return PathBuf::from(candidate).canonicalize().ok();
+        }
+    }
+    None
+}
+
 /// Read file tool - reads contents of files within a sandboxed directory
 pub struct ReadFileTool {
     definition: ToolDefinition,
@@ -91,55 +109,78 @@ impl Tool for ReadFileTool {
         let max_lines = params.max_lines.unwrap_or(500);
         let offset = params.offset.unwrap_or(0);
 
-        // Get workspace directory from context or use current directory
-        let workspace = context
-            .workspace_dir
-            .as_ref()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        // Check if this is an intrinsic file
+        let intrinsic_match = INTRINSIC_FILES.iter().find(|(name, _)| *name == params.path);
 
-        // Resolve the path
-        let requested_path = Path::new(&params.path);
-        let full_path = if requested_path.is_absolute() {
-            requested_path.to_path_buf()
-        } else {
-            workspace.join(requested_path)
-        };
+        let content = if let Some((_, actual_path)) = intrinsic_match {
+            // Read from repo root for intrinsic files
+            let repo_root = match get_repo_root() {
+                Some(r) => r,
+                None => return ToolResult::error(format!(
+                    "Cannot find repo root to read intrinsic file '{}'. SOUL.md not found in parent directories.",
+                    params.path
+                )),
+            };
 
-        // Canonicalize paths for comparison
-        let canonical_workspace = match workspace.canonicalize() {
-            Ok(p) => p,
-            Err(e) => {
-                return ToolResult::error(format!("Cannot resolve workspace directory: {}", e))
+            let full_path = repo_root.join(actual_path);
+            match tokio::fs::read_to_string(&full_path).await {
+                Ok(c) => c,
+                Err(e) => return ToolResult::error(format!(
+                    "Failed to read intrinsic file '{}': {}",
+                    params.path, e
+                )),
             }
-        };
+        } else {
+            // Normal workspace file handling
+            let workspace = context
+                .workspace_dir
+                .as_ref()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-        let canonical_path = match full_path.canonicalize() {
-            Ok(p) => p,
-            Err(e) => return ToolResult::error(format!("Cannot resolve file path: {}", e)),
-        };
+            // Resolve the path
+            let requested_path = Path::new(&params.path);
+            let full_path = if requested_path.is_absolute() {
+                requested_path.to_path_buf()
+            } else {
+                workspace.join(requested_path)
+            };
 
-        // Security check: ensure path is within workspace
-        if !canonical_path.starts_with(&canonical_workspace) {
-            return ToolResult::error(format!(
-                "Access denied: path '{}' is outside the workspace directory",
-                params.path
-            ));
-        }
+            // Canonicalize paths for comparison
+            let canonical_workspace = match workspace.canonicalize() {
+                Ok(p) => p,
+                Err(e) => {
+                    return ToolResult::error(format!("Cannot resolve workspace directory: {}", e))
+                }
+            };
 
-        // Check if file exists and is a file
-        if !canonical_path.exists() {
-            return ToolResult::error(format!("File not found: {}", params.path));
-        }
+            let canonical_path = match full_path.canonicalize() {
+                Ok(p) => p,
+                Err(e) => return ToolResult::error(format!("Cannot resolve file path: {}", e)),
+            };
 
-        if !canonical_path.is_file() {
-            return ToolResult::error(format!("Path is not a file: {}", params.path));
-        }
+            // Security check: ensure path is within workspace
+            if !canonical_path.starts_with(&canonical_workspace) {
+                return ToolResult::error(format!(
+                    "Access denied: path '{}' is outside the workspace directory",
+                    params.path
+                ));
+            }
 
-        // Read the file
-        let content = match tokio::fs::read_to_string(&canonical_path).await {
-            Ok(c) => c,
-            Err(e) => return ToolResult::error(format!("Failed to read file: {}", e)),
+            // Check if file exists and is a file
+            if !canonical_path.exists() {
+                return ToolResult::error(format!("File not found: {}", params.path));
+            }
+
+            if !canonical_path.is_file() {
+                return ToolResult::error(format!("Path is not a file: {}", params.path));
+            }
+
+            // Read the file
+            match tokio::fs::read_to_string(&canonical_path).await {
+                Ok(c) => c,
+                Err(e) => return ToolResult::error(format!("Failed to read file: {}", e)),
+            }
         };
 
         // Apply offset and max_lines

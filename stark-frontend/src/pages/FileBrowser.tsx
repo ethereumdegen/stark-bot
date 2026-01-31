@@ -116,6 +116,22 @@ export default function FileBrowser() {
     loadDirectory();
   }, []);
 
+  // Auto-refresh directory listing every 5 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      // Silently refresh without showing loading state
+      listFiles(currentPath).then((response) => {
+        if (response.success) {
+          setEntries(response.entries);
+        }
+      }).catch(() => {
+        // Silently ignore refresh errors
+      });
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [currentPath]);
+
   const handleEntryClick = (entry: FileEntry) => {
     if (entry.is_dir) {
       loadDirectory(entry.path);

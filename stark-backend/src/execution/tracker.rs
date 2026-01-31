@@ -440,6 +440,20 @@ impl ExecutionTracker {
         }
     }
 
+    /// Update the active form (progress text) of a task
+    pub fn update_task_active_form(&self, task_id: &str, active_form: &str) {
+        if let Some(mut task) = self.tasks.get_mut(task_id) {
+            task.active_form = Some(active_form.to_string());
+            // Broadcast update with current metrics and active form
+            self.broadcaster.broadcast(GatewayEvent::task_updated_with_active_form(
+                task_id,
+                task.channel_id,
+                &task.metrics.clone(),
+                active_form,
+            ));
+        }
+    }
+
     /// Complete a task successfully
     pub fn complete_task(&self, task_id: &str) {
         if let Some(mut task) = self.tasks.get_mut(task_id) {

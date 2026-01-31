@@ -230,27 +230,17 @@ impl Tool for SubagentTool {
         );
 
         // Check if we have access to the SubAgentManager via the context
-        if let Some(manager) = &context.subagent_manager {
-            // Real execution via SubAgentManager - this will actually spawn an AI agent
-            log::info!("[SUBAGENT] ✓ Using SubAgentManager for real AI execution");
+        // Also need valid session and channel IDs for real execution
+        let has_valid_context = context.session_id.map(|id| id > 0).unwrap_or(false)
+            && context.channel_id.map(|id| id > 0).unwrap_or(false);
 
-            // Build SubAgentContext - require valid session_id and channel_id
-            let session_id = match context.session_id {
-                Some(id) if id > 0 => id,
-                _ => {
-                    return ToolResult::error(
-                        "Cannot spawn subagent: no valid session context available. This tool requires a valid session."
-                    );
-                }
-            };
-            let channel_id = match context.channel_id {
-                Some(id) if id > 0 => id,
-                _ => {
-                    return ToolResult::error(
-                        "Cannot spawn subagent: no valid channel context available. This tool requires a valid channel."
-                    );
-                }
-            };
+        if let Some(manager) = &context.subagent_manager {
+            if has_valid_context {
+                // Real execution via SubAgentManager - this will actually spawn an AI agent
+                log::info!("[SUBAGENT] ✓ Using SubAgentManager for real AI execution");
+
+                let session_id = context.session_id.unwrap();
+                let channel_id = context.channel_id.unwrap();
 
                 let subagent_context = SubAgentContext::new(
                     subagent_id.clone(),
@@ -367,14 +357,23 @@ impl Tool for SubagentTool {
                         return ToolResult::error(format!("Failed to spawn subagent: {}", e));
                     }
                 }
+            } else {
+                // Have manager but no valid channel context - log and fall through to legacy mode
+                log::warn!(
+                    "[SUBAGENT] SubAgentManager available but no valid channel context (session_id: {:?}, channel_id: {:?}). \
+                     Falling back to legacy mode.",
+                    context.session_id,
+                    context.channel_id
+                );
+            }
         }
 
         // Fallback: Legacy in-memory approach when no manager is available
-        // This provides basic functionality without full AI execution
+        // or when channel context is missing
         // WARNING: This path does NOT actually execute AI or make API calls!
-        log::error!(
-            "[SUBAGENT] ⚠️ SubAgentManager NOT available! Using legacy placeholder (NO REAL EXECUTION). \
-             Ensure dispatcher is configured with SubAgentManager for real subagent support."
+        log::warn!(
+            "[SUBAGENT] Using legacy placeholder mode (NO REAL AI EXECUTION). \
+             For real subagent support, ensure dispatcher is configured with SubAgentManager and valid channel context."
         );
 
         // Build the full task prompt

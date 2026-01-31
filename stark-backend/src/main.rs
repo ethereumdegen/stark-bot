@@ -214,7 +214,8 @@ async fn main() -> std::io::Result<()> {
             .configure(controllers::gmail::config)
             .configure(controllers::payments::config)
             .configure(controllers::eip8004::config)
-            .configure(controllers::files::config);
+            .configure(controllers::files::config)
+            .configure(controllers::intrinsic::config);
 
         // Serve static files only if frontend dist exists
         if !frontend_dist.is_empty() {

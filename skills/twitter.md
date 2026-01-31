@@ -15,10 +15,15 @@ Post tweets and interact with Twitter using Bearer token authentication.
 
 ## Setup
 
-1. Get your API key from the **api_keys** settings (service name: `twitter`)
-2. The key should be an **OAuth 2.0 User Access Token** (for posting) or **Bearer Token** (read-only)
+**First, check if TWITTER_TOKEN is configured:**
+```tool:api_keys_check
+key_name: TWITTER_TOKEN
+```
 
-Get credentials from: https://developer.x.com/en/portal/dashboard
+If not configured:
+1. Ask the user to get credentials from: https://developer.x.com/en/portal/dashboard
+2. They need an **OAuth 2.0 User Access Token** (for posting) or **Bearer Token** (read-only)
+3. Add it in Settings > API Keys > Twitter
 
 ## Post a Tweet
 

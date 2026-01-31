@@ -1,23 +1,33 @@
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
+use strum::{AsRefStr, EnumIter, EnumString, IntoEnumIterator};
 
 use crate::models::ApiKeyResponse;
 use crate::AppState;
 
 /// Enum of all valid API key identifiers
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter, EnumString, AsRefStr)]
 pub enum ApiKeyId {
+    #[strum(serialize = "GITHUB_TOKEN")]
     GithubToken,
+    #[strum(serialize = "BANKR_API_KEY")]
     BankrApiKey,
+    #[strum(serialize = "TWITTER_TOKEN")]
     TwitterToken,
+    #[strum(serialize = "DISCORD_BOT_TOKEN")]
     DiscordBotToken,
+    #[strum(serialize = "TELEGRAM_BOT_TOKEN")]
     TelegramBotToken,
+    #[strum(serialize = "SLACK_BOT_TOKEN")]
     SlackBotToken,
+    #[strum(serialize = "MOLTBOOK_TOKEN")]
+    MoltbookToken,
 }
 
 impl ApiKeyId {
     /// The key name as stored in the database
     pub fn as_str(&self) -> &'static str {
+        // AsRefStr from strum provides static string references
         match self {
             Self::GithubToken => "GITHUB_TOKEN",
             Self::BankrApiKey => "BANKR_API_KEY",
@@ -25,11 +35,11 @@ impl ApiKeyId {
             Self::DiscordBotToken => "DISCORD_BOT_TOKEN",
             Self::TelegramBotToken => "TELEGRAM_BOT_TOKEN",
             Self::SlackBotToken => "SLACK_BOT_TOKEN",
+            Self::MoltbookToken => "MOLTBOOK_TOKEN",
         }
     }
 
     /// Environment variable names to set when this key is available
-    /// Returns None if the key should not be exported to environment
     pub fn env_vars(&self) -> Option<&'static [&'static str]> {
         match self {
             Self::GithubToken => Some(&["GH_TOKEN", "GITHUB_TOKEN"]),
@@ -38,6 +48,7 @@ impl ApiKeyId {
             Self::DiscordBotToken => Some(&["DISCORD_BOT_TOKEN", "DISCORD_TOKEN"]),
             Self::TelegramBotToken => Some(&["TELEGRAM_BOT_TOKEN", "TELEGRAM_TOKEN"]),
             Self::SlackBotToken => Some(&["SLACK_BOT_TOKEN", "SLACK_TOKEN"]),
+            Self::MoltbookToken => Some(&["MOLTBOOK_TOKEN"]),
         }
     }
 
@@ -46,29 +57,19 @@ impl ApiKeyId {
         matches!(self, Self::GithubToken)
     }
 
-    /// All API key variants
-    pub fn all() -> &'static [ApiKeyId] {
-        &[
-            Self::GithubToken,
-            Self::BankrApiKey,
-            Self::TwitterToken,
-            Self::DiscordBotToken,
-            Self::TelegramBotToken,
-            Self::SlackBotToken,
-        ]
+    /// Iterate over all API key variants
+    pub fn iter() -> impl Iterator<Item = ApiKeyId> {
+        <Self as IntoEnumIterator>::iter()
     }
 
-    /// Parse from string
-    pub fn from_str(s: &str) -> Option<ApiKeyId> {
-        match s {
-            "GITHUB_TOKEN" => Some(Self::GithubToken),
-            "BANKR_API_KEY" => Some(Self::BankrApiKey),
-            "TWITTER_TOKEN" => Some(Self::TwitterToken),
-            "DISCORD_BOT_TOKEN" => Some(Self::DiscordBotToken),
-            "TELEGRAM_BOT_TOKEN" => Some(Self::TelegramBotToken),
-            "SLACK_BOT_TOKEN" => Some(Self::SlackBotToken),
-            _ => None,
-        }
+    /// Get all variants as a slice (for backwards compatibility)
+    pub fn all() -> Vec<ApiKeyId> {
+        Self::iter().collect()
+    }
+
+    /// Get all key names as strings
+    pub fn all_names() -> Vec<&'static str> {
+        Self::iter().map(|k| k.as_str()).collect()
     }
 }
 
@@ -158,6 +159,17 @@ pub fn get_service_configs() -> Vec<ServiceConfig> {
             keys: vec![KeyConfig {
                 name: "SLACK_BOT_TOKEN",
                 label: "Bot User OAuth Token",
+                secret: true,
+            }],
+        },
+        ServiceConfig {
+            group: "moltbook",
+            label: "Moltbook",
+            description: "Social network for AI agents. Register via API or get token from moltbook.com",
+            url: "https://www.moltbook.com",
+            keys: vec![KeyConfig {
+                name: "MOLTBOOK_TOKEN",
+                label: "API Token",
                 secret: true,
             }],
         },

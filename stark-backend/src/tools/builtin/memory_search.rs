@@ -89,7 +89,7 @@ impl MemorySearchTool {
         MemorySearchTool {
             definition: ToolDefinition {
                 name: "memory_search".to_string(),
-                description: "Search stored memories using semantic or keyword queries. Returns relevant memories ranked by relevance. Use this to recall information about the user, past conversations, preferences, facts, or tasks.".to_string(),
+                description: "Search stored memories for previously learned information. Use ONCE per topic - if no results, don't retry with variations. Best for: user preferences, past conversations, known facts. Not for: new topics, external data (use web_fetch instead).".to_string(),
                 input_schema: ToolInputSchema {
                     schema_type: "object".to_string(),
                     properties,

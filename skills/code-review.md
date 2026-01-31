@@ -5,6 +5,7 @@ version: 1.0.0
 author: starkbot
 metadata: {"clawdbot":{"emoji":"🔍"}}
 tags: [development, review, code, git]
+requires_tools: [git, read_file, grep, pr_quality]
 ---
 
 # Code Review Skill

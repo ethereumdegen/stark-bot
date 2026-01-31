@@ -174,11 +174,51 @@ impl ExecTool {
             }
         }
 
+        // Block interactive commands that require user input
+        if let Some(msg) = Self::is_interactive_command(&lower) {
+            return Some(msg);
+        }
+
         // In restricted mode, block shell metacharacters
         if self.security_mode == "restricted" {
             let dangerous_chars = ['|', ';', '&', '$', '`', '(', ')', '<', '>'];
             if command.chars().any(|c| dangerous_chars.contains(&c)) {
                 return Some("Shell metacharacters not allowed in restricted mode".to_string());
+            }
+        }
+
+        None
+    }
+
+    /// Check if a command is interactive (requires user input)
+    fn is_interactive_command(command: &str) -> Option<String> {
+        // Commands that prompt for interactive input
+        let interactive_patterns = [
+            ("gh auth login", "gh auth login is interactive. Configure GITHUB_TOKEN in Settings > API Keys instead."),
+            ("gh auth", "gh auth commands are interactive. Configure GITHUB_TOKEN in Settings > API Keys instead."),
+            ("ssh-keygen", "ssh-keygen is interactive. Provide all options via flags or use pre-generated keys."),
+            ("passwd", "passwd is interactive and not allowed."),
+            ("sudo -S", "Interactive sudo not allowed."),
+            ("read -p", "Interactive read not allowed."),
+            (" read ", "Interactive read not allowed in scripts."),
+            ("vim ", "vim is interactive. Use file editing tools instead."),
+            ("vi ", "vi is interactive. Use file editing tools instead."),
+            ("nano ", "nano is interactive. Use file editing tools instead."),
+            ("emacs ", "emacs is interactive. Use file editing tools instead."),
+            ("less ", "less is interactive. Use cat or head/tail instead."),
+            ("more ", "more is interactive. Use cat or head/tail instead."),
+            ("mysql -u", "Interactive mysql not allowed. Use mysql -e for queries."),
+            ("psql ", "Interactive psql not allowed. Use psql -c for queries."),
+            ("python3 -i", "Interactive Python not allowed."),
+            ("python -i", "Interactive Python not allowed."),
+            ("node --inspect", "Interactive Node debugging not allowed."),
+            ("gdb ", "Interactive gdb not allowed."),
+            ("lldb ", "Interactive lldb not allowed."),
+        ];
+
+        for (pattern, msg) in interactive_patterns {
+            if command.contains(pattern) {
+                return Some(msg.to_string());
             }
         }
 
@@ -262,7 +302,7 @@ impl ExecTool {
 
         // Add API keys from context
         for key_id in ApiKeyId::all() {
-            if let Some(value) = context.get_api_key_by_id(*key_id) {
+            if let Some(value) = context.get_api_key_by_id(key_id) {
                 if let Some(key_env_vars) = key_id.env_vars() {
                     for env_var in key_env_vars {
                         env_vars.insert(env_var.to_string(), value.clone());
@@ -421,11 +461,11 @@ impl Tool for ExecTool {
 
         // Set environment variables from context (API keys)
         for key_id in ApiKeyId::all() {
-            if let Some(value) = context.get_api_key_by_id(*key_id) {
+            if let Some(value) = context.get_api_key_by_id(key_id) {
                 // Set all configured env vars for this key
                 if let Some(env_vars) = key_id.env_vars() {
                     for env_var in env_vars {
-                        cmd.env(*env_var, &value);
+                        cmd.env(env_var, &value);
                     }
                 }
 

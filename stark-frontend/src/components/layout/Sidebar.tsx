@@ -18,6 +18,8 @@ import {
   Key,
   DollarSign,
   Shield,
+  History,
+  Sparkles,
 } from 'lucide-react';
 import NavItem from './NavItem';
 import { useAuth } from '@/hooks/useAuth';
@@ -75,6 +77,7 @@ export default function Sidebar() {
           <NavItem to="/memories" icon={Brain} label="Memory Browser" />
           <NavItem to="/identities" icon={Users} label="Identities" />
           <NavItem to="/files" icon={FolderOpen} label="Files" />
+          <NavItem to="/system-files" icon={Sparkles} label="System Files" />
         </div>
 
         {/* Developer Section */}
@@ -82,7 +85,8 @@ export default function Sidebar() {
           <p className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">
             Developer
           </p>
-          <NavItem to="/logs" icon={ScrollText} label="Logs" />
+          <NavItem to="/chat-history" icon={History} label="Chat History" />
+          <NavItem to="/logs" icon={ScrollText} label="Live Logs" />
           <NavItem to="/debug" icon={Bug} label="Debug" />
         </div>
       </nav>

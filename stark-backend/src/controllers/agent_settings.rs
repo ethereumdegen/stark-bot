@@ -246,6 +246,7 @@ pub async fn update_bot_settings(
         request.web3_tx_requires_confirmation,
         request.rpc_provider.as_deref(),
         request.custom_rpc_endpoints.as_ref(),
+        request.max_tool_iterations,
     ) {
         Ok(settings) => {
             log::info!(

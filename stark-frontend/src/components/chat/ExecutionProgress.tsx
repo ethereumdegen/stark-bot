@@ -1,8 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 import clsx from 'clsx';
 import { useGateway } from '@/hooks/useGateway';
 import type { ExecutionTask, ExecutionEvent } from '@/types';
+
+interface RunningTool {
+  name: string;
+  startTime: number;
+}
 
 interface ExecutionProgressProps {
   className?: string;
@@ -12,8 +17,11 @@ export default function ExecutionProgress({ className }: ExecutionProgressProps)
   const [executions, setExecutions] = useState<Map<string, ExecutionTask>>(new Map());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [visible, setVisible] = useState(false);
+  const [runningTool, setRunningTool] = useState<RunningTool | null>(null);
+  const [elapsedTime, setElapsedTime] = useState(0);
   const { on, off } = useGateway();
   const hideTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setInterval>>();
 
   const updateExecution = useCallback((executionId: string, updater: (task: ExecutionTask) => ExecutionTask) => {
     setExecutions((prev) => {
@@ -149,7 +157,7 @@ export default function ExecutionProgress({ className }: ExecutionProgressProps)
       duration: event.duration_ms ?? (Date.now() - (execution.startTime || Date.now())),
     }));
 
-    // Hide after delay
+    // Hide after delay - keep visible longer to show task history
     hideTimeoutRef.current = setTimeout(() => {
       setVisible(false);
       // Clean up completed executions after hiding
@@ -160,8 +168,56 @@ export default function ExecutionProgress({ className }: ExecutionProgressProps)
           return newMap;
         });
       }, 500);
-    }, 1500);
+    }, 15000); // Keep visible for 15 seconds to show more task history
   }, [updateExecution]);
+
+  // Handle tool execution start
+  const handleToolExecution = useCallback((data: unknown) => {
+    const event = data as { tool_name: string };
+    console.log('[ExecutionProgress] Tool execution started:', event.tool_name);
+    setRunningTool({
+      name: event.tool_name,
+      startTime: Date.now(),
+    });
+    setElapsedTime(0);
+    setVisible(true);
+    if (hideTimeoutRef.current) {
+      clearTimeout(hideTimeoutRef.current);
+    }
+  }, []);
+
+  // Handle tool result (clear running tool)
+  const handleToolResult = useCallback((data: unknown) => {
+    const event = data as { tool_name: string };
+    console.log('[ExecutionProgress] Tool result received:', event.tool_name);
+    setRunningTool(null);
+    setElapsedTime(0);
+    // Don't hide immediately - let the execution progress handle visibility
+    // or hide after a short delay if no other executions
+    if (executions.size === 0) {
+      hideTimeoutRef.current = setTimeout(() => {
+        setVisible(false);
+      }, 500);
+    }
+  }, [executions.size]);
+
+  // Timer effect for elapsed time
+  useEffect(() => {
+    if (runningTool) {
+      timerRef.current = setInterval(() => {
+        setElapsedTime(Date.now() - runningTool.startTime);
+      }, 100); // Update every 100ms for smooth display
+    } else {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+    }
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+    };
+  }, [runningTool]);
 
   useEffect(() => {
     on('execution.started', handleExecutionStarted);
@@ -170,6 +226,8 @@ export default function ExecutionProgress({ className }: ExecutionProgressProps)
     on('execution.task_updated', handleTaskUpdated);
     on('execution.task_completed', handleTaskCompleted);
     on('execution.completed', handleExecutionCompleted);
+    on('tool.execution', handleToolExecution);
+    on('tool.result', handleToolResult);
 
     return () => {
       off('execution.started', handleExecutionStarted);
@@ -178,12 +236,17 @@ export default function ExecutionProgress({ className }: ExecutionProgressProps)
       off('execution.task_updated', handleTaskUpdated);
       off('execution.task_completed', handleTaskCompleted);
       off('execution.completed', handleExecutionCompleted);
+      off('tool.execution', handleToolExecution);
+      off('tool.result', handleToolResult);
 
       if (hideTimeoutRef.current) {
         clearTimeout(hideTimeoutRef.current);
       }
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
     };
-  }, [on, off, handleExecutionStarted, handleExecutionThinking, handleTaskStarted, handleTaskUpdated, handleTaskCompleted, handleExecutionCompleted]);
+  }, [on, off, handleExecutionStarted, handleExecutionThinking, handleTaskStarted, handleTaskUpdated, handleTaskCompleted, handleExecutionCompleted, handleToolExecution, handleToolResult]);
 
   const toggleCollapse = (taskId: string) => {
     setCollapsed((prev) => {
@@ -274,23 +337,59 @@ export default function ExecutionProgress({ className }: ExecutionProgressProps)
     );
   };
 
-  if (!visible || executions.size === 0) {
+  // Format elapsed time for display
+  const formatElapsedTime = (ms: number): string => {
+    const seconds = Math.floor(ms / 1000);
+    const tenths = Math.floor((ms % 1000) / 100);
+    if (seconds < 60) {
+      return `${seconds}.${tenths}s`;
+    }
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return `${minutes}m ${remainingSeconds}s`;
+  };
+
+  // Show if we have executions or a running tool
+  if (!visible && !runningTool) {
+    return null;
+  }
+
+  if (executions.size === 0 && !runningTool) {
     return null;
   }
 
   return (
     <div
       className={clsx(
-        'bg-slate-800/80 backdrop-blur border border-slate-700 rounded-lg p-4 transition-opacity duration-300 max-h-[100px] overflow-y-auto',
-        visible ? 'opacity-100' : 'opacity-0',
+        'bg-slate-800/80 backdrop-blur border border-slate-700 rounded-lg p-4 transition-opacity duration-300 max-h-[120px] overflow-y-auto',
+        (visible || runningTool) ? 'opacity-100' : 'opacity-0',
         className
       )}
     >
-      {Array.from(executions.values()).map((execution) => (
-        <div key={execution.id}>
-          {renderTask(execution)}
+      {/* Running Tool Indicator */}
+      {runningTool && (
+        <div className="flex items-center gap-3 text-sm">
+          <Loader2 className="w-4 h-4 text-cyan-400 animate-spin" />
+          <span className="text-cyan-400 font-medium">Running:</span>
+          <code className="text-cyan-300 bg-cyan-500/10 px-2 py-0.5 rounded">
+            {runningTool.name}
+          </code>
+          <span className="text-slate-400 font-mono tabular-nums">
+            {formatElapsedTime(elapsedTime)}
+          </span>
         </div>
-      ))}
+      )}
+
+      {/* Existing execution tasks */}
+      {executions.size > 0 && (
+        <div className={runningTool ? 'mt-2 pt-2 border-t border-slate-700' : ''}>
+          {Array.from(executions.values()).map((execution) => (
+            <div key={execution.id}>
+              {renderTask(execution)}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

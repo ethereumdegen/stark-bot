@@ -15,7 +15,14 @@ Bankr is an AI-powered crypto banking agent.
 
 ## How to Use This Skill
 
-**IMPORTANT:** When the user wants to interact with Bankr (buy tokens, check balance, swap, etc.), use the `exec` tool with **timeout: 120** to run this single command that handles everything:
+**First, check if BANKR_API_KEY is configured:**
+```tool:api_keys_check
+key_name: BANKR_API_KEY
+```
+
+If not configured, ask the user to get one from https://bankr.bot/api (enable "Agent API access").
+
+**Then use the `exec` tool** with **timeout: 120** to run this single command that handles everything:
 
 ```bash
 PROMPT='USER_PROMPT_HERE' && \

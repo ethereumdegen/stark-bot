@@ -11,7 +11,7 @@ pub mod session;
 pub mod session_message;
 
 pub use agent_settings::{AgentSettings, AgentSettingsResponse, UpdateAgentSettingsRequest};
-pub use bot_settings::{BotSettings, UpdateBotSettingsRequest};
+pub use bot_settings::{BotSettings, UpdateBotSettingsRequest, DEFAULT_MAX_TOOL_ITERATIONS};
 pub use api_key::{ApiKey, ApiKeyResponse};
 pub use channel::{Channel, ChannelResponse, ChannelType, CreateChannelRequest, UpdateChannelRequest};
 pub use chat_session::{

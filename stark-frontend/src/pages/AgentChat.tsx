@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, KeyboardEvent } from 'react';
-import { Send, RotateCcw, Copy, Check, Wallet, Bug } from 'lucide-react';
+import { Send, RotateCcw, Copy, Check, Wallet, Bug, Square } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import ChatMessage from '@/components/chat/ChatMessage';
 import TypingIndicator from '@/components/chat/TypingIndicator';
@@ -9,9 +9,10 @@ import CommandAutocomplete from '@/components/chat/CommandAutocomplete';
 import CommandMenu from '@/components/chat/CommandMenu';
 import TransactionTracker from '@/components/chat/TransactionTracker';
 import { ConfirmationPrompt } from '@/components/chat/ConfirmationPrompt';
+import SubagentBadge, { Subagent } from '@/components/chat/SubagentBadge';
 import { useGateway } from '@/hooks/useGateway';
 import { useWallet } from '@/hooks/useWallet';
-import { sendChatMessage, getAgentSettings, getSkills, getTools, confirmTransaction, cancelTransaction } from '@/lib/api';
+import { sendChatMessage, getAgentSettings, getSkills, getTools, confirmTransaction, cancelTransaction, stopExecution, listSubagents } from '@/lib/api';
 import { Command, COMMAND_DEFINITIONS, getAllCommands } from '@/lib/commands';
 import type { ChatMessage as ChatMessageType, MessageRole, SlashCommand, TrackedTransaction, TxPendingEvent, TxConfirmedEvent, PendingConfirmation, ConfirmationRequiredEvent } from '@/types';
 
@@ -59,6 +60,7 @@ export default function AgentChat() {
   const [copied, setCopied] = useState(false);
   const [trackedTxs, setTrackedTxs] = useState<TrackedTransaction[]>([]);
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmation | null>(null);
+  const [subagents, setSubagents] = useState<Subagent[]>([]);
   const [agentMode, setAgentMode] = useState<{ mode: string; label: string } | null>(() =>
     loadFromStorage<{ mode: string; label: string } | null>(STORAGE_KEY_MODE, null)
   );
@@ -324,6 +326,27 @@ export default function AgentChat() {
     };
   }, [on, off]);
 
+  // Listen for execution lifecycle events to track loading state
+  useEffect(() => {
+    const handleExecutionStarted = () => {
+      console.log('[Execution] Started');
+      setIsLoading(true);
+    };
+
+    const handleExecutionCompleted = () => {
+      console.log('[Execution] Completed');
+      setIsLoading(false);
+    };
+
+    on('execution.started', handleExecutionStarted);
+    on('execution.completed', handleExecutionCompleted);
+
+    return () => {
+      off('execution.started', handleExecutionStarted);
+      off('execution.completed', handleExecutionCompleted);
+    };
+  }, [on, off]);
+
   // Listen for confirmation events
   useEffect(() => {
     const handleConfirmationRequired = (data: unknown) => {
@@ -360,6 +383,70 @@ export default function AgentChat() {
       off('confirmation.rejected', handleConfirmationRejected);
     };
   }, [on, off]);
+
+  // Listen for subagent events
+  useEffect(() => {
+    const handleSubagentSpawned = (data: unknown) => {
+      const event = data as { subagent_id: string; label: string; task: string; timestamp: string };
+      console.log('[Subagent] Spawned:', event.label);
+      setSubagents((prev) => [
+        ...prev.filter(s => s.id !== event.subagent_id),
+        {
+          id: event.subagent_id,
+          label: event.label,
+          task: event.task,
+          status: 'Running',
+          started_at: event.timestamp,
+        },
+      ]);
+    };
+
+    const handleSubagentCompleted = (data: unknown) => {
+      const event = data as { subagent_id: string };
+      console.log('[Subagent] Completed:', event.subagent_id);
+      setSubagents((prev) => prev.map(s =>
+        s.id === event.subagent_id ? { ...s, status: 'Completed' } : s
+      ));
+    };
+
+    const handleSubagentFailed = (data: unknown) => {
+      const event = data as { subagent_id: string };
+      console.log('[Subagent] Failed:', event.subagent_id);
+      setSubagents((prev) => prev.map(s =>
+        s.id === event.subagent_id ? { ...s, status: 'Failed' } : s
+      ));
+    };
+
+    on('subagent.spawned', handleSubagentSpawned);
+    on('subagent.completed', handleSubagentCompleted);
+    on('subagent.failed', handleSubagentFailed);
+
+    return () => {
+      off('subagent.spawned', handleSubagentSpawned);
+      off('subagent.completed', handleSubagentCompleted);
+      off('subagent.failed', handleSubagentFailed);
+    };
+  }, [on, off]);
+
+  // Fetch initial subagent list when connected
+  useEffect(() => {
+    if (connected) {
+      console.log('[Subagent] Fetching initial subagent list...');
+      listSubagents().then((response) => {
+        console.log('[Subagent] Initial fetch response:', response);
+        if (response.success) {
+          setSubagents(response.subagents);
+        }
+      }).catch((err) => {
+        console.error('[Subagent] Failed to fetch subagents:', err);
+      });
+    }
+  }, [connected]);
+
+  // Debug: log subagents state changes
+  useEffect(() => {
+    console.log('[Subagent] State updated:', subagents);
+  }, [subagents]);
 
   const addMessage = useCallback((role: MessageRole, content: string) => {
     const message: ChatMessageType = {
@@ -515,6 +602,23 @@ export default function AgentChat() {
         }
       } catch (error) {
         addMessage('error', error instanceof Error ? error.message : 'Failed to cancel transaction');
+      }
+    },
+    [Command.Stop]: async () => {
+      if (!isLoading) {
+        addMessage('system', 'No execution in progress.');
+        return;
+      }
+      try {
+        const result = await stopExecution();
+        if (result.success) {
+          setIsLoading(false);
+          addMessage('system', result.message || 'Execution stopped.');
+        } else {
+          addMessage('error', result.error || 'Failed to stop execution.');
+        }
+      } catch (error) {
+        addMessage('error', error instanceof Error ? error.message : 'Failed to stop execution');
       }
     },
   };
@@ -756,22 +860,52 @@ export default function AgentChat() {
             </button>
           )}
 
+          <SubagentBadge
+            subagents={subagents}
+            onSubagentCancelled={(id) => {
+              setSubagents((prev) => prev.filter(s => s.id !== id));
+            }}
+          />
+
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => {
-              setMessages([]);
-              conversationHistory.current = [];
-              localStorage.removeItem(STORAGE_KEY_MESSAGES);
-              localStorage.removeItem(STORAGE_KEY_HISTORY);
-              localStorage.removeItem(STORAGE_KEY_MODE);
-              localStorage.removeItem(STORAGE_KEY_SUBTYPE);
-              setAgentMode(null);
-              setAgentSubtype(null);
+            onClick={async () => {
+              if (isLoading) {
+                // Stop the execution
+                try {
+                  const result = await stopExecution();
+                  if (result.success) {
+                    setIsLoading(false);
+                    addMessage('system', result.message || 'Execution stopped.');
+                  }
+                } catch (error) {
+                  console.error('Failed to stop execution:', error);
+                }
+              } else {
+                // Clear the chat
+                setMessages([]);
+                conversationHistory.current = [];
+                localStorage.removeItem(STORAGE_KEY_MESSAGES);
+                localStorage.removeItem(STORAGE_KEY_HISTORY);
+                localStorage.removeItem(STORAGE_KEY_MODE);
+                localStorage.removeItem(STORAGE_KEY_SUBTYPE);
+                setAgentMode(null);
+                setAgentSubtype(null);
+              }
             }}
           >
-            <RotateCcw className="w-4 h-4 mr-2" />
-            Clear
+            {isLoading ? (
+              <>
+                <Square className="w-4 h-4 mr-2" />
+                Stop
+              </>
+            ) : (
+              <>
+                <RotateCcw className="w-4 h-4 mr-2" />
+                Clear
+              </>
+            )}
           </Button>
         </div>
       </div>

@@ -13,11 +13,13 @@ import Sessions from '@/pages/Sessions';
 import MemoryBrowser from '@/pages/MemoryBrowser';
 import Identities from '@/pages/Identities';
 import FileBrowser from '@/pages/FileBrowser';
+import SystemFiles from '@/pages/SystemFiles';
 import Logs from '@/pages/Logs';
 import Debug from '@/pages/Debug';
 import ApiKeys from '@/pages/ApiKeys';
 import Payments from '@/pages/Payments';
 import EIP8004 from '@/pages/EIP8004';
+import ChatHistory from '@/pages/ChatHistory';
 
 function App() {
   return (
@@ -37,6 +39,8 @@ function App() {
         <Route path="/memories" element={<MemoryBrowser />} />
         <Route path="/identities" element={<Identities />} />
         <Route path="/files" element={<FileBrowser />} />
+        <Route path="/system-files" element={<SystemFiles />} />
+        <Route path="/chat-history" element={<ChatHistory />} />
         <Route path="/logs" element={<Logs />} />
         <Route path="/debug" element={<Debug />} />
         <Route path="/payments" element={<Payments />} />

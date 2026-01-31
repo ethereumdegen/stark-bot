@@ -751,6 +751,7 @@ export interface BotSettings {
   web3_tx_requires_confirmation: boolean;
   rpc_provider: string;
   custom_rpc_endpoints?: Record<string, string>;
+  max_tool_iterations: number;
   created_at: string;
   updated_at: string;
 }
@@ -765,6 +766,7 @@ export async function updateBotSettings(data: {
   web3_tx_requires_confirmation?: boolean;
   rpc_provider?: string;
   custom_rpc_endpoints?: Record<string, string>;
+  max_tool_iterations?: number;
 }): Promise<BotSettings> {
   return apiFetch('/bot-settings', {
     method: 'PUT',
@@ -822,6 +824,50 @@ export async function cancelTransaction(channelId: number): Promise<Confirmation
   });
 }
 
+// Execution Control API
+export interface StopExecutionResponse {
+  success: boolean;
+  message?: string;
+  error?: string;
+}
+
+export async function stopExecution(): Promise<StopExecutionResponse> {
+  return apiFetch('/chat/stop', {
+    method: 'POST',
+  });
+}
+
+// Subagent API
+export interface SubagentInfo {
+  id: string;
+  label: string;
+  task: string;
+  status: string;
+  started_at: string;
+}
+
+export interface SubagentListResponse {
+  success: boolean;
+  subagents: SubagentInfo[];
+}
+
+export interface SubagentResponse {
+  success: boolean;
+  message?: string;
+  error?: string;
+}
+
+export async function listSubagents(): Promise<SubagentListResponse> {
+  return apiFetch('/chat/subagents');
+}
+
+export async function cancelSubagent(subagentId: string): Promise<SubagentResponse> {
+  return apiFetch('/chat/subagents/cancel', {
+    method: 'POST',
+    body: JSON.stringify({ subagent_id: subagentId }),
+  });
+}
+
 // Files API
 export interface FileEntry {
   name: string;
@@ -864,4 +910,65 @@ export async function readFile(path: string): Promise<ReadFileResponse> {
 
 export async function getWorkspaceInfo(): Promise<WorkspaceInfoResponse> {
   return apiFetch('/files/workspace');
+}
+
+// Session Transcript API
+export interface SessionMessage {
+  id: number;
+  session_id: number;
+  role: string;
+  content: string;
+  created_at: string;
+}
+
+export interface SessionTranscriptResponse {
+  session_id: number;
+  messages: SessionMessage[];
+  total_count: number;
+}
+
+export async function getSessionTranscript(sessionId: number, limit?: number): Promise<SessionTranscriptResponse> {
+  const query = limit ? `?limit=${limit}` : '';
+  return apiFetch(`/sessions/${sessionId}/transcript${query}`);
+}
+
+// Intrinsic Files API
+export interface IntrinsicFileInfo {
+  name: string;
+  description: string;
+  writable: boolean;
+}
+
+export interface IntrinsicFileContent {
+  success: boolean;
+  name: string;
+  content?: string;
+  writable: boolean;
+  error?: string;
+}
+
+interface ListIntrinsicResponse {
+  success: boolean;
+  files: IntrinsicFileInfo[];
+}
+
+interface WriteIntrinsicResponse {
+  success: boolean;
+  error?: string;
+}
+
+export async function listIntrinsicFiles(): Promise<IntrinsicFileInfo[]> {
+  const response = await apiFetch<ListIntrinsicResponse>('/intrinsic');
+  return response.files || [];
+}
+
+export async function readIntrinsicFile(name: string): Promise<IntrinsicFileContent> {
+  return apiFetch(`/intrinsic/${encodeURIComponent(name)}`);
+}
+
+export async function writeIntrinsicFile(name: string, content: string): Promise<WriteIntrinsicResponse> {
+  return apiFetch(`/intrinsic/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ content }),
+  });
 }

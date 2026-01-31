@@ -245,9 +245,26 @@ impl DiscordLookupTool {
             })
             .collect();
 
-        ToolResult::success(format!("Found {} servers", result.len())).with_metadata(json!({
+        let message = if result.is_empty() {
+            "Bot is not in any Discord servers. Invite the bot using: \
+            https://discord.com/oauth2/authorize?client_id=BOT_CLIENT_ID&scope=bot&permissions=3072 \
+            (replace BOT_CLIENT_ID with your bot's client ID from Discord Developer Portal)".to_string()
+        } else {
+            let server_list: Vec<String> = guilds
+                .iter()
+                .map(|g| format!("• {} (ID: {})", g.name, g.id))
+                .collect();
+            format!(
+                "Found {} server(s) the bot has access to:\n{}\n\nIf your server is not listed, the bot needs to be invited to it.",
+                result.len(),
+                server_list.join("\n")
+            )
+        };
+
+        ToolResult::success(message).with_metadata(json!({
             "servers": result,
-            "count": result.len()
+            "count": result.len(),
+            "hint": "If the server you want is not listed, invite the bot to that server"
         }))
     }
 
@@ -258,9 +275,13 @@ impl DiscordLookupTool {
         };
 
         let query_lower = query.to_lowercase();
-        let matching: Vec<Value> = guilds
+        let matching_guilds: Vec<&DiscordGuild> = guilds
             .iter()
             .filter(|g| g.name.to_lowercase().contains(&query_lower))
+            .collect();
+
+        let matching: Vec<Value> = matching_guilds
+            .iter()
             .map(|g| {
                 json!({
                     "id": g.id,
@@ -271,13 +292,28 @@ impl DiscordLookupTool {
             .collect();
 
         if matching.is_empty() {
-            ToolResult::success(format!("No servers found matching '{}'", query)).with_metadata(json!({
+            ToolResult::success(format!(
+                "No servers found matching '{}'. If your server is not found, the bot needs to be invited to it.",
+                query
+            )).with_metadata(json!({
                 "servers": [],
                 "count": 0,
                 "query": query
             }))
         } else {
-            ToolResult::success(format!("Found {} servers matching '{}'", matching.len(), query)).with_metadata(json!({
+            let server_list: Vec<String> = matching_guilds
+                .iter()
+                .map(|g| format!("• {} (ID: {})", g.name, g.id))
+                .collect();
+
+            let message = format!(
+                "Found {} servers matching '{}':\n{}",
+                matching.len(),
+                query,
+                server_list.join("\n")
+            );
+
+            ToolResult::success(message).with_metadata(json!({
                 "servers": matching,
                 "count": matching.len(),
                 "query": query
@@ -302,6 +338,46 @@ impl DiscordLookupTool {
         let body_text = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
+            // Parse Discord error for better messaging
+            if let Ok(error_json) = serde_json::from_str::<Value>(&body_text) {
+                let code = error_json.get("code").and_then(|c| c.as_u64()).unwrap_or(0);
+                let message = error_json.get("message").and_then(|m| m.as_str()).unwrap_or("Unknown error");
+
+                match code {
+                    10004 => {
+                        // Unknown Guild
+                        return Err(ToolResult::error(format!(
+                            "Bot does not have access to server '{}'. The bot may not be invited to this server, or was kicked. \
+                            Please invite the bot using: https://discord.com/oauth2/authorize?client_id=BOT_CLIENT_ID&scope=bot&permissions=3072 \
+                            (replace BOT_CLIENT_ID with your bot's client ID from Discord Developer Portal)",
+                            server_id
+                        )));
+                    }
+                    50001 => {
+                        // Missing Access
+                        return Err(ToolResult::error(format!(
+                            "Bot lacks permissions to view channels in server '{}'. \
+                            Ensure the bot has 'View Channels' permission in the server settings.",
+                            server_id
+                        )));
+                    }
+                    50013 => {
+                        // Missing Permissions
+                        return Err(ToolResult::error(format!(
+                            "Bot lacks required permissions in server '{}'. \
+                            Check the bot's role permissions in Discord server settings.",
+                            server_id
+                        )));
+                    }
+                    _ => {
+                        return Err(ToolResult::error(format!(
+                            "Discord API error: {} (code {})",
+                            message, code
+                        )));
+                    }
+                }
+            }
+
             return Err(ToolResult::error(format!(
                 "Discord API error ({}): {}",
                 status, body_text
@@ -347,7 +423,24 @@ impl DiscordLookupTool {
             })
             .collect();
 
-        ToolResult::success(format!("Found {} channels in server {}", result.len(), server_id)).with_metadata(json!({
+        let channel_list: Vec<String> = channels
+            .iter()
+            .filter(|c| c.channel_type == 0 || c.channel_type == 5) // text and announcement channels
+            .map(|c| format!("• #{} (ID: {}, type: {})",
+                c.name.as_deref().unwrap_or("unnamed"),
+                c.id,
+                Self::channel_type_name(c.channel_type)
+            ))
+            .collect();
+
+        let message = format!(
+            "Found {} channels in server {} (showing text channels):\n{}\n\nUse the channel ID when sending messages with agent_send.",
+            channel_list.len(),
+            server_id,
+            channel_list.join("\n")
+        );
+
+        ToolResult::success(message).with_metadata(json!({
             "channels": result,
             "count": result.len(),
             "server_id": server_id
@@ -361,7 +454,7 @@ impl DiscordLookupTool {
         };
 
         let query_lower = query.to_lowercase();
-        let matching: Vec<Value> = channels
+        let matching_channels: Vec<&DiscordChannel> = channels
             .iter()
             .filter(|c| {
                 c.name
@@ -369,6 +462,10 @@ impl DiscordLookupTool {
                     .map(|n| n.to_lowercase().contains(&query_lower))
                     .unwrap_or(false)
             })
+            .collect();
+
+        let matching: Vec<Value> = matching_channels
+            .iter()
             .map(|c| {
                 json!({
                     "id": c.id,
@@ -387,7 +484,24 @@ impl DiscordLookupTool {
                 "query": query
             }))
         } else {
-            ToolResult::success(format!("Found {} channels matching '{}' in server {}", matching.len(), query, server_id)).with_metadata(json!({
+            let channel_list: Vec<String> = matching_channels
+                .iter()
+                .map(|c| format!("• #{} (ID: {}, type: {})",
+                    c.name.as_deref().unwrap_or("unnamed"),
+                    c.id,
+                    Self::channel_type_name(c.channel_type)
+                ))
+                .collect();
+
+            let message = format!(
+                "Found {} channels matching '{}' in server {}:\n{}\n\nUse the channel ID when sending messages with agent_send.",
+                matching.len(),
+                query,
+                server_id,
+                channel_list.join("\n")
+            );
+
+            ToolResult::success(message).with_metadata(json!({
                 "channels": matching,
                 "count": matching.len(),
                 "server_id": server_id,

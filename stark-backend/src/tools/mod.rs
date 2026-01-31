@@ -25,6 +25,8 @@ fn register_all_tools(registry: &mut ToolRegistry) {
     registry.register(Arc::new(builtin::SayToUserTool::new()));
     registry.register(Arc::new(builtin::MemorySearchTool::new()));
     registry.register(Arc::new(builtin::MemoryGetTool::new()));
+    registry.register(Arc::new(builtin::ModifySoulTool::new()));
+    registry.register(Arc::new(builtin::ApiKeysCheckTool::new()));
 
     // Web tools (shared)
     registry.register(Arc::new(builtin::WebFetchTool::new()));
@@ -50,6 +52,7 @@ fn register_all_tools(registry: &mut ToolRegistry) {
     registry.register(Arc::new(builtin::GrepTool::new()));
     registry.register(Arc::new(builtin::GlobTool::new()));
     registry.register(Arc::new(builtin::GitTool::new()));
+    registry.register(Arc::new(builtin::GithubUserTool::new()));
 
     // Advanced development tools (scoped commits, deployment, PR quality)
     registry.register(Arc::new(builtin::CommitterTool::new()));

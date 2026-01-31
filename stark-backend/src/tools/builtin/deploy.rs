@@ -197,11 +197,17 @@ impl DeployTool {
         workspace: &PathBuf,
         context: &ToolContext,
     ) -> Result<String, String> {
+        // Check if we have a GitHub token for authentication
+        let github_token = context.get_api_key_by_id(ApiKeyId::GithubToken);
+
         let mut cmd = Command::new("git");
         cmd.args(args)
             .current_dir(workspace)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+
+        // Prevent git from prompting for credentials interactively
+        cmd.env("GIT_TERMINAL_PROMPT", "0");
 
         // Set git author from context
         let bot_name = context.get_bot_name();
@@ -210,6 +216,25 @@ impl DeployTool {
         cmd.env("GIT_AUTHOR_EMAIL", &bot_email);
         cmd.env("GIT_COMMITTER_NAME", &bot_name);
         cmd.env("GIT_COMMITTER_EMAIL", &bot_email);
+
+        // Configure GitHub authentication via URL rewriting
+        // This is more reliable than credential helpers
+        if let Some(ref token) = github_token {
+            cmd.env("GH_TOKEN", token);
+            cmd.env("GITHUB_TOKEN", token);
+            // Use GIT_CONFIG_* env vars to rewrite GitHub URLs to include token
+            cmd.env("GIT_CONFIG_COUNT", "2");
+            cmd.env(
+                "GIT_CONFIG_KEY_0",
+                format!("url.https://x-access-token:{}@github.com/.insteadOf", token),
+            );
+            cmd.env("GIT_CONFIG_VALUE_0", "https://github.com/");
+            cmd.env(
+                "GIT_CONFIG_KEY_1",
+                format!("url.https://x-access-token:{}@github.com/.insteadOf", token),
+            );
+            cmd.env("GIT_CONFIG_VALUE_1", "git@github.com:");
+        }
 
         let output = cmd
             .output()

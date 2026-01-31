@@ -7,12 +7,13 @@ use crate::channels::types::{DispatchResult, NormalizedMessage};
 use crate::config::MemoryConfig;
 use crate::context::{self, estimate_tokens, ContextManager};
 use crate::controllers::api_keys::ApiKeyId;
+use std::str::FromStr;
 use crate::db::Database;
 use crate::execution::ExecutionTracker;
 use crate::gateway::events::EventBroadcaster;
 use crate::gateway::protocol::GatewayEvent;
 use crate::models::session_message::MessageRole as DbMessageRole;
-use crate::models::{AgentSettings, MemoryType, SessionScope};
+use crate::models::{AgentSettings, MemoryType, SessionScope, DEFAULT_MAX_TOOL_ITERATIONS};
 use crate::tools::{ToolConfig, ToolContext, ToolDefinition, ToolExecution, ToolRegistry};
 use chrono::Utc;
 use regex::Regex;
@@ -21,9 +22,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::interval;
 
-/// Maximum number of tool execution iterations
-/// Set to 25 to allow for async jobs that require polling (e.g., Bankr API)
-const MAX_TOOL_ITERATIONS: usize = 25;
+/// Fallback maximum tool iterations (used when db lookup fails)
+/// Actual value is configurable via bot settings
+const FALLBACK_MAX_TOOL_ITERATIONS: usize = DEFAULT_MAX_TOOL_ITERATIONS as usize;
 
 /// How often to broadcast "still waiting" events during long AI calls
 const AI_PROGRESS_INTERVAL_SECS: u64 = 30;
@@ -189,6 +190,11 @@ impl MessageDispatcher {
             memory_config,
             subagent_manager: None, // No tools = no subagent support
         }
+    }
+
+    /// Get the SubAgentManager (if available)
+    pub fn subagent_manager(&self) -> Option<Arc<SubAgentManager>> {
+        self.subagent_manager.clone()
     }
 
     /// Dispatch a normalized message to the AI and return the response
@@ -435,6 +441,7 @@ impl MessageDispatcher {
         // Load API keys from database for tools that need them
         // Each key is stored individually (e.g., "GITHUB_TOKEN", "DISCORD_BOT_TOKEN")
         // Keys are added to both ToolContext AND environment variables for maximum compatibility
+        let mut github_token_loaded = false;
         if let Ok(keys) = self.db.list_api_keys() {
             for key in keys {
                 // Add to tool context (for tools that use context.get_api_key)
@@ -443,13 +450,29 @@ impl MessageDispatcher {
                 // Also set as environment variables (for tools that use std::env)
                 // Use the ApiKeyId to get all env var names for this key
                 // SAFETY: We're setting env vars at startup before spawning threads that read them
-                if let Some(key_id) = ApiKeyId::from_str(&key.service_name) {
+                if let Ok(key_id) = ApiKeyId::from_str(&key.service_name) {
+                    if key_id == ApiKeyId::GithubToken {
+                        github_token_loaded = true;
+                    }
                     if let Some(env_vars) = key_id.env_vars() {
                         for env_var in env_vars {
                             unsafe { std::env::set_var(env_var, &key.api_key); }
                         }
                     }
                 }
+            }
+        }
+
+        // If GitHub token is loaded, query GitHub API to get authenticated user
+        // and set GITHUB_USER env var for use in git/gh commands
+        if github_token_loaded {
+            if let Ok(github_user) = self.get_github_authenticated_user().await {
+                log::info!("[DISPATCH] GitHub authenticated as: {}", github_user);
+                unsafe { std::env::set_var("GITHUB_USER", &github_user); }
+                tool_context.extra.insert(
+                    "github_user".to_string(),
+                    serde_json::json!(github_user),
+                );
             }
         }
 
@@ -889,6 +912,11 @@ impl MessageDispatcher {
         orchestrator: &mut Orchestrator,
         session_id: i64,
     ) -> Result<String, String> {
+        // Get max tool iterations from bot settings
+        let max_tool_iterations = self.db.get_bot_settings()
+            .map(|s| s.max_tool_iterations as usize)
+            .unwrap_or(FALLBACK_MAX_TOOL_ITERATIONS);
+
         // Build conversation with orchestrator's system prompt prepended
         let mut conversation = messages.clone();
         if let Some(system_msg) = conversation.first_mut() {
@@ -922,11 +950,20 @@ impl MessageDispatcher {
                 orchestrator.current_mode()
             );
 
-            // Broadcast iteration progress to frontend
-            self.broadcaster.broadcast(GatewayEvent::agent_thinking(
-                original_message.channel_id,
-                &format!("Iteration {} ({} mode)...", iterations, orchestrator.current_mode()),
-            ));
+            // Emit an iteration task for visibility (after first iteration)
+            if iterations > 1 {
+                if let Some(ref exec_id) = self.execution_tracker.get_execution_id(original_message.channel_id) {
+                    let iter_task = self.execution_tracker.start_task(
+                        original_message.channel_id,
+                        exec_id,
+                        Some(exec_id),
+                        crate::models::TaskType::Thinking,
+                        format!("Iteration {} - {}", iterations, orchestrator.current_mode().label()),
+                        Some(&format!("Processing iteration {}...", iterations)),
+                    );
+                    self.execution_tracker.complete_task(&iter_task);
+                }
+            }
 
             // Check if execution was cancelled (e.g., user sent /new)
             if self.execution_tracker.is_cancelled(original_message.channel_id) {
@@ -934,8 +971,8 @@ impl MessageDispatcher {
                 break;
             }
 
-            if iterations > MAX_TOOL_ITERATIONS {
-                log::warn!("Orchestrated tool loop exceeded max iterations ({})", MAX_TOOL_ITERATIONS);
+            if iterations > max_tool_iterations {
+                log::warn!("Orchestrated tool loop exceeded max iterations ({})", max_tool_iterations);
                 break;
             }
 
@@ -945,6 +982,20 @@ impl MessageDispatcher {
                     "[ORCHESTRATOR] Forced transition: {} → {} ({})",
                     transition.from, transition.to, transition.reason
                 );
+
+                // Emit a task for the mode transition
+                if let Some(ref exec_id) = self.execution_tracker.get_execution_id(original_message.channel_id) {
+                    let transition_task = self.execution_tracker.start_task(
+                        original_message.channel_id,
+                        exec_id,
+                        Some(exec_id),
+                        crate::models::TaskType::PlanMode,
+                        format!("Switching to {} mode", transition.to.label()),
+                        Some(&format!("Transitioning: {}", transition.reason)),
+                    );
+                    self.execution_tracker.complete_task(&transition_task);
+                }
+
                 self.broadcaster.broadcast(GatewayEvent::agent_mode_change(
                     original_message.channel_id,
                     &transition.to.to_string(),
@@ -961,6 +1012,19 @@ impl MessageDispatcher {
                     tools.push(skill_tool);
                 }
                 tools.extend(orchestrator.get_mode_tools());
+
+                // Emit task for toolset update
+                if let Some(ref exec_id) = self.execution_tracker.get_execution_id(original_message.channel_id) {
+                    let toolset_task = self.execution_tracker.start_task(
+                        original_message.channel_id,
+                        exec_id,
+                        Some(exec_id),
+                        crate::models::TaskType::Loading,
+                        format!("Loading {} tools for {} mode", tools.len(), subtype.label()),
+                        Some("Configuring available tools..."),
+                    );
+                    self.execution_tracker.complete_task(&toolset_task);
+                }
 
                 // Broadcast toolset update
                 self.broadcast_toolset_update(
@@ -1122,6 +1186,13 @@ impl MessageDispatcher {
                     }
                     OrchestratorResult::Continue => {
                         // Not an orchestrator tool, execute normally
+                        // Broadcast that tool is starting execution
+                        self.broadcaster.broadcast(GatewayEvent::tool_execution(
+                            original_message.channel_id,
+                            &call.name,
+                            &call.arguments,
+                        ));
+
                         let result = if call.name == "use_skill" {
                             // Execute skill and set active skill on orchestrator
                             let skill_result = self.execute_skill_tool(&call.arguments, Some(session_id)).await;
@@ -1316,13 +1387,13 @@ impl MessageDispatcher {
         } else if tool_call_log.is_empty() {
             Err(format!(
                 "Tool loop hit max iterations ({}) without completion",
-                MAX_TOOL_ITERATIONS
+                max_tool_iterations
             ))
         } else {
             let tool_log_text = tool_call_log.join("\n");
             Err(format!(
                 "Tool loop hit max iterations ({}). Last tool calls:\n{}",
-                MAX_TOOL_ITERATIONS,
+                max_tool_iterations,
                 tool_log_text
             ))
         }
@@ -1341,6 +1412,11 @@ impl MessageDispatcher {
         orchestrator: &mut Orchestrator,
         session_id: i64,
     ) -> Result<String, String> {
+        // Get max tool iterations from bot settings
+        let max_tool_iterations = self.db.get_bot_settings()
+            .map(|s| s.max_tool_iterations as usize)
+            .unwrap_or(FALLBACK_MAX_TOOL_ITERATIONS);
+
         // Build conversation with orchestrator's system prompt
         let mut conversation = messages.clone();
         if let Some(system_msg) = conversation.first_mut() {
@@ -1372,20 +1448,14 @@ impl MessageDispatcher {
                 orchestrator.current_mode()
             );
 
-            // Broadcast iteration progress to frontend
-            self.broadcaster.broadcast(GatewayEvent::agent_thinking(
-                original_message.channel_id,
-                &format!("Iteration {} ({} mode)...", iterations, orchestrator.current_mode()),
-            ));
-
             // Check if execution was cancelled (e.g., user sent /new)
             if self.execution_tracker.is_cancelled(original_message.channel_id) {
                 log::info!("[TEXT_ORCHESTRATED] Execution cancelled by user, stopping loop");
                 break;
             }
 
-            if iterations > MAX_TOOL_ITERATIONS {
-                log::warn!("Text orchestrated loop exceeded max iterations ({})", MAX_TOOL_ITERATIONS);
+            if iterations > max_tool_iterations {
+                log::warn!("Text orchestrated loop exceeded max iterations ({})", max_tool_iterations);
                 break;
             }
 
@@ -1835,7 +1905,36 @@ impl MessageDispatcher {
         // Get the current execution ID for tracking
         let execution_id = self.execution_tracker.get_execution_id(channel_id);
 
-        for call in tool_calls {
+        // Emit a "preparing tools" task if we have multiple tool calls
+        if tool_calls.len() > 1 {
+            if let Some(ref exec_id) = execution_id {
+                let prep_task = self.execution_tracker.start_task(
+                    channel_id,
+                    exec_id,
+                    Some(exec_id),
+                    crate::models::TaskType::Loading,
+                    format!("Preparing {} tool calls", tool_calls.len()),
+                    Some("Loading tool handlers..."),
+                );
+                self.execution_tracker.complete_task(&prep_task);
+            }
+        }
+
+        for (idx, call) in tool_calls.iter().enumerate() {
+            // Check if execution was cancelled before each tool
+            if self.execution_tracker.is_cancelled(channel_id) {
+                log::info!("[TOOL_EXEC] Execution cancelled, skipping remaining {} tools", tool_calls.len() - idx);
+                // Return cancellation response for remaining tools
+                for remaining_call in tool_calls.iter().skip(idx) {
+                    responses.push(ToolResponse {
+                        tool_call_id: remaining_call.id.clone(),
+                        content: "Execution cancelled by user".to_string(),
+                        is_error: true,
+                    });
+                }
+                break;
+            }
+
             let start = std::time::Instant::now();
 
             // Start tracking this tool execution with context from arguments
@@ -1851,6 +1950,24 @@ impl MessageDispatcher {
                 &call.name,
                 &call.arguments,
             ));
+
+            // Add a validation sub-task for tools with complex parameters
+            let has_complex_params = call.arguments.as_object()
+                .map(|obj| obj.len() > 2)
+                .unwrap_or(false);
+            if has_complex_params {
+                if let Some(ref exec_id) = execution_id {
+                    let validate_task = self.execution_tracker.start_task(
+                        channel_id,
+                        exec_id,
+                        task_id.as_deref(),
+                        crate::models::TaskType::Validation,
+                        format!("Validating {} parameters", call.name),
+                        Some("Checking input parameters..."),
+                    );
+                    self.execution_tracker.complete_task(&validate_task);
+                }
+            }
 
             // Execute the tool (handle special "use_skill" pseudo-tool)
             let result = if call.name == "use_skill" {
@@ -1876,15 +1993,29 @@ impl MessageDispatcher {
                     retry_secs,
                 ));
 
-                // Pause for the backoff duration
-                tokio::time::sleep(std::time::Duration::from_secs(retry_secs)).await;
+                // Pause for the backoff duration, checking for cancellation every second
+                let mut remaining_secs = retry_secs;
+                let mut cancelled = false;
+                while remaining_secs > 0 {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    remaining_secs -= 1;
+                    if self.execution_tracker.is_cancelled(channel_id) {
+                        log::info!("[TOOL_RETRY] Execution cancelled during backoff wait");
+                        cancelled = true;
+                        break;
+                    }
+                }
 
-                // Return a modified result that instructs the agent to retry
-                crate::tools::ToolResult::error(format!(
-                    "{}\n\n🔄 The system paused for {} seconds. Please retry the same tool call now - the temporary error may have resolved.",
-                    result.error.unwrap_or_else(|| "Unknown error".to_string()),
-                    retry_secs
-                ))
+                if cancelled {
+                    crate::tools::ToolResult::error("Execution cancelled by user".to_string())
+                } else {
+                    // Return a modified result that instructs the agent to retry
+                    crate::tools::ToolResult::error(format!(
+                        "{}\n\n🔄 The system paused for {} seconds. Please retry the same tool call now - the temporary error may have resolved.",
+                        result.error.unwrap_or_else(|| "Unknown error".to_string()),
+                        retry_secs
+                    ))
+                }
             } else {
                 result
             };
@@ -1897,6 +2028,27 @@ impl MessageDispatcher {
                     self.execution_tracker.complete_task(tid);
                 } else {
                     self.execution_tracker.complete_task_with_error(tid, &result.content);
+                }
+            }
+
+            // Add a result processing task for large results
+            let result_size = result.content.len();
+            if result_size > 500 && result.success {
+                if let Some(ref exec_id) = execution_id {
+                    let size_desc = if result_size > 10000 {
+                        format!("{:.1}KB", result_size as f64 / 1024.0)
+                    } else {
+                        format!("{} chars", result_size)
+                    };
+                    let process_task = self.execution_tracker.start_task(
+                        channel_id,
+                        exec_id,
+                        Some(exec_id),
+                        crate::models::TaskType::Analyzing,
+                        format!("Processing {} result ({})", call.name, size_desc),
+                        Some("Analyzing output..."),
+                    );
+                    self.execution_tracker.complete_task(&process_task);
                 }
             }
 
@@ -2188,6 +2340,7 @@ impl MessageDispatcher {
 
     /// Call AI with progress notifications for long-running requests
     /// Broadcasts "still waiting" events every 30 seconds and handles timeout errors gracefully
+    /// Also emits granular thinking phase tasks for better UI visibility
     async fn generate_with_progress(
         &self,
         client: &AiClient,
@@ -2199,19 +2352,83 @@ impl MessageDispatcher {
         let broadcaster = self.broadcaster.clone();
         let mut elapsed_secs = 0u64;
 
+        // Get execution ID for task tracking
+        let execution_id = self.execution_tracker.get_execution_id(channel_id);
+
+        // Emit granular thinking phase tasks
+        let thinking_task_id = if let Some(ref exec_id) = execution_id {
+            // Determine context for the thinking task
+            let (phase_desc, phase_active) = if !tool_history.is_empty() {
+                ("Processing tool results", "Analyzing results...")
+            } else if !tools.is_empty() {
+                ("Analyzing request", "Reasoning about approach...")
+            } else {
+                ("Generating response", "Composing response...")
+            };
+
+            let task_id = self.execution_tracker.start_task(
+                channel_id,
+                exec_id,
+                Some(exec_id),
+                crate::models::TaskType::Thinking,
+                phase_desc,
+                Some(phase_active),
+            );
+            Some(task_id)
+        } else {
+            None
+        };
+
         // Spawn the actual AI request
-        let ai_future = client.generate_with_tools(conversation, tool_history, tools);
+        let ai_future = client.generate_with_tools(conversation, tool_history, tools.clone());
         tokio::pin!(ai_future);
 
-        // Create a ticker for progress updates
+        // Create a ticker for progress updates (shorter interval for more visibility)
         let mut progress_ticker = interval(Duration::from_secs(AI_PROGRESS_INTERVAL_SECS));
         progress_ticker.tick().await; // First tick is immediate, skip it
+
+        // Thinking phase messages for variety
+        let thinking_phases = [
+            "Analyzing context...",
+            "Evaluating options...",
+            "Considering approach...",
+            "Reviewing information...",
+            "Formulating response...",
+            "Deep thinking...",
+        ];
+        let mut phase_idx = 0;
+
+        // Create a cancellation check interval (check every 500ms for responsiveness)
+        let mut cancel_ticker = interval(Duration::from_millis(500));
+        cancel_ticker.tick().await; // First tick is immediate, skip it
 
         loop {
             tokio::select! {
                 result = &mut ai_future => {
+                    // Complete the thinking task
+                    if let Some(ref task_id) = thinking_task_id {
+                        self.execution_tracker.complete_task(task_id);
+                    }
+
                     match result {
-                        Ok(response) => return Ok(response),
+                        Ok(response) => {
+                            // If there are tool calls, emit a planning task
+                            if !response.tool_calls.is_empty() {
+                                if let Some(ref exec_id) = execution_id {
+                                    let plan_desc = format!("Planning {} tool calls", response.tool_calls.len());
+                                    let plan_task = self.execution_tracker.start_task(
+                                        channel_id,
+                                        exec_id,
+                                        Some(exec_id),
+                                        crate::models::TaskType::Planning,
+                                        &plan_desc,
+                                        Some("Preparing tool execution..."),
+                                    );
+                                    self.execution_tracker.complete_task(&plan_task);
+                                }
+                            }
+                            return Ok(response);
+                        }
                         Err(e) => {
                             // Check if it's a timeout error
                             if e.contains("timed out") || e.contains("timeout") {
@@ -2227,11 +2444,40 @@ impl MessageDispatcher {
                 }
                 _ = progress_ticker.tick() => {
                     elapsed_secs += AI_PROGRESS_INTERVAL_SECS;
+                    let phase_msg = thinking_phases[phase_idx % thinking_phases.len()];
+                    phase_idx += 1;
+
                     log::info!("[AI_PROGRESS] Still waiting for AI response... ({}s elapsed)", elapsed_secs);
                     broadcaster.broadcast(GatewayEvent::agent_thinking(
                         channel_id,
-                        &format!("Still thinking... ({}s)", elapsed_secs),
+                        &format!("{} ({}s)", phase_msg, elapsed_secs),
                     ));
+
+                    // Update the thinking task's active form
+                    if let Some(ref task_id) = thinking_task_id {
+                        self.execution_tracker.update_task_active_form(
+                            task_id,
+                            &format!("{} ({}s)", phase_msg, elapsed_secs),
+                        );
+                    }
+                }
+                _ = cancel_ticker.tick() => {
+                    // Check if execution was cancelled
+                    if self.execution_tracker.is_cancelled(channel_id) {
+                        log::info!("[AI_PROGRESS] Execution cancelled while waiting for AI response");
+
+                        // Complete the thinking task
+                        if let Some(ref task_id) = thinking_task_id {
+                            self.execution_tracker.complete_task(task_id);
+                        }
+
+                        broadcaster.broadcast(GatewayEvent::agent_error(
+                            channel_id,
+                            "Execution stopped by user.",
+                        ));
+
+                        return Err("Execution cancelled by user".to_string());
+                    }
                 }
             }
         }
@@ -2309,6 +2555,227 @@ impl MessageDispatcher {
             Err(e) => {
                 log::error!("Failed to get session for reset: {}", e);
                 DispatchResult::error(format!("Session error: {}", e))
+            }
+        }
+    }
+
+    /// Query GitHub API to get the authenticated user's login name
+    /// Uses `gh api user` command which respects the GH_TOKEN env var
+    async fn get_github_authenticated_user(&self) -> Result<String, String> {
+        use tokio::process::Command;
+
+        let mut cmd = Command::new("gh");
+        cmd.args(["api", "user", "--jq", ".login"]);
+
+        // Set GitHub token if available from stored API keys
+        if let Ok(Some(key)) = self.db.get_api_key("GITHUB_TOKEN") {
+            cmd.env("GH_TOKEN", key.api_key);
+        }
+
+        let output = cmd
+            .output()
+            .await
+            .map_err(|e| format!("Failed to execute gh CLI: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("gh api user failed: {}", stderr));
+        }
+
+        let login = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if login.is_empty() {
+            return Err("GitHub API returned empty login".to_string());
+        }
+
+        Ok(login)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test that memory marker patterns correctly extract content
+    #[test]
+    fn test_memory_marker_patterns() {
+        let markers = create_memory_markers();
+
+        // Test REMEMBER pattern
+        let remember_marker = markers.iter().find(|m| m.name == "long-term memory").unwrap();
+
+        // Simple case
+        let text = "[REMEMBER: user prefers dark mode]";
+        let caps: Vec<_> = remember_marker.pattern.captures_iter(text).collect();
+        assert_eq!(caps.len(), 1);
+        assert_eq!(caps[0].get(1).unwrap().as_str(), "user prefers dark mode");
+
+        // Embedded in text
+        let text = "Here is my response. [REMEMBER: user name is Andy] More text follows.";
+        let caps: Vec<_> = remember_marker.pattern.captures_iter(text).collect();
+        assert_eq!(caps.len(), 1);
+        assert_eq!(caps[0].get(1).unwrap().as_str(), "user name is Andy");
+
+        // Multiple markers
+        let text = "[REMEMBER: fact one] and [REMEMBER: fact two]";
+        let caps: Vec<_> = remember_marker.pattern.captures_iter(text).collect();
+        assert_eq!(caps.len(), 2);
+        assert_eq!(caps[0].get(1).unwrap().as_str(), "fact one");
+        assert_eq!(caps[1].get(1).unwrap().as_str(), "fact two");
+    }
+
+    #[test]
+    fn test_remember_important_pattern() {
+        let markers = create_memory_markers();
+        let marker = markers.iter().find(|m| m.name == "important memory").unwrap();
+
+        let text = "[REMEMBER_IMPORTANT: API key is in vault]";
+        let caps: Vec<_> = marker.pattern.captures_iter(text).collect();
+        assert_eq!(caps.len(), 1);
+        assert_eq!(caps[0].get(1).unwrap().as_str(), "API key is in vault");
+
+        // Verify importance is 9
+        assert_eq!(marker.importance, 9);
+    }
+
+    #[test]
+    fn test_daily_log_pattern() {
+        let markers = create_memory_markers();
+        let marker = markers.iter().find(|m| m.name == "daily log").unwrap();
+
+        let text = "[DAILY_LOG: fixed authentication bug]";
+        let caps: Vec<_> = marker.pattern.captures_iter(text).collect();
+        assert_eq!(caps.len(), 1);
+        assert_eq!(caps[0].get(1).unwrap().as_str(), "fixed authentication bug");
+
+        // Verify it uses today's date
+        assert!(marker.use_today_date);
+    }
+
+    #[test]
+    fn test_preference_pattern() {
+        let markers = create_memory_markers();
+        let marker = markers.iter().find(|m| m.name == "user preference").unwrap();
+
+        let text = "[PREFERENCE: prefers concise answers]";
+        let caps: Vec<_> = marker.pattern.captures_iter(text).collect();
+        assert_eq!(caps.len(), 1);
+        assert_eq!(caps[0].get(1).unwrap().as_str(), "prefers concise answers");
+    }
+
+    #[test]
+    fn test_fact_pattern() {
+        let markers = create_memory_markers();
+        let marker = markers.iter().find(|m| m.name == "user fact").unwrap();
+
+        let text = "[FACT: lives in San Francisco]";
+        let caps: Vec<_> = marker.pattern.captures_iter(text).collect();
+        assert_eq!(caps.len(), 1);
+        assert_eq!(caps[0].get(1).unwrap().as_str(), "lives in San Francisco");
+    }
+
+    #[test]
+    fn test_task_pattern() {
+        let markers = create_memory_markers();
+        let marker = markers.iter().find(|m| m.name == "task/commitment").unwrap();
+
+        let text = "[TASK: review PR #123 tomorrow]";
+        let caps: Vec<_> = marker.pattern.captures_iter(text).collect();
+        assert_eq!(caps.len(), 1);
+        assert_eq!(caps[0].get(1).unwrap().as_str(), "review PR #123 tomorrow");
+
+        // Verify it uses today's date for tasks
+        assert!(marker.use_today_date);
+    }
+
+    #[test]
+    fn test_all_markers_in_single_response() {
+        let markers = create_memory_markers();
+
+        let text = r#"
+            I've noted your preferences. [REMEMBER: user is a Rust developer]
+            [PREFERENCE: prefers functional style] [FACT: works at TechCorp]
+            [DAILY_LOG: helped with async code] [TASK: follow up on performance]
+            [REMEMBER_IMPORTANT: has production deadline Friday]
+        "#;
+
+        let mut total_matches = 0;
+        for marker in &markers {
+            let count = marker.pattern.captures_iter(text).count();
+            total_matches += count;
+        }
+
+        assert_eq!(total_matches, 6, "Should find all 6 markers");
+    }
+
+    #[test]
+    fn test_marker_with_special_characters() {
+        let markers = create_memory_markers();
+        let marker = markers.iter().find(|m| m.name == "long-term memory").unwrap();
+
+        // Content with special chars (but not closing bracket)
+        let text = "[REMEMBER: user's email is test@example.com]";
+        let caps: Vec<_> = marker.pattern.captures_iter(text).collect();
+        assert_eq!(caps.len(), 1);
+        assert_eq!(caps[0].get(1).unwrap().as_str(), "user's email is test@example.com");
+    }
+
+    #[test]
+    fn test_marker_strips_from_response() {
+        let markers = create_memory_markers();
+
+        let response = "Hello! [REMEMBER: user name is Andy] How can I help you today?";
+
+        let mut clean = response.to_string();
+        for marker in &markers {
+            clean = marker.pattern.replace_all(&clean, "").to_string();
+        }
+        clean = clean.split_whitespace().collect::<Vec<_>>().join(" ");
+
+        assert_eq!(clean, "Hello! How can I help you today?");
+        assert!(!clean.contains("[REMEMBER"));
+    }
+
+    #[test]
+    fn test_multiple_same_markers_stripped() {
+        let markers = create_memory_markers();
+
+        let response = "[REMEMBER: fact1] Some text [REMEMBER: fact2] more text [REMEMBER: fact3]";
+
+        let mut clean = response.to_string();
+        for marker in &markers {
+            clean = marker.pattern.replace_all(&clean, "").to_string();
+        }
+        clean = clean.split_whitespace().collect::<Vec<_>>().join(" ");
+
+        assert_eq!(clean, "Some text more text");
+    }
+
+    #[test]
+    fn test_empty_content_not_matched() {
+        let markers = create_memory_markers();
+        let marker = markers.iter().find(|m| m.name == "long-term memory").unwrap();
+
+        // Empty content after colon - the .+? requires at least one char
+        let text = "[REMEMBER: ]";
+        let caps: Vec<_> = marker.pattern.captures_iter(text).collect();
+        // This will match the space, so we check for empty after trim in actual code
+        assert_eq!(caps.len(), 1);
+        assert_eq!(caps[0].get(1).unwrap().as_str().trim(), "");
+    }
+
+    #[test]
+    fn test_marker_types_are_correct() {
+        let markers = create_memory_markers();
+
+        for marker in &markers {
+            match marker.name {
+                "daily log" => assert!(matches!(marker.memory_type, MemoryType::DailyLog)),
+                "long-term memory" => assert!(matches!(marker.memory_type, MemoryType::LongTerm)),
+                "important memory" => assert!(matches!(marker.memory_type, MemoryType::LongTerm)),
+                "user preference" => assert!(matches!(marker.memory_type, MemoryType::Preference)),
+                "user fact" => assert!(matches!(marker.memory_type, MemoryType::Fact)),
+                "task/commitment" => assert!(matches!(marker.memory_type, MemoryType::Task)),
+                _ => panic!("Unknown marker: {}", marker.name),
             }
         }
     }

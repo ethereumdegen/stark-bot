@@ -226,7 +226,6 @@ impl Orchestrator {
 
         match tool_name {
             "add_note" => self.handle_add_note(params),
-            "complete_task" => self.handle_complete_task(params),
             _ => ProcessResult::Continue,
         }
     }
@@ -258,33 +257,6 @@ impl Orchestrator {
             ProcessResult::Error("Missing 'note' parameter".to_string())
         }
     }
-
-    fn handle_complete_task(&mut self, params: &Value) -> ProcessResult {
-        // If a skill is active, require actual tools to have been called
-        if let Some(ref skill) = self.context.active_skill {
-            if skill.tool_calls_made == 0 {
-                return ProcessResult::Error(format!(
-                    "Cannot complete task while skill '{}' is active without calling any tools. \
-                    You must execute the actual tools mentioned in the skill instructions.",
-                    skill.name
-                ));
-            }
-        }
-
-        let summary = params.get("summary").and_then(|v| v.as_str()).unwrap_or("");
-        let follow_up = params.get("follow_up").and_then(|v| v.as_str());
-
-        log::info!("[ORCHESTRATOR] Task completed: {}", summary);
-
-        if let Some(fu) = follow_up {
-            log::info!("[ORCHESTRATOR] Follow-up: {}", fu);
-        }
-
-        // Clear active skill on completion
-        self.context.active_skill = None;
-
-        ProcessResult::Complete(summary.to_string())
-    }
 }
 
 /// Result of processing a tool call
@@ -294,7 +266,7 @@ pub enum ProcessResult {
     Continue,
     /// Tool executed successfully with result
     ToolResult(String),
-    /// Task is complete
+    /// Task is complete with summary
     Complete(String),
     /// Error occurred
     Error(String),

@@ -1,4 +1,4 @@
-import { LucideIcon, HelpCircle, Activity, Plus, RefreshCw, Trash2, Wand2, Wrench, Cpu, Download, Bug, Check, X } from 'lucide-react';
+import { LucideIcon, HelpCircle, Activity, Plus, RefreshCw, Trash2, Wand2, Wrench, Cpu, Download, Bug, Check, X, Square } from 'lucide-react';
 
 // Command enum - single source of truth for all command names
 export enum Command {
@@ -7,6 +7,7 @@ export enum Command {
   New = 'new',
   Reset = 'reset',
   Clear = 'clear',
+  Stop = 'stop',
   Skills = 'skills',
   Tools = 'tools',
   Model = 'model',
@@ -59,6 +60,13 @@ export const COMMAND_DEFINITIONS: Record<Command, CommandDefinition> = {
     name: 'clear',
     description: 'Clear the chat display',
     icon: Trash2,
+    category: 'session',
+  },
+  [Command.Stop]: {
+    command: Command.Stop,
+    name: 'stop',
+    description: 'Stop the current agent execution',
+    icon: Square,
     category: 'session',
   },
   [Command.Skills]: {

@@ -165,6 +165,7 @@ impl ToolProfile {
                 vec![
                     ToolGroup::Web,
                     ToolGroup::Filesystem,
+                    ToolGroup::Exec,
                     ToolGroup::Messaging,
                     ToolGroup::Social,
                     ToolGroup::System,

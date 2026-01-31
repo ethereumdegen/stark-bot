@@ -2,6 +2,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Default max tool iterations
+pub const DEFAULT_MAX_TOOL_ITERATIONS: i32 = 50;
+
 /// Bot settings stored in database
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BotSettings {
@@ -13,6 +16,8 @@ pub struct BotSettings {
     pub rpc_provider: String,
     /// Custom RPC endpoints per network (only used when rpc_provider == "custom")
     pub custom_rpc_endpoints: Option<HashMap<String, String>>,
+    /// Maximum number of tool execution iterations per request
+    pub max_tool_iterations: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -26,6 +31,7 @@ impl Default for BotSettings {
             web3_tx_requires_confirmation: false,
             rpc_provider: "defirelay".to_string(),
             custom_rpc_endpoints: None,
+            max_tool_iterations: DEFAULT_MAX_TOOL_ITERATIONS,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -40,4 +46,5 @@ pub struct UpdateBotSettingsRequest {
     pub web3_tx_requires_confirmation: Option<bool>,
     pub rpc_provider: Option<String>,
     pub custom_rpc_endpoints: Option<HashMap<String, String>>,
+    pub max_tool_iterations: Option<i32>,
 }

@@ -3,7 +3,7 @@ name: github
 description: "Advanced GitHub operations with safe commits, PR creation, deployment, and quality checks."
 homepage: https://cli.github.com/manual/
 metadata: {"requires_auth": true}
-requires_binaries: [git, gh]
+requires_tools: [git, committer, deploy, pr_quality, github_user, api_keys_check]
 tags: [github, git, pr, version-control, deployment, ci-cd]
 ---
 
@@ -13,10 +13,19 @@ You have access to specialized tools for safe and effective GitHub operations:
 
 | Tool | Purpose |
 |------|---------|
+| `api_keys_check` | **Check if GITHUB_TOKEN is configured** |
+| `github_user` | **Get authenticated username** - call this before operations needing your username |
 | `git` | Basic git operations (status, diff, log, add, commit, branch, checkout, push, pull, fetch, clone) |
 | `committer` | **Safe scoped commits** with secret detection, conventional commit enforcement |
 | `deploy` | **Deployment ops** (push, PR creation, workflow monitoring, merge) |
 | `pr_quality` | **Pre-PR checks** (debug code, TODOs, size validation) |
+
+**Before GitHub operations, verify authentication:**
+```tool:api_keys_check
+key_name: GITHUB_TOKEN
+```
+
+If not configured, ask the user to add their GitHub Personal Access Token in Settings > API Keys.
 
 ## IMPORTANT: Use the Right Tools
 
@@ -31,6 +40,20 @@ You have access to specialized tools for safe and effective GitHub operations:
 - Automatic PR creation with proper formatting
 - CI/CD workflow monitoring
 - Auto-merge capabilities
+
+---
+
+## Getting Your GitHub Username
+
+When you need your authenticated GitHub username (for creating repos, setting remotes, etc.), use the `github_user` tool:
+
+```json
+{"tool": "github_user"}
+```
+
+This returns your authenticated username (e.g., "octocat"). Use it in commands like:
+- `gh repo create <username>/my-repo --public`
+- `git remote add origin https://github.com/<username>/repo.git`
 
 ---
 

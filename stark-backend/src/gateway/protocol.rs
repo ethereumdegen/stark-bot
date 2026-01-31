@@ -481,6 +481,24 @@ impl GatewayEvent {
         )
     }
 
+    /// Task metrics and active form updated
+    pub fn task_updated_with_active_form(task_id: &str, channel_id: i64, metrics: &TaskMetrics, active_form: &str) -> Self {
+        Self::new(
+            EventType::ExecutionTaskUpdated,
+            serde_json::json!({
+                "task_id": task_id,
+                "channel_id": channel_id,
+                "active_form": active_form,
+                "metrics": {
+                    "tool_uses": metrics.tool_uses,
+                    "tokens_used": metrics.tokens_used,
+                    "lines_read": metrics.lines_read,
+                    "duration_ms": metrics.duration_ms
+                }
+            }),
+        )
+    }
+
     /// Task completed
     pub fn task_completed(task_id: &str, channel_id: i64, status: &str, metrics: &TaskMetrics) -> Self {
         Self::new(

@@ -101,6 +101,16 @@ pub enum TaskType {
     PlanMode,
     /// Main execution phase
     Execution,
+    /// Planning tool calls (before execution)
+    Planning,
+    /// Analyzing/processing results
+    Analyzing,
+    /// Validating inputs or outputs
+    Validation,
+    /// Loading context or data
+    Loading,
+    /// Formatting response
+    Formatting,
 }
 
 impl std::fmt::Display for TaskType {
@@ -111,6 +121,11 @@ impl std::fmt::Display for TaskType {
             TaskType::AgentSpawn => write!(f, "agent"),
             TaskType::PlanMode => write!(f, "plan"),
             TaskType::Execution => write!(f, "execution"),
+            TaskType::Planning => write!(f, "planning"),
+            TaskType::Analyzing => write!(f, "analyzing"),
+            TaskType::Validation => write!(f, "validation"),
+            TaskType::Loading => write!(f, "loading"),
+            TaskType::Formatting => write!(f, "formatting"),
         }
     }
 }

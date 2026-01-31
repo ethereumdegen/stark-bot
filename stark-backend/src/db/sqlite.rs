@@ -188,6 +188,20 @@ impl Database {
             conn.execute("ALTER TABLE bot_settings ADD COLUMN custom_rpc_endpoints TEXT", [])?;
         }
 
+        // Migration: Add max_tool_iterations column to bot_settings if it doesn't exist
+        let has_max_tool_iterations: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('bot_settings') WHERE name='max_tool_iterations'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap_or(false);
+
+        if !has_max_tool_iterations {
+            conn.execute("ALTER TABLE bot_settings ADD COLUMN max_tool_iterations INTEGER NOT NULL DEFAULT 50", [])?;
+        }
+
         // Initialize bot_settings with defaults if empty
         let bot_settings_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM bot_settings", [], |row| row.get(0))

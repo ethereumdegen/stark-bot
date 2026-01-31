@@ -8,6 +8,11 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+/// Intrinsic files that appear in all workspaces
+const INTRINSIC_FILES: &[(&str, &str)] = &[
+    ("SOUL.md", "Agent personality and behavior configuration"),
+];
+
 /// List files tool - lists directory contents within a sandboxed directory
 pub struct ListFilesTool {
     definition: ToolDefinition,
@@ -255,6 +260,22 @@ impl Tool for ListFilesTool {
                     "path": path,
                     "total_entries": 0
                 }));
+        }
+
+        // Add intrinsic files when listing root directory
+        let is_root = path == "." || path == "/" || path.is_empty();
+        if is_root {
+            for (name, _desc) in INTRINSIC_FILES {
+                // Check if file already exists (don't duplicate)
+                if !entries.iter().any(|e| e.path == *name) {
+                    entries.push(FileEntry {
+                        path: name.to_string(),
+                        is_dir: false,
+                        size: 0, // Virtual file, size unknown
+                        depth: 0,
+                    });
+                }
+            }
         }
 
         // Sort entries: directories first, then by name

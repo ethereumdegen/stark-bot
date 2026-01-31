@@ -208,16 +208,22 @@ files: ["package.json", "src/index.ts", "src/types.ts", "README.md"]
 
 ## Step 8: Push to GitHub (Optional)
 
-**Create and push:**
+**First, get your GitHub username:**
+```tool:github_user
+```
+
+**Create repository on GitHub (using your username):**
+```tool:exec
+command: gh repo create <username>/my-project --public --source=. --push
+timeout: 30000
+```
+
+Replace `<username>` with the result from `github_user` tool.
+
+**Or just push to existing remote:**
 ```tool:deploy
 operation: push
 set_upstream: true
-```
-
-**Create repository on GitHub (if needed):**
-```tool:exec
-command: gh repo create my-project --public --source=. --push
-timeout: 30000
 ```
 
 ---
@@ -265,6 +271,7 @@ mkdir api && cd api && python -m venv venv && pip install flask
 | `exec` | Run project scaffolding commands |
 | `write_file` | Create project files |
 | `git` | Initialize repository |
+| `github_user` | Get authenticated GitHub username |
 | `committer` | Safe initial commit |
 | `deploy` | Push to GitHub |
 | `pr_quality` | Check for issues before commit |

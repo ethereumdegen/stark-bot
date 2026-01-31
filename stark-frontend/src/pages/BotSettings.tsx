@@ -1,5 +1,5 @@
 import { useState, useEffect, FormEvent } from 'react';
-import { Save, Bot, Server } from 'lucide-react';
+import { Save, Bot, Server, Settings } from 'lucide-react';
 import Card, { CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -12,6 +12,7 @@ export default function BotSettings() {
   const [rpcProvider, setRpcProvider] = useState('defirelay');
   const [customRpcBase, setCustomRpcBase] = useState('');
   const [customRpcMainnet, setCustomRpcMainnet] = useState('');
+  const [maxToolIterations, setMaxToolIterations] = useState(50);
   const [rpcProviders, setRpcProviders] = useState<RpcProvider[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -29,6 +30,7 @@ export default function BotSettings() {
       setBotName(data.bot_name);
       setBotEmail(data.bot_email);
       setRpcProvider(data.rpc_provider || 'defirelay');
+      setMaxToolIterations(data.max_tool_iterations || 50);
       if (data.custom_rpc_endpoints) {
         setCustomRpcBase(data.custom_rpc_endpoints.base || '');
         setCustomRpcMainnet(data.custom_rpc_endpoints.mainnet || '');
@@ -210,6 +212,56 @@ export default function BotSettings() {
               <Button type="submit" isLoading={isSaving} className="w-fit">
                 <Save className="w-4 h-4 mr-2" />
                 Save RPC Settings
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+
+        {/* Agent Behavior Section */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Settings className="w-5 h-5 text-stark-400" />
+              Agent Behavior
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={async (e: FormEvent) => {
+              e.preventDefault();
+              setIsSaving(true);
+              setMessage(null);
+              try {
+                const updated = await updateBotSettings({
+                  max_tool_iterations: maxToolIterations,
+                });
+                setSettings(updated);
+                setMessage({ type: 'success', text: 'Agent settings saved successfully' });
+              } catch (err) {
+                setMessage({ type: 'error', text: 'Failed to save agent settings' });
+              } finally {
+                setIsSaving(false);
+              }
+            }} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  Max Tool Iterations
+                </label>
+                <input
+                  type="number"
+                  min={10}
+                  max={200}
+                  value={maxToolIterations}
+                  onChange={(e) => setMaxToolIterations(parseInt(e.target.value) || 50)}
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white focus:border-stark-500 focus:outline-none"
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  Maximum number of tool calls per request (10-200). Higher values allow for more complex tasks but may take longer.
+                </p>
+              </div>
+
+              <Button type="submit" isLoading={isSaving} className="w-fit">
+                <Save className="w-4 h-4 mr-2" />
+                Save Agent Settings
               </Button>
             </form>
           </CardContent>
