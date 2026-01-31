@@ -1,4 +1,5 @@
 import { Code, CreditCard, Globe, AlertTriangle } from 'lucide-react'
+import ChatDemo from './ChatDemo'
 
 const features = [
   {
@@ -22,6 +23,19 @@ export function Features() {
   return (
     <section id="features" className="py-20 px-6">
       <div className="max-w-6xl mx-auto">
+        {/* Chat Demo Section */}
+        <div className="mb-16">
+          <h2 className="text-3xl sm:text-4xl font-bold text-center mb-4 text-white">
+            See It In Action
+          </h2>
+          <p className="text-white/50 text-center mb-8 max-w-2xl mx-auto">
+            This is what StarkBot looks like when you run your own instance
+          </p>
+          <div className="chat-demo-glow rounded-xl">
+            <ChatDemo />
+          </div>
+        </div>
+
         {/* Warning Banner */}
         <div className="mb-12 p-6 bg-white/5 border border-white/20 rounded-xl">
           <div className="flex items-start gap-4">
