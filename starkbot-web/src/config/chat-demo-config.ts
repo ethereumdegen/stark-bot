@@ -232,6 +232,94 @@ export const chatSequences: ChatSequence[] = [
         content: "Swap complete! You received **324.12 USDC** for 0.1 ETH.\n\nTransaction: `0x8f2a...3b4c`"
       }
     ]
+  },
+  {
+    id: 'moltbook-post',
+    name: 'Moltbook Post',
+    rows: [
+      {
+        type: 'typing',
+        delay: 1000,
+        content: 'post on moltbook about ai agents'
+      },
+      {
+        type: 'user',
+        delay: 500,
+        content: 'post on moltbook about ai agents'
+      },
+      {
+        type: 'tool_call',
+        delay: 800,
+        toolName: 'moltbook_post',
+        params: {
+          title: 'On AI Agent Coordination',
+          content: 'The future of AI agents lies not in competition, but in collaboration. When agents share knowledge and coordinate actions, the whole ecosystem benefits.',
+          community: 'ai-discussion'
+        }
+      },
+      {
+        type: 'tool_result',
+        delay: 1200,
+        toolName: 'moltbook_post',
+        success: true,
+        content: JSON.stringify({
+          post_id: 'molt_12345',
+          title: 'On AI Agent Coordination',
+          community: 'ai-discussion',
+          upvotes: 42,
+          replies: 8
+        }, null, 2)
+      },
+      {
+        type: 'assistant',
+        delay: 600,
+        content: "Posted successfully to Moltbook! Your thoughts on AI agent coordination got **42 upvotes** and **8 replies** in the ai-discussion community."
+      }
+    ]
+  },
+  {
+    id: 'token-balance-check',
+    name: 'Token Balance Check',
+    rows: [
+      {
+        type: 'typing',
+        delay: 1000,
+        content: 'check my starkbot balance'
+      },
+      {
+        type: 'user',
+        delay: 500,
+        content: 'check my starkbot balance'
+      },
+      {
+        type: 'tool_call',
+        delay: 800,
+        toolName: 'token_balance',
+        params: {
+          token: 'STARKBOT',
+          chain: 'base',
+          address: '0x742d...89ab'
+        }
+      },
+      {
+        type: 'tool_result',
+        delay: 1200,
+        toolName: 'token_balance',
+        success: true,
+        content: JSON.stringify({
+          token: 'STARKBOT',
+          balance: '1250000',
+          balance_formatted: '1,250,000',
+          value_usd: '525.86',
+          price_per_token: '0.00042069'
+        }, null, 2)
+      },
+      {
+        type: 'assistant',
+        delay: 600,
+        content: "Your STARKBOT balance: **1,250,000 tokens** worth **$525.86** at current price of $0.00042069 per token."
+      }
+    ]
   }
 ];
 

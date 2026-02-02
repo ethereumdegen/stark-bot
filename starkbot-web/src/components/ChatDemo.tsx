@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Send, Menu, Wrench, CheckCircle } from 'lucide-react'
+import { Send, Menu, Wrench, CheckCircle, Play, Pause, RotateCcw } from 'lucide-react'
 import { getRandomSequence, ChatRow, ChatSequence, LOOP_DELAY, TYPING_SPEED } from '../config/chat-demo-config'
 
 interface ChatMessage {
@@ -32,6 +32,7 @@ export function ChatDemo() {
   const [isTyping, setIsTyping] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
   const [currentSequence, setCurrentSequence] = useState<ChatSequence>(() => getRandomSequence());
+  const [isPaused, setIsPaused] = useState(false);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -59,6 +60,10 @@ export function ChatDemo() {
 
   // Main animation loop
   useEffect(() => {
+    if (isPaused) {
+      return;
+    }
+
     if (currentStep >= currentSequence.rows.length) {
       // Reset after loop delay with a new random sequence
       timeoutRef.current = setTimeout(() => {
@@ -81,7 +86,7 @@ export function ChatDemo() {
         clearTimeout(timeoutRef.current);
       }
     };
-  }, [currentStep, currentSequence]);
+  }, [currentStep, currentSequence, isPaused]);
 
   const processRow = (row: ChatRow) => {
     switch (row.type) {
@@ -148,6 +153,23 @@ export function ChatDemo() {
     }
   };
 
+  // Reset function
+  const resetDemo = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+    setMessages([]);
+    setInputValue('');
+    setCurrentSequence(getRandomSequence());
+    setCurrentStep(0);
+    setIsPaused(false);
+  }, []);
+
+  // Toggle pause/play
+  const togglePause = useCallback(() => {
+    setIsPaused(prev => !prev);
+  }, []);
+
   return (
     <div className="w-full max-w-4xl mx-auto">
       {/* Chat container - mimics the agent chat UI */}
@@ -172,6 +194,20 @@ export function ChatDemo() {
             <span className="text-xs px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded-full font-medium">
               USDC
             </span>
+            <button
+              onClick={togglePause}
+              className="p-2 bg-slate-700/50 border border-slate-600 rounded-lg text-slate-400 hover:text-white transition-colors"
+              title={isPaused ? "Play demo" : "Pause demo"}
+            >
+              {isPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
+            </button>
+            <button
+              onClick={resetDemo}
+              className="p-2 bg-slate-700/50 border border-slate-600 rounded-lg text-slate-400 hover:text-white transition-colors"
+              title="Reset demo"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </button>
           </div>
         </div>
 
