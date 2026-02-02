@@ -174,197 +174,202 @@ export default function ApiKeys() {
         </div>
       )}
 
-      <div className="grid gap-6 max-w-2xl">
-        {/* Service Groups */}
-        {serviceConfigs.map((config) => (
-          <Card key={config.group}>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <CardTitle>{config.label}</CardTitle>
-                  {isGroupComplete(config) && (
-                    <span className="flex items-center gap-1 text-xs text-green-400 bg-green-500/20 px-2 py-1 rounded">
-                      <Check className="w-3 h-3" />
-                      Configured
-                    </span>
-                  )}
-                  {isGroupPartial(config) && (
-                    <span className="flex items-center gap-1 text-xs text-yellow-400 bg-yellow-500/20 px-2 py-1 rounded">
-                      Partial
-                    </span>
-                  )}
-                </div>
-                <a
-                  href={config.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-stark-400 hover:text-stark-300 inline-flex items-center gap-1 text-sm"
-                >
-                  Get Keys
-                  <ExternalLink className="w-3 h-3" />
-                </a>
-              </div>
-              <p className="text-sm text-slate-400 mt-1">{config.description}</p>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={(e) => handleSaveGroup(config, e)} className="space-y-4">
-                {config.keys.map((keyConfig) => {
-                  const configuredKey = getConfiguredKey(keyConfig.name);
-                  const isConfigured = !!configuredKey;
-
-                  return (
-                    <div key={keyConfig.name} className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <label className="block text-sm font-medium text-slate-300">
-                          {keyConfig.label}
-                        </label>
-                        {isConfigured && (
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-slate-500 font-mono">
-                              {configuredKey.key_preview}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleDelete(keyConfig.name, keyConfig.label)}
-                              className="text-red-400 hover:text-red-300 p-1"
-                              title="Delete this key"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex gap-2">
-                        <Input
-                          type={keyConfig.secret ? 'password' : 'text'}
-                          value={keyInputs[keyConfig.name] || ''}
-                          onChange={(e) => handleKeyInputChange(keyConfig.name, e.target.value)}
-                          placeholder={isConfigured ? 'Enter new value to update' : `Enter ${keyConfig.label.toLowerCase()}`}
-                          className="flex-1"
-                        />
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => handleSaveKey(keyConfig.name)}
-                          isLoading={savingKeys.has(keyConfig.name)}
-                          disabled={!keyInputs[keyConfig.name]?.trim()}
-                        >
-                          Save
-                        </Button>
-                      </div>
-                    </div>
-                  );
-                })}
-
-                {config.keys.length > 1 && (
-                  <div className="pt-2 border-t border-slate-700">
-                    <Button
-                      type="submit"
-                      isLoading={config.keys.some(k => savingKeys.has(k.name))}
-                      disabled={!config.keys.some(k => keyInputs[k.name]?.trim())}
-                    >
-                      <Plus className="w-4 h-4 mr-2" />
-                      Save All {config.label} Keys
-                    </Button>
+      <div className="flex flex-col-reverse lg:flex-row gap-6">
+        {/* Left column: Service Groups and Info */}
+        <div className="flex-1 max-w-2xl space-y-6">
+          {/* Service Groups */}
+          {serviceConfigs.map((config) => (
+            <Card key={config.group}>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <CardTitle>{config.label}</CardTitle>
+                    {isGroupComplete(config) && (
+                      <span className="flex items-center gap-1 text-xs text-green-400 bg-green-500/20 px-2 py-1 rounded">
+                        <Check className="w-3 h-3" />
+                        Configured
+                      </span>
+                    )}
+                    {isGroupPartial(config) && (
+                      <span className="flex items-center gap-1 text-xs text-yellow-400 bg-yellow-500/20 px-2 py-1 rounded">
+                        Partial
+                      </span>
+                    )}
                   </div>
-                )}
-              </form>
+                  <a
+                    href={config.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-stark-400 hover:text-stark-300 inline-flex items-center gap-1 text-sm"
+                  >
+                    Get Keys
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+                <p className="text-sm text-slate-400 mt-1">{config.description}</p>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={(e) => handleSaveGroup(config, e)} className="space-y-4">
+                  {config.keys.map((keyConfig) => {
+                    const configuredKey = getConfiguredKey(keyConfig.name);
+                    const isConfigured = !!configuredKey;
+
+                    return (
+                      <div key={keyConfig.name} className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="block text-sm font-medium text-slate-300">
+                            {keyConfig.label}
+                          </label>
+                          {isConfigured && (
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-slate-500 font-mono">
+                                {configuredKey.key_preview}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleDelete(keyConfig.name, keyConfig.label)}
+                                className="text-red-400 hover:text-red-300 p-1"
+                                title="Delete this key"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex gap-2">
+                          <Input
+                            type={keyConfig.secret ? 'password' : 'text'}
+                            value={keyInputs[keyConfig.name] || ''}
+                            onChange={(e) => handleKeyInputChange(keyConfig.name, e.target.value)}
+                            placeholder={isConfigured ? 'Enter new value to update' : `Enter ${keyConfig.label.toLowerCase()}`}
+                            className="flex-1"
+                          />
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => handleSaveKey(keyConfig.name)}
+                            isLoading={savingKeys.has(keyConfig.name)}
+                            disabled={!keyInputs[keyConfig.name]?.trim()}
+                          >
+                            Save
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {config.keys.length > 1 && (
+                    <div className="pt-2 border-t border-slate-700">
+                      <Button
+                        type="submit"
+                        isLoading={config.keys.some(k => savingKeys.has(k.name))}
+                        disabled={!config.keys.some(k => keyInputs[k.name]?.trim())}
+                      >
+                        <Plus className="w-4 h-4 mr-2" />
+                        Save All {config.label} Keys
+                      </Button>
+                    </div>
+                  )}
+                </form>
+              </CardContent>
+            </Card>
+          ))}
+
+          {/* Service Info */}
+          <Card className="border-stark-500/30 bg-stark-500/5">
+            <CardContent className="pt-6">
+              <div className="flex items-start gap-4">
+                <Key className="w-6 h-6 text-stark-400 flex-shrink-0" />
+                <div>
+                  <h4 className="font-medium text-white mb-3">Where to get API keys</h4>
+                  <ul className="space-y-2 text-sm text-slate-400">
+                    {serviceConfigs.map((service) => (
+                      <li key={service.group} className="flex items-center gap-2">
+                        <span className="text-slate-300 font-medium">{service.label}:</span>
+                        <span>{service.description}</span>
+                        <a
+                          href={service.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-stark-400 hover:text-stark-300 inline-flex items-center gap-1"
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
             </CardContent>
           </Card>
-        ))}
+        </div>
 
-        {/* Service Info */}
-        <Card className="border-stark-500/30 bg-stark-500/5">
-          <CardContent className="pt-6">
-            <div className="flex items-start gap-4">
-              <Key className="w-6 h-6 text-stark-400 flex-shrink-0" />
-              <div>
-                <h4 className="font-medium text-white mb-3">Where to get API keys</h4>
-                <ul className="space-y-2 text-sm text-slate-400">
-                  {serviceConfigs.map((service) => (
-                    <li key={service.group} className="flex items-center gap-2">
-                      <span className="text-slate-300 font-medium">{service.label}:</span>
-                      <span>{service.description}</span>
-                      <a
-                        href={service.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-stark-400 hover:text-stark-300 inline-flex items-center gap-1"
-                      >
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        {/* Right column (on large screens) / Top (on small screens): Configuration Summary */}
+        <div className="lg:w-80 lg:flex-shrink-0">
+          <Card className="lg:sticky lg:top-8">
+            <CardHeader>
+              <CardTitle>Installed Keys</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {keys.length === 0 ? (
+                <div className="text-center py-8 text-slate-500">
+                  <Key className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                  <p>No API keys configured yet.</p>
+                  <p className="text-sm mt-1">Add keys below to get started.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {serviceConfigs.map((config) => {
+                    const configuredKeys = config.keys.filter(k => isKeyConfigured(k.name));
+                    if (configuredKeys.length === 0) return null;
 
-        {/* Summary of Configured Keys */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Configuration Summary</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {keys.length === 0 ? (
-              <div className="text-center py-8 text-slate-500">
-                <Key className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                <p>No API keys configured yet.</p>
-                <p className="text-sm mt-1">Add keys above to get started.</p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {serviceConfigs.map((config) => {
-                  const configuredKeys = config.keys.filter(k => isKeyConfigured(k.name));
-                  if (configuredKeys.length === 0) return null;
-
-                  return (
-                    <div key={config.group} className="p-4 bg-slate-900/50 rounded-lg border border-slate-700">
-                      <div className="flex items-center justify-between mb-2">
-                        <p className="font-medium text-white">{config.label}</p>
-                        {isGroupComplete(config) ? (
-                          <span className="flex items-center gap-1 text-xs text-green-400">
-                            <Check className="w-3 h-3" />
-                            Complete
-                          </span>
-                        ) : (
-                          <span className="flex items-center gap-1 text-xs text-yellow-400">
-                            <X className="w-3 h-3" />
-                            Partial
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-sm text-slate-400 space-y-1">
-                        {config.keys.map((keyConfig) => {
-                          const configuredKey = getConfiguredKey(keyConfig.name);
-                          return (
-                            <p key={keyConfig.name} className="flex items-center gap-2">
-                              {configuredKey ? (
-                                <Check className="w-3 h-3 text-green-400" />
-                              ) : (
-                                <X className="w-3 h-3 text-slate-600" />
-                              )}
-                              <span className={configuredKey ? 'text-slate-300' : 'text-slate-600'}>
-                                {keyConfig.label}
-                              </span>
-                              {configuredKey && (
-                                <span className="font-mono text-slate-500">
-                                  {configuredKey.key_preview}
+                    return (
+                      <div key={config.group} className="p-4 bg-slate-900/50 rounded-lg border border-slate-700">
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="font-medium text-white">{config.label}</p>
+                          {isGroupComplete(config) ? (
+                            <span className="flex items-center gap-1 text-xs text-green-400">
+                              <Check className="w-3 h-3" />
+                              Complete
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1 text-xs text-yellow-400">
+                              <X className="w-3 h-3" />
+                              Partial
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-sm text-slate-400 space-y-1">
+                          {config.keys.map((keyConfig) => {
+                            const configuredKey = getConfiguredKey(keyConfig.name);
+                            return (
+                              <p key={keyConfig.name} className="flex items-center gap-2">
+                                {configuredKey ? (
+                                  <Check className="w-3 h-3 text-green-400" />
+                                ) : (
+                                  <X className="w-3 h-3 text-slate-600" />
+                                )}
+                                <span className={configuredKey ? 'text-slate-300' : 'text-slate-600'}>
+                                  {keyConfig.label}
                                 </span>
-                              )}
-                            </p>
-                          );
-                        })}
+                                {configuredKey && (
+                                  <span className="font-mono text-slate-500">
+                                    {configuredKey.key_preview}
+                                  </span>
+                                )}
+                              </p>
+                            );
+                          })}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   );

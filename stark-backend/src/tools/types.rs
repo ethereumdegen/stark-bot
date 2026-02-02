@@ -6,6 +6,7 @@ use crate::gateway::events::EventBroadcaster;
 use crate::gateway::protocol::GatewayEvent;
 use crate::skills::SkillRegistry;
 use crate::tools::register::RegisterStore;
+use crate::tx_queue::TxQueueManager;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -337,6 +338,8 @@ pub struct ToolContext {
     pub process_manager: Option<Arc<ProcessManager>>,
     /// Skill registry for managing skills
     pub skill_registry: Option<Arc<SkillRegistry>>,
+    /// Transaction queue manager for queued web3 transactions
+    pub tx_queue: Option<Arc<TxQueueManager>>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -355,6 +358,7 @@ impl std::fmt::Debug for ToolContext {
             .field("subagent_manager", &self.subagent_manager.is_some())
             .field("process_manager", &self.process_manager.is_some())
             .field("skill_registry", &self.skill_registry.is_some())
+            .field("tx_queue", &self.tx_queue.is_some())
             .finish()
     }
 }
@@ -375,6 +379,7 @@ impl Default for ToolContext {
             subagent_manager: None,
             process_manager: None,
             skill_registry: None,
+            tx_queue: None,
         }
     }
 }
@@ -479,6 +484,12 @@ impl ToolContext {
     /// Add a SkillRegistry to the context (for skill management tools)
     pub fn with_skill_registry(mut self, registry: Arc<SkillRegistry>) -> Self {
         self.skill_registry = Some(registry);
+        self
+    }
+
+    /// Add a TxQueueManager to the context (for web3 transaction queuing)
+    pub fn with_tx_queue(mut self, tx_queue: Arc<TxQueueManager>) -> Self {
+        self.tx_queue = Some(tx_queue);
         self
     }
 

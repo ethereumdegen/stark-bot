@@ -23,8 +23,11 @@ mod tools;
 mod x402;
 mod eip8004;
 mod hooks;
+mod tool_validators;
+mod tx_queue;
 
 use channels::{ChannelManager, MessageDispatcher};
+use tx_queue::TxQueueManager;
 use config::Config;
 use db::Database;
 use execution::ExecutionTracker;
@@ -46,6 +49,7 @@ pub struct AppState {
     pub channel_manager: Arc<ChannelManager>,
     pub broadcaster: Arc<EventBroadcaster>,
     pub hook_manager: Arc<HookManager>,
+    pub tx_queue: Arc<TxQueueManager>,
 }
 
 /// SPA fallback handler - serves index.html for client-side routing
@@ -127,6 +131,15 @@ async fn main() -> std::io::Result<()> {
     hook_manager.register(Arc::new(AutoMemoryHook::new(db.clone())));
     log::info!("Registered {} hooks", hook_manager.hook_count());
 
+    // Initialize Tool Validator Registry
+    log::info!("Initializing tool validator registry");
+    let validator_registry = Arc::new(tool_validators::create_default_registry());
+    log::info!("Registered {} tool validators", validator_registry.len());
+
+    // Initialize Transaction Queue Manager
+    log::info!("Initializing transaction queue manager");
+    let tx_queue = Arc::new(TxQueueManager::new());
+
     // Create the shared MessageDispatcher for all message processing
     log::info!("Initializing message dispatcher");
     let dispatcher = Arc::new(
@@ -138,6 +151,8 @@ async fn main() -> std::io::Result<()> {
             config.burner_wallet_private_key.clone(),
             Some(skill_registry.clone()),
         ).with_hook_manager(hook_manager.clone())
+         .with_validator_registry(validator_registry.clone())
+         .with_tx_queue(tx_queue.clone())
     );
 
     // Get broadcaster and channel_manager for the /ws route
@@ -194,6 +209,7 @@ async fn main() -> std::io::Result<()> {
     let bcast = broadcaster.clone();
     let chan_mgr = channel_manager.clone();
     let hook_mgr = hook_manager.clone();
+    let tx_q = tx_queue.clone();
     let frontend_dist = frontend_dist.to_string();
 
     HttpServer::new(move || {
@@ -216,6 +232,7 @@ async fn main() -> std::io::Result<()> {
                 channel_manager: Arc::clone(&chan_mgr),
                 broadcaster: Arc::clone(&bcast),
                 hook_manager: Arc::clone(&hook_mgr),
+                tx_queue: Arc::clone(&tx_q),
             }))
             .app_data(web::Data::new(Arc::clone(&sched)))
             // WebSocket data for /ws route
@@ -243,6 +260,7 @@ async fn main() -> std::io::Result<()> {
             .configure(controllers::files::config)
             .configure(controllers::intrinsic::config)
             .configure(controllers::journal::config)
+            .configure(controllers::tx_queue::config)
             // WebSocket Gateway route (same port as HTTP, required for single-port platforms)
             .route("/ws", web::get().to(gateway::actix_ws::ws_handler));
 

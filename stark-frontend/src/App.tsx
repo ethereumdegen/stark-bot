@@ -20,6 +20,7 @@ import Debug from '@/pages/Debug';
 import ApiKeys from '@/pages/ApiKeys';
 import Payments from '@/pages/Payments';
 import EIP8004 from '@/pages/EIP8004';
+import CryptoTransactions from '@/pages/CryptoTransactions';
 
 function App() {
   return (
@@ -45,6 +46,7 @@ function App() {
         <Route path="/debug" element={<Debug />} />
         <Route path="/payments" element={<Payments />} />
         <Route path="/eip8004" element={<EIP8004 />} />
+        <Route path="/crypto-transactions" element={<CryptoTransactions />} />
       </Route>
     </Routes>
   );

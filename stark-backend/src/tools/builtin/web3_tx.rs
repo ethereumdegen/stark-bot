@@ -1,16 +1,21 @@
-//! Generic Web3 transaction signing and broadcasting tool
+//! Generic Web3 transaction signing and queuing tool
 //!
-//! Signs and broadcasts raw EVM transactions using the burner wallet.
-//! This is a generic tool - specific tx data is crafted by skills or the agent.
+//! Signs EVM transactions using the burner wallet and queues them for broadcast.
+//! This creates a safety layer where transactions can be reviewed before broadcast.
+//!
+//! ## Flow
+//! 1. web3_tx signs transaction and queues it (returns UUID)
+//! 2. list_queued_web3_tx shows queued transactions
+//! 3. broadcast_web3_tx broadcasts by UUID
+//!
 //! All RPC calls go through defirelay.com with x402 payments.
 
 use crate::domain_types::DomainUint256;
-use crate::gateway::events::EventBroadcaster;
-use crate::gateway::protocol::GatewayEvent;
 use crate::tools::registry::Tool;
 use crate::tools::types::{
     PropertySchema, ToolContext, ToolDefinition, ToolGroup, ToolInputSchema, ToolResult,
 };
+use crate::tx_queue::QueuedTransaction;
 use crate::x402::X402EvmRpc;
 use async_trait::async_trait;
 use ethers::prelude::*;
@@ -19,25 +24,21 @@ use ethers::types::transaction::eip2718::TypedTransaction;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
+use uuid::Uuid;
 
-/// Transaction result with all the details an agent needs
+/// Signed transaction result with all details needed for queuing
 #[derive(Debug)]
-struct TxResult {
+struct SignedTxResult {
     from: String,
     to: String,
-    tx_hash: String,
-    status: String,
-    network: String,
-    value_wei: String,
+    value: String,
+    data: String,
     gas_limit: String,
-    gas_used: Option<String>,
     max_fee_per_gas: String,
     max_priority_fee_per_gas: String,
-    effective_gas_price: Option<String>,
-    block_number: Option<u64>,
-    explorer_url: String,
+    nonce: u64,
+    signed_tx_hex: String,
+    network: String,
 }
 
 /// Web3 transaction tool
@@ -96,7 +97,7 @@ impl Web3TxTool {
         Web3TxTool {
             definition: ToolDefinition {
                 name: "web3_tx".to_string(),
-                description: "Sign and broadcast an EVM transaction. Reads tx data (to, data, value, gas) from a register to prevent hallucination of critical transaction parameters.".to_string(),
+                description: "Sign and QUEUE an EVM transaction for later broadcast. Returns a UUID. Use broadcast_web3_tx to broadcast the queued transaction. Use list_queued_web3_tx to view queued transactions.".to_string(),
                 input_schema: ToolInputSchema {
                     schema_type: "object".to_string(),
                     properties,
@@ -124,8 +125,8 @@ impl Web3TxTool {
             .ok_or_else(|| "BURNER_WALLET_BOT_PRIVATE_KEY not set".to_string())
     }
 
-    /// Send a transaction via x402 RPC
-    async fn send_transaction(
+    /// Sign a transaction (but don't broadcast it)
+    async fn sign_transaction(
         network: &str,
         to: &str,
         data: &str,
@@ -133,9 +134,7 @@ impl Web3TxTool {
         gas_limit: Option<U256>,
         max_fee_per_gas: Option<U256>,
         max_priority_fee_per_gas: Option<U256>,
-        broadcaster: Option<&Arc<EventBroadcaster>>,
-        channel_id: Option<i64>,
-    ) -> Result<TxResult, String> {
+    ) -> Result<SignedTxResult, String> {
         let private_key = Self::get_private_key()?;
         let rpc = X402EvmRpc::new(&private_key, network)?;
         let chain_id = rpc.chain_id();
@@ -206,7 +205,7 @@ impl Web3TxTool {
         };
 
         log::info!(
-            "[web3_tx] Sending tx: to={}, value={}, data_len={} bytes, gas={}, max_fee={}, priority_fee={}, nonce={} on {}",
+            "[web3_tx] Signing tx: to={}, value={}, data_len={} bytes, gas={}, max_fee={}, priority_fee={}, nonce={} on {}",
             to, value, calldata.len(), gas, max_fee, priority_fee, nonce, network
         );
 
@@ -231,71 +230,26 @@ impl Web3TxTool {
 
         // Serialize the signed transaction
         let signed_tx = typed_tx.rlp_signed(&signature);
+        let signed_tx_hex = format!("0x{}", hex::encode(&signed_tx));
 
-        // Broadcast via x402 RPC
-        let tx_hash = rpc.send_raw_transaction(&signed_tx).await?;
-        let tx_hash_str = format!("{:?}", tx_hash);
+        log::info!("[web3_tx] Transaction signed successfully, nonce={}", nonce);
 
-        log::info!("[web3_tx] Transaction sent: {}", tx_hash_str);
-
-        // Get explorer URL for the tx
-        let explorer = if network == "mainnet" {
-            "https://etherscan.io/tx"
-        } else {
-            "https://basescan.org/tx"
-        };
-        let explorer_url = format!("{}/{}", explorer, tx_hash_str);
-
-        // Emit tx.pending event immediately so frontend can show the hash
-        if let (Some(broadcaster), Some(ch_id)) = (broadcaster, channel_id) {
-            broadcaster.broadcast(GatewayEvent::tx_pending(
-                ch_id,
-                &tx_hash_str,
-                network,
-                &explorer_url,
-            ));
-            log::info!("[web3_tx] Emitted tx.pending event for {}", tx_hash_str);
-        }
-
-        // Wait for receipt (with timeout)
-        let receipt = rpc.wait_for_receipt(tx_hash, Duration::from_secs(120)).await?;
-
-        let status = if receipt.status == Some(U64::from(1)) {
-            "confirmed".to_string()
-        } else {
-            "reverted".to_string()
-        };
-
-        // Emit tx.confirmed event when the transaction is mined
-        if let (Some(broadcaster), Some(ch_id)) = (broadcaster, channel_id) {
-            broadcaster.broadcast(GatewayEvent::tx_confirmed(
-                ch_id,
-                &tx_hash_str,
-                network,
-                &status,
-            ));
-            log::info!("[web3_tx] Emitted tx.confirmed event for {} (status={})", tx_hash_str, status);
-        }
-
-        Ok(TxResult {
+        Ok(SignedTxResult {
             from: from_str,
             to: to.to_string(),
-            tx_hash: tx_hash_str,
-            status,
-            network: network.to_string(),
-            value_wei: tx_value.to_string(),
+            value: tx_value.to_string(),
+            data: data.to_string(),
             gas_limit: gas.to_string(),
-            gas_used: receipt.gas_used.map(|g| g.to_string()),
             max_fee_per_gas: max_fee.to_string(),
             max_priority_fee_per_gas: priority_fee.to_string(),
-            effective_gas_price: receipt.effective_gas_price.map(|p| p.to_string()),
-            block_number: receipt.block_number.map(|b| b.as_u64()),
-            explorer_url,
+            nonce: nonce.as_u64(),
+            signed_tx_hex,
+            network: network.to_string(),
         })
     }
 
     /// Format wei as human-readable ETH
-    fn format_eth(wei: &str) -> String {
+    pub fn format_eth(wei: &str) -> String {
         if let Ok(w) = wei.parse::<u128>() {
             let eth = w as f64 / 1e18;
             if eth >= 0.0001 {
@@ -309,7 +263,7 @@ impl Web3TxTool {
     }
 
     /// Format wei as gwei for gas prices
-    fn format_gwei(wei: &str) -> String {
+    pub fn format_gwei(wei: &str) -> String {
         if let Ok(w) = wei.parse::<u128>() {
             let gwei = w as f64 / 1e9;
             format!("{:.4} gwei", gwei)
@@ -324,43 +278,43 @@ impl Web3TxTool {
 
         // Identify the error type and provide context
         if error.contains("insufficient funds") {
-            result.push_str("❌ INSUFFICIENT FUNDS\n\n");
+            result.push_str("INSUFFICIENT FUNDS\n\n");
             result.push_str("The wallet doesn't have enough ETH to cover gas + value.\n");
 
             // Try to parse the have/want from the error
             if let (Some(have_start), Some(want_start)) = (error.find("have "), error.find("want ")) {
                 let have = error[have_start + 5..].split_whitespace().next().unwrap_or("?");
                 let want = error[want_start + 5..].split_whitespace().next().unwrap_or("?");
-                result.push_str(&format!("• Have: {} ({})\n", have, Self::format_eth(have)));
-                result.push_str(&format!("• Need: {} ({})\n", want, Self::format_eth(want)));
+                result.push_str(&format!("* Have: {} ({})\n", have, Self::format_eth(have)));
+                result.push_str(&format!("* Need: {} ({})\n", want, Self::format_eth(want)));
             }
             result.push_str("\nAction: Fund the wallet or reduce the transaction value/gas.");
         } else if error.contains("max priority fee per gas higher than max fee") {
-            result.push_str("❌ INVALID GAS PARAMS\n\n");
+            result.push_str("INVALID GAS PARAMS\n\n");
             result.push_str("max_priority_fee_per_gas cannot exceed max_fee_per_gas.\n");
-            result.push_str(&format!("• max_fee_per_gas: {}\n", params.max_fee_per_gas.as_ref().map(|g| g.0.to_string()).unwrap_or_else(|| "not set".to_string())));
-            result.push_str(&format!("• max_priority_fee_per_gas: {}\n", params.max_priority_fee_per_gas.as_ref().map(|g| g.0.to_string()).unwrap_or_else(|| "not set".to_string())));
+            result.push_str(&format!("* max_fee_per_gas: {}\n", params.max_fee_per_gas.as_ref().map(|g| g.0.to_string()).unwrap_or_else(|| "not set".to_string())));
+            result.push_str(&format!("* max_priority_fee_per_gas: {}\n", params.max_priority_fee_per_gas.as_ref().map(|g| g.0.to_string()).unwrap_or_else(|| "not set".to_string())));
             result.push_str("\nAction: Set max_priority_fee_per_gas <= max_fee_per_gas.");
         } else if error.contains("nonce too low") {
-            result.push_str("❌ NONCE TOO LOW\n\n");
+            result.push_str("NONCE TOO LOW\n\n");
             result.push_str("A transaction with this nonce was already mined.\n");
             result.push_str("Action: Retry - the nonce will be re-fetched automatically.");
         } else if error.contains("replacement transaction underpriced") {
-            result.push_str("❌ REPLACEMENT UNDERPRICED\n\n");
+            result.push_str("REPLACEMENT UNDERPRICED\n\n");
             result.push_str("A pending transaction exists with the same nonce but higher gas price.\n");
             result.push_str("Action: Increase max_fee_per_gas by at least 10% to replace it.");
         } else if error.contains("gas required exceeds allowance") || error.contains("out of gas") {
-            result.push_str("❌ OUT OF GAS\n\n");
+            result.push_str("OUT OF GAS\n\n");
             result.push_str("The transaction would run out of gas during execution.\n");
-            result.push_str(&format!("• gas_limit provided: {}\n", tx_data.gas_limit.map(|g| g.to_string()).unwrap_or_else(|| "auto-estimated".to_string())));
+            result.push_str(&format!("* gas_limit provided: {}\n", tx_data.gas_limit.map(|g| g.to_string()).unwrap_or_else(|| "auto-estimated".to_string())));
             result.push_str("Action: Increase gas_limit or check if the transaction would revert.");
         } else if error.contains("execution reverted") {
-            result.push_str("❌ EXECUTION REVERTED\n\n");
+            result.push_str("EXECUTION REVERTED\n\n");
             result.push_str("The contract rejected the transaction during simulation.\n");
             result.push_str("Common causes: slippage, insufficient approval, bad params.\n");
             result.push_str("Action: Check contract requirements and transaction parameters.");
         } else {
-            result.push_str(&format!("❌ TRANSACTION FAILED\n\n{}\n", error));
+            result.push_str(&format!("SIGNING FAILED\n\n{}\n", error));
         }
 
         // Always append the attempted params for debugging
@@ -517,7 +471,14 @@ impl Tool for Web3TxTool {
             return ToolResult::error("Network must be 'base' or 'mainnet'");
         }
 
-        match Self::send_transaction(
+        // Check if tx_queue is available
+        let tx_queue = match &context.tx_queue {
+            Some(q) => q,
+            None => return ToolResult::error("Transaction queue not available. Contact administrator."),
+        };
+
+        // Sign the transaction (but don't broadcast)
+        match Self::sign_transaction(
             &params.network,
             &tx_data.to,
             &tx_data.data,
@@ -525,64 +486,59 @@ impl Tool for Web3TxTool {
             tx_data.gas_limit,
             params.max_fee_per_gas.as_ref().map(|g| g.0),
             params.max_priority_fee_per_gas.as_ref().map(|g| g.0),
-            context.broadcaster.as_ref(),
-            context.channel_id,
         ).await {
-            Ok(result) => {
-                let status_emoji = if result.status == "confirmed" { "✅" } else { "❌" };
+            Ok(signed) => {
+                // Generate UUID for this queued transaction
+                let uuid = Uuid::new_v4().to_string();
 
-                // Build detailed success message
-                let mut msg = format!(
-                    "{} TRANSACTION {}\n\n",
-                    status_emoji,
-                    result.status.to_uppercase()
+                // Create queued transaction
+                let queued_tx = QueuedTransaction::new(
+                    uuid.clone(),
+                    signed.network.clone(),
+                    signed.from.clone(),
+                    signed.to.clone(),
+                    signed.value.clone(),
+                    signed.data.clone(),
+                    signed.gas_limit.clone(),
+                    signed.max_fee_per_gas.clone(),
+                    signed.max_priority_fee_per_gas.clone(),
+                    signed.nonce,
+                    signed.signed_tx_hex.clone(),
+                    context.channel_id,
                 );
-                msg.push_str(&format!("Hash: {}\n", result.tx_hash));
-                msg.push_str(&format!("Explorer: {}\n\n", result.explorer_url));
 
-                msg.push_str("--- Details ---\n");
-                msg.push_str(&format!("From: {}\n", result.from));
-                msg.push_str(&format!("To: {}\n", result.to));
-                msg.push_str(&format!("Network: {}\n", result.network));
-                msg.push_str(&format!("Value: {} ({})\n", result.value_wei, Self::format_eth(&result.value_wei)));
+                // Queue the transaction
+                tx_queue.queue(queued_tx);
 
-                if let Some(ref block) = result.block_number {
-                    msg.push_str(&format!("Block: {}\n", block));
-                }
+                log::info!("[web3_tx] Transaction queued with UUID: {}", uuid);
 
-                msg.push_str("\n--- Gas ---\n");
-                msg.push_str(&format!("Gas Limit: {}\n", result.gas_limit));
-                if let Some(ref used) = result.gas_used {
-                    msg.push_str(&format!("Gas Used: {}\n", used));
-                }
-                msg.push_str(&format!("Max Fee: {} ({})\n", result.max_fee_per_gas, Self::format_gwei(&result.max_fee_per_gas)));
-                msg.push_str(&format!("Priority Fee: {} ({})\n", result.max_priority_fee_per_gas, Self::format_gwei(&result.max_priority_fee_per_gas)));
-                if let Some(ref effective) = result.effective_gas_price {
-                    msg.push_str(&format!("Effective Price: {} ({})\n", effective, Self::format_gwei(effective)));
-                }
-
-                // Calculate actual cost if we have the data
-                if let (Some(used), Some(price)) = (&result.gas_used, &result.effective_gas_price) {
-                    if let (Ok(u), Ok(p)) = (used.parse::<u128>(), price.parse::<u128>()) {
-                        let cost = u * p;
-                        msg.push_str(&format!("Actual Cost: {}\n", Self::format_eth(&cost.to_string())));
-                    }
-                }
+                // Build response message
+                let mut msg = String::new();
+                msg.push_str("TRANSACTION QUEUED (not yet broadcast)\n\n");
+                msg.push_str(&format!("UUID: {}\n", uuid));
+                msg.push_str(&format!("Network: {}\n", signed.network));
+                msg.push_str(&format!("From: {}\n", signed.from));
+                msg.push_str(&format!("To: {}\n", signed.to));
+                msg.push_str(&format!("Value: {} ({})\n", signed.value, Self::format_eth(&signed.value)));
+                msg.push_str(&format!("Nonce: {}\n", signed.nonce));
+                msg.push_str(&format!("Gas Limit: {}\n", signed.gas_limit));
+                msg.push_str(&format!("Max Fee: {} ({})\n", signed.max_fee_per_gas, Self::format_gwei(&signed.max_fee_per_gas)));
+                msg.push_str(&format!("Priority Fee: {} ({})\n", signed.max_priority_fee_per_gas, Self::format_gwei(&signed.max_priority_fee_per_gas)));
+                msg.push_str("\n--- Next Steps ---\n");
+                msg.push_str("To view queued: use `list_queued_web3_tx`\n");
+                msg.push_str(&format!("To broadcast: use `broadcast_web3_tx` with uuid: {}\n", uuid));
 
                 ToolResult::success(msg).with_metadata(json!({
-                    "from": result.from,
-                    "to": result.to,
-                    "tx_hash": result.tx_hash,
-                    "status": result.status,
-                    "network": result.network,
-                    "explorer_url": result.explorer_url,
-                    "value_wei": result.value_wei,
-                    "gas_limit": result.gas_limit,
-                    "gas_used": result.gas_used,
-                    "max_fee_per_gas": result.max_fee_per_gas,
-                    "max_priority_fee_per_gas": result.max_priority_fee_per_gas,
-                    "effective_gas_price": result.effective_gas_price,
-                    "block_number": result.block_number
+                    "uuid": uuid,
+                    "status": "queued",
+                    "network": signed.network,
+                    "from": signed.from,
+                    "to": signed.to,
+                    "value": signed.value,
+                    "nonce": signed.nonce,
+                    "gas_limit": signed.gas_limit,
+                    "max_fee_per_gas": signed.max_fee_per_gas,
+                    "max_priority_fee_per_gas": signed.max_priority_fee_per_gas
                 }))
             }
             Err(e) => ToolResult::error(Self::parse_rpc_error(&e, &tx_data, &params)),

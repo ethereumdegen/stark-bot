@@ -20,6 +20,7 @@ import {
   Shield,
   Sparkles,
   BookOpen,
+  Wallet,
 } from 'lucide-react';
 import NavItem from './NavItem';
 import { useAuth } from '@/hooks/useAuth';
@@ -42,7 +43,7 @@ export default function Sidebar() {
   }, []);
 
   return (
-    <aside className="w-64 h-screen sticky top-0 bg-slate-800 flex flex-col border-r border-slate-700">
+    <aside className="hidden md:flex w-64 h-screen sticky top-0 bg-slate-800 flex-col border-r border-slate-700">
       {/* Header */}
       <div className="p-6 border-b border-slate-700">
         <h1 className="text-2xl font-bold text-stark-400">StarkBot</h1>
@@ -86,6 +87,7 @@ export default function Sidebar() {
           </p>
           <NavItem to="/logs" icon={ScrollText} label="Live Logs" />
           <NavItem to="/debug" icon={Bug} label="Debug" />
+          <NavItem to="/crypto-transactions" icon={Wallet} label="Crypto Transactions" />
           <NavItem to="/payments" icon={DollarSign} label="Payments" />
           <NavItem to="/eip8004" icon={Shield} label="EIP-8004" />
         </div>

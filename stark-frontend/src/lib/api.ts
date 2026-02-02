@@ -1190,3 +1190,50 @@ export async function readJournalFile(path: string): Promise<ReadJournalResponse
 export async function getJournalInfo(): Promise<JournalInfoResponse> {
   return apiFetch('/journal/info');
 }
+
+// Transaction Queue API
+export interface QueuedTransactionInfo {
+  uuid: string;
+  network: string;
+  from: string;
+  to: string;
+  value: string;
+  value_formatted: string;
+  status: 'pending' | 'broadcasting' | 'broadcast' | 'confirmed' | 'failed' | 'expired';
+  tx_hash?: string;
+  explorer_url?: string;
+  error?: string;
+  created_at: string;
+  broadcast_at?: string;
+}
+
+export interface QueuedTransactionsResponse {
+  success: boolean;
+  transactions: QueuedTransactionInfo[];
+  total: number;
+  pending_count: number;
+  confirmed_count: number;
+  failed_count: number;
+}
+
+export interface QueuedTransactionResponse {
+  success: boolean;
+  transaction?: QueuedTransactionInfo;
+  error?: string;
+}
+
+export async function getQueuedTransactions(status?: string, limit?: number): Promise<QueuedTransactionsResponse> {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (limit) params.set('limit', String(limit));
+  const query = params.toString();
+  return apiFetch(`/tx-queue${query ? `?${query}` : ''}`);
+}
+
+export async function getPendingTransactions(): Promise<QueuedTransactionsResponse> {
+  return apiFetch('/tx-queue/pending');
+}
+
+export async function getQueuedTransaction(uuid: string): Promise<QueuedTransactionResponse> {
+  return apiFetch(`/tx-queue/${encodeURIComponent(uuid)}`);
+}

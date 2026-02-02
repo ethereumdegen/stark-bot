@@ -16,7 +16,7 @@ export function Token() {
     <section className="py-8 px-6">
       <div className="max-w-5xl mx-auto">
         <div className="bg-gradient-to-br from-blue-500/10 to-purple-500/10 rounded-2xl border border-blue-500/20 px-6 py-4">
-          <div className="flex items-center gap-6">
+          <div className="flex flex-wrap items-center gap-4 sm:gap-6">
             {/* Token Icon */}
             <div className="flex-shrink-0">
               <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-blue-700 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/30">
@@ -33,7 +33,7 @@ export function Token() {
             </div>
 
             {/* Action Buttons */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 order-last w-full sm:order-none sm:w-auto">
               <a
                 href="https://app.uniswap.org/swap?chain=base&outputCurrency=0x587Cd533F418825521f3A1daa7CCd1E7339A1B07"
                 target="_blank"

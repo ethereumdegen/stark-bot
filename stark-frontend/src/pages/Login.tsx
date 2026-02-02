@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BrowserProvider } from 'ethers';
 import { generateChallenge, validateAuth } from '@/lib/api';
@@ -7,11 +7,47 @@ import Card, { CardContent } from '@/components/ui/Card';
 
 type LoginState = 'idle' | 'connecting' | 'signing' | 'verifying';
 
+// Detect if we're on mobile
+function isMobile(): boolean {
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+    navigator.userAgent
+  );
+}
+
+// Check if ethereum provider is available
+function hasWalletProvider(): boolean {
+  return typeof window.ethereum !== 'undefined';
+}
+
+// Generate deep links for wallet apps
+function getWalletDeepLinks() {
+  const currentUrl = window.location.href;
+  const host = window.location.host + window.location.pathname;
+  const urlWithoutProtocol = currentUrl.replace(/^https?:\/\//, '');
+
+  return {
+    rainbow: `https://rainbow.me/dapp/${host}`,
+    metamask: `https://metamask.app.link/dapp/${urlWithoutProtocol}`,
+    trust: `https://link.trustwallet.com/open_url?url=${encodeURIComponent(currentUrl)}`,
+    coinbase: `https://go.cb-w.com/dapp?cb_url=${encodeURIComponent(currentUrl)}`,
+  };
+}
+
 export default function Login() {
   const [error, setError] = useState('');
   const [state, setState] = useState<LoginState>('idle');
   const [connectedAddress, setConnectedAddress] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  const showMobileWalletOptions = useMemo(() => {
+    return isMobile() && !hasWalletProvider();
+  }, []);
+
+  const walletLinks = useMemo(() => getWalletDeepLinks(), []);
+
+  const openInWallet = (wallet: keyof ReturnType<typeof getWalletDeepLinks>) => {
+    window.location.href = walletLinks[wallet];
+  };
 
   const getStateMessage = () => {
     switch (state) {
@@ -32,7 +68,7 @@ export default function Login() {
 
     try {
       // Check if MetaMask or compatible wallet is available
-      if (typeof window.ethereum === 'undefined') {
+      if (!hasWalletProvider()) {
         throw new Error('Please install MetaMask or a compatible Ethereum wallet');
       }
 
@@ -146,18 +182,61 @@ export default function Login() {
                 </div>
               )}
 
-              <Button
-                onClick={handleConnect}
-                className="w-full"
-                size="lg"
-                disabled={isLoading}
-              >
-                {isLoading ? 'Connecting...' : 'Connect Wallet'}
-              </Button>
+              {showMobileWalletOptions ? (
+                <>
+                  <p className="text-sm text-slate-400 text-center">
+                    Open in your wallet app
+                  </p>
+                  <div className="space-y-3">
+                    <button
+                      onClick={() => openInWallet('rainbow')}
+                      className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white font-medium rounded-lg transition-all"
+                    >
+                      <span className="text-xl">🌈</span>
+                      Rainbow
+                    </button>
+                    <button
+                      onClick={() => openInWallet('metamask')}
+                      className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-orange-500 hover:bg-orange-600 text-white font-medium rounded-lg transition-colors"
+                    >
+                      <span className="text-xl">🦊</span>
+                      MetaMask
+                    </button>
+                    <button
+                      onClick={() => openInWallet('coinbase')}
+                      className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors"
+                    >
+                      <span className="text-xl">💰</span>
+                      Coinbase Wallet
+                    </button>
+                    <button
+                      onClick={() => openInWallet('trust')}
+                      className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-lg transition-colors"
+                    >
+                      <span className="text-xl">🛡️</span>
+                      Trust Wallet
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-500 text-center">
+                    This will open the app in your wallet's browser
+                  </p>
+                </>
+              ) : (
+                <>
+                  <Button
+                    onClick={handleConnect}
+                    className="w-full"
+                    size="lg"
+                    disabled={isLoading}
+                  >
+                    {isLoading ? 'Connecting...' : 'Connect Wallet'}
+                  </Button>
 
-              <p className="text-xs text-slate-500 text-center">
-                Sign in with your Ethereum wallet using SIWE (Sign In With Ethereum)
-              </p>
+                  <p className="text-xs text-slate-500 text-center">
+                    Sign in with your Ethereum wallet using SIWE (Sign In With Ethereum)
+                  </p>
+                </>
+              )}
             </div>
           </CardContent>
         </Card>

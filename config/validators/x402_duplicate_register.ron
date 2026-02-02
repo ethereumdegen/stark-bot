@@ -1,0 +1,23 @@
+ValidatorDef(
+    id: "x402_duplicate_register",
+    name: "X402 Duplicate Registration Blocker",
+    description: "Prevents re-registration when API key exists",
+    applies_to: ["x402_post"],
+    priority: Critical,
+
+    rules: [
+        (
+            when: All([
+                UrlContains("x402book.com"),
+                UrlContains("/register"),
+                CredentialExists("X402BOOK_TOKEN"),
+            ]),
+            then: BlockWithSuggestion(
+                reason: "Already registered on x402book. Your API key is already configured.",
+                suggestion: "Use x402_post to create threads at /api/boards/{slug}/threads instead.",
+            ),
+        ),
+    ],
+
+    default: Allow,
+)

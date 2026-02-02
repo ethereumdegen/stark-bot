@@ -5,7 +5,7 @@ version: 1.0.0
 author: starkbot
 homepage: https://cli.github.com/manual/
 metadata: {"requires_auth": true, "clawdbot":{"emoji":"🐙"}}
-requires_tools: [git, committer, deploy, pr_quality, github_user, api_keys_check]
+requires_tools: [git, committer, deploy, pr_quality, github_user, api_keys_check, exec]
 tags: [github, git, pr, version-control, deployment, ci-cd, development]
 ---
 
@@ -21,6 +21,7 @@ You have access to specialized tools for safe and effective GitHub operations:
 | `committer` | **Safe scoped commits** with secret detection, conventional commit enforcement |
 | `deploy` | **Deployment ops** (push, PR creation, workflow monitoring, merge) |
 | `pr_quality` | **Pre-PR checks** (debug code, TODOs, size validation) |
+| `exec` | **Shell commands** for GitHub Projects and other `gh` CLI operations |
 
 **Before GitHub operations, verify authentication:**
 ```tool:api_keys_check
@@ -285,6 +286,71 @@ Examples:
 {"tool": "deploy", "operation": "merge_pr", "pr_number": 123}
 {"tool": "deploy", "operation": "merge_pr", "pr_number": 123, "auto_merge": true}
 ```
+
+---
+
+## GitHub Projects (Kanban Boards)
+
+Use the `exec` tool to manage GitHub Projects via the `gh project` CLI commands.
+
+### List User's Projects
+```json
+{"tool": "exec", "command": "gh project list --owner USERNAME"}
+```
+
+### View Project Details
+```json
+{"tool": "exec", "command": "gh project view PROJECT_NUMBER --owner USERNAME"}
+```
+
+### List Project Fields (Columns/Status Options)
+Get field IDs needed for moving items between columns:
+```json
+{"tool": "exec", "command": "gh project field-list PROJECT_NUMBER --owner USERNAME --format json"}
+```
+
+### List Items in Project
+```json
+{"tool": "exec", "command": "gh project item-list PROJECT_NUMBER --owner USERNAME --format json"}
+```
+
+### Add Existing Issue/PR to Project
+```json
+{"tool": "exec", "command": "gh project item-add PROJECT_NUMBER --owner USERNAME --url https://github.com/OWNER/REPO/issues/123"}
+```
+
+### Create Draft Item (Task) in Project
+```json
+{"tool": "exec", "command": "gh project item-create PROJECT_NUMBER --owner USERNAME --title \"Task title\" --body \"Task description\""}
+```
+
+### Move Item Between Columns (Update Status)
+First get field IDs with `field-list`, then:
+```json
+{"tool": "exec", "command": "gh project item-edit --id ITEM_ID --project-id PROJECT_ID --field-id FIELD_ID --single-select-option-id OPTION_ID"}
+```
+
+### Example: Add Task to Kanban Board
+
+To add a task to a project like `https://github.com/users/ethereumdegen/projects/9`:
+
+1. **Get project ID and field info:**
+```json
+{"tool": "exec", "command": "gh project view 9 --owner ethereumdegen --format json"}
+{"tool": "exec", "command": "gh project field-list 9 --owner ethereumdegen --format json"}
+```
+
+2. **Create a draft item:**
+```json
+{"tool": "exec", "command": "gh project item-create 9 --owner ethereumdegen --title \"Implement feature X\" --body \"Description of the task\""}
+```
+
+3. **Or add an existing issue:**
+```json
+{"tool": "exec", "command": "gh project item-add 9 --owner ethereumdegen --url https://github.com/ethereumdegen/repo/issues/42"}
+```
+
+**Note:** The `--owner` flag uses the username for user-owned projects or org name for organization projects.
 
 ---
 

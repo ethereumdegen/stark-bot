@@ -133,6 +133,10 @@ pub struct MessageDispatcher {
     skill_registry: Option<Arc<crate::skills::SkillRegistry>>,
     /// Hook manager for lifecycle events
     hook_manager: Option<Arc<crate::hooks::HookManager>>,
+    /// Tool validator registry for pre-execution validation
+    validator_registry: Option<Arc<crate::tool_validators::ValidatorRegistry>>,
+    /// Transaction queue manager for queued web3 transactions
+    tx_queue: Option<Arc<crate::tx_queue::TxQueueManager>>,
 }
 
 impl MessageDispatcher {
@@ -197,12 +201,26 @@ impl MessageDispatcher {
             subagent_manager: Some(subagent_manager),
             skill_registry,
             hook_manager: None,
+            validator_registry: None,
+            tx_queue: None,
         }
     }
 
     /// Set the hook manager for lifecycle events
     pub fn with_hook_manager(mut self, hook_manager: Arc<crate::hooks::HookManager>) -> Self {
         self.hook_manager = Some(hook_manager);
+        self
+    }
+
+    /// Set the tool validator registry for pre-execution validation
+    pub fn with_validator_registry(mut self, validator_registry: Arc<crate::tool_validators::ValidatorRegistry>) -> Self {
+        self.validator_registry = Some(validator_registry);
+        self
+    }
+
+    /// Set the transaction queue manager
+    pub fn with_tx_queue(mut self, tx_queue: Arc<crate::tx_queue::TxQueueManager>) -> Self {
+        self.tx_queue = Some(tx_queue);
         self
     }
 
@@ -226,6 +244,8 @@ impl MessageDispatcher {
             subagent_manager: None, // No tools = no subagent support
             skill_registry: None,   // No skills without tools
             hook_manager: None,     // No hooks without explicit setup
+            validator_registry: None, // No validators without explicit setup
+            tx_queue: None,         // No tx queue without explicit setup
         }
     }
 
@@ -518,6 +538,12 @@ impl MessageDispatcher {
         if let Some(ref registry) = self.skill_registry {
             tool_context = tool_context.with_skill_registry(registry.clone());
             log::debug!("[DISPATCH] SkillRegistry attached to tool context");
+        }
+
+        // Add TxQueueManager for web3 transaction queuing
+        if let Some(ref tx_queue) = self.tx_queue {
+            tool_context = tool_context.with_tx_queue(tx_queue.clone());
+            log::debug!("[DISPATCH] TxQueueManager attached to tool context");
         }
 
         // Ensure workspace directory exists
@@ -1583,17 +1609,42 @@ impl MessageDispatcher {
                                     call.name
                                 ))
                             } else {
-                                // Execute regular tool and record the call for skill tracking
-                                let tool_result = self.tool_registry
-                                    .execute(&call.name, call.arguments.clone(), tool_context, Some(tool_config))
-                                    .await;
+                                // Run tool validators before execution
+                                if let Some(ref validator_registry) = self.validator_registry {
+                                    let validation_ctx = crate::tool_validators::ValidationContext::new(
+                                        call.name.clone(),
+                                        call.arguments.clone(),
+                                        Arc::new(tool_context.clone()),
+                                    );
+                                    let validation_result = validator_registry.validate(&validation_ctx).await;
+                                    if let Some(error_msg) = validation_result.to_error_message() {
+                                        crate::tools::ToolResult::error(error_msg)
+                                    } else {
+                                        // Execute regular tool and record the call for skill tracking
+                                        let tool_result = self.tool_registry
+                                            .execute(&call.name, call.arguments.clone(), tool_context, Some(tool_config))
+                                            .await;
 
-                                // Record this tool call for active skill tracking
-                                if tool_result.success {
-                                    orchestrator.record_tool_call(&call.name);
+                                        // Record this tool call for active skill tracking
+                                        if tool_result.success {
+                                            orchestrator.record_tool_call(&call.name);
+                                        }
+
+                                        tool_result
+                                    }
+                                } else {
+                                    // Execute regular tool and record the call for skill tracking
+                                    let tool_result = self.tool_registry
+                                        .execute(&call.name, call.arguments.clone(), tool_context, Some(tool_config))
+                                        .await;
+
+                                    // Record this tool call for active skill tracking
+                                    if tool_result.success {
+                                        orchestrator.record_tool_call(&call.name);
+                                    }
+
+                                    tool_result
                                 }
-
-                                tool_result
                             }
                         };
 
@@ -2127,20 +2178,48 @@ impl MessageDispatcher {
                                             tool_call.tool_name
                                         ))
                                     } else {
-                                        // Execute regular tool and record the call for skill tracking
-                                        let tool_result = self.tool_registry.execute(
-                                            &tool_call.tool_name,
-                                            tool_call.tool_params.clone(),
-                                            tool_context,
-                                            Some(tool_config),
-                                        ).await;
+                                        // Run tool validators before execution
+                                        if let Some(ref validator_registry) = self.validator_registry {
+                                            let validation_ctx = crate::tool_validators::ValidationContext::new(
+                                                tool_call.tool_name.clone(),
+                                                tool_call.tool_params.clone(),
+                                                Arc::new(tool_context.clone()),
+                                            );
+                                            let validation_result = validator_registry.validate(&validation_ctx).await;
+                                            if let Some(error_msg) = validation_result.to_error_message() {
+                                                crate::tools::ToolResult::error(error_msg)
+                                            } else {
+                                                // Execute regular tool and record the call for skill tracking
+                                                let tool_result = self.tool_registry.execute(
+                                                    &tool_call.tool_name,
+                                                    tool_call.tool_params.clone(),
+                                                    tool_context,
+                                                    Some(tool_config),
+                                                ).await;
 
-                                        // Record this tool call for active skill tracking
-                                        if tool_result.success {
-                                            orchestrator.record_tool_call(&tool_call.tool_name);
+                                                // Record this tool call for active skill tracking
+                                                if tool_result.success {
+                                                    orchestrator.record_tool_call(&tool_call.tool_name);
+                                                }
+
+                                                tool_result
+                                            }
+                                        } else {
+                                            // Execute regular tool and record the call for skill tracking
+                                            let tool_result = self.tool_registry.execute(
+                                                &tool_call.tool_name,
+                                                tool_call.tool_params.clone(),
+                                                tool_context,
+                                                Some(tool_config),
+                                            ).await;
+
+                                            // Record this tool call for active skill tracking
+                                            if tool_result.success {
+                                                orchestrator.record_tool_call(&tool_call.tool_name);
+                                            }
+
+                                            tool_result
                                         }
-
-                                        tool_result
                                     }
                                 };
 
