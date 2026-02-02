@@ -1,0 +1,21 @@
+{
+  "name": "0x Settler (AllowanceHolder)",
+  "description": "0x Protocol v4 Settler contract for executing swaps. The execute function takes pre-encoded calldata from the 0x API.",
+  "address": {
+    "base": "0x0000000000001fF3684f28c67538d4D072C22734",
+    "mainnet": "0x0000000000001fF3684f28c67538d4D072C22734"
+  },
+  "notes": "The 0x API returns pre-encoded transaction data. Use web3_tx with the raw data from the quote response, not web3_function_call.",
+  "abi": [
+    {
+      "name": "execute",
+      "type": "function",
+      "stateMutability": "payable",
+      "inputs": [
+        {"name": "recipient", "type": "address"},
+        {"name": "data", "type": "bytes"}
+      ],
+      "outputs": []
+    }
+  ]
+}

@@ -14,7 +14,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      '@abis': path.resolve(__dirname, '../abis')
+      '@abis': path.resolve(__dirname, './abis')
     }
   },
   server: {
