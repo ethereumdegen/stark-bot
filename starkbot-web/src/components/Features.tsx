@@ -1,5 +1,5 @@
-import { Code, CreditCard, Globe, AlertTriangle } from 'lucide-react'
-import ChatDemo from './ChatDemo'
+import { Code, CreditCard, Globe, AlertTriangle, Zap, MessageSquare, TrendingUp } from 'lucide-react'
+import InteractiveDemo from './InteractiveDemo'
 
 const features = [
   {
@@ -11,6 +11,21 @@ const features = [
     icon: CreditCard,
     title: 'x402 Micropayments',
     description: 'Pay-per-use AI with the x402 protocol. Seamless crypto payments powered by DeFi Relay as the facilitator.',
+  },
+  {
+    icon: Zap,
+    title: 'Social Integration',
+    description: 'Post to Twitter, Discord, Moltbook and other social platforms automatically',
+  },
+  {
+    icon: MessageSquare,
+    title: 'Multi-Platform',
+    description: 'Deploy across multiple platforms with unified API and consistent experience',
+  },
+  {
+    icon: TrendingUp,
+    title: 'Market Intelligence',
+    description: 'Real-time crypto prices, market analysis, and DeFi opportunities',
   },
   {
     icon: Code,
@@ -69,7 +84,7 @@ export function Features() {
           Crypto-first AI infrastructure with wallet auth, micropayments, and autonomous agents
         </p>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
           {features.map((feature) => (
             <div
               key={feature.title}
