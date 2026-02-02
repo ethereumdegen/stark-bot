@@ -1,5 +1,10 @@
 # StarkBot
 
+
+![starkbot_intro1](https://github.com/user-attachments/assets/c4276f9d-46f2-4576-a691-ea822fe3aa00)
+
+
+
 [![Deploy to DigitalOcean](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/apps/new?repo=https://github.com/ethereumdegen/stark-bot/tree/master)
 
 A cloud-deployable agentic AI assistant built with Rust and Actix. StarkBot is an intelligent automation hub that interfaces with messaging platforms, executes blockchain transactions, and handles complex multi-step tasks autonomously.
