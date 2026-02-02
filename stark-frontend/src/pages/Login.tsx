@@ -22,11 +22,11 @@ function hasWalletProvider(): boolean {
 // Generate deep links for wallet apps
 function getWalletDeepLinks() {
   const currentUrl = window.location.href;
-  const host = window.location.host + window.location.pathname;
   const urlWithoutProtocol = currentUrl.replace(/^https?:\/\//, '');
 
   return {
-    rainbow: `https://rainbow.me/dapp/${host}`,
+    // Rainbow uses rnbwapp.com universal links to open the app
+    rainbow: `https://rnbwapp.com/dapp?url=${encodeURIComponent(currentUrl)}`,
     metamask: `https://metamask.app.link/dapp/${urlWithoutProtocol}`,
     trust: `https://link.trustwallet.com/open_url?url=${encodeURIComponent(currentUrl)}`,
     coinbase: `https://go.cb-w.com/dapp?cb_url=${encodeURIComponent(currentUrl)}`,
