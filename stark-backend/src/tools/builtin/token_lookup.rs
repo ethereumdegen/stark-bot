@@ -124,7 +124,7 @@ impl TokenLookupTool {
         TokenLookupTool {
             definition: ToolDefinition {
                 name: "token_lookup".to_string(),
-                description: "Look up a token's contract address by symbol. Returns address, decimals, and name. The address is cached in a register (default: 'token_address') for use by other tools.".to_string(),
+                description: "Look up a token's contract address by symbol. Returns address, decimals, and name. Caches address in '{cache_as}', symbol in '{cache_as}_symbol', and decimals in '{cache_as}_decimals' registers.".to_string(),
                 input_schema: ToolInputSchema {
                     schema_type: "object".to_string(),
                     properties,
@@ -219,21 +219,28 @@ impl Tool for TokenLookupTool {
                 let symbol_register = format!("{}_symbol", params.cache_as);
                 context.set_register(&symbol_register, json!(params.symbol.to_uppercase()), "token_lookup");
 
+                // Store decimals in a separate register (e.g., "sell_token_decimals")
+                let decimals_register = format!("{}_decimals", params.cache_as);
+                context.set_register(&decimals_register, json!(token.decimals), "token_lookup");
+
                 log::info!(
-                    "[token_lookup] Cached {} in registers: '{}'={}, '{}'={}",
+                    "[token_lookup] Cached {} in registers: '{}'={}, '{}'={}, '{}'={}",
                     params.symbol,
                     params.cache_as,
                     token.address,
                     symbol_register,
-                    params.symbol.to_uppercase()
+                    params.symbol.to_uppercase(),
+                    decimals_register,
+                    token.decimals
                 );
 
                 ToolResult::success(format!(
-                    "{} ({}) on {}\nAddress: {}\nCached in register: '{}'",
+                    "{} ({}) on {}\nAddress: {}\nDecimals: {}\nCached in register: '{}'",
                     token.name,
                     params.symbol.to_uppercase(),
                     params.network,
                     token.address,
+                    token.decimals,
                     params.cache_as
                 )).with_metadata(json!({
                     "symbol": params.symbol.to_uppercase(),

@@ -46,6 +46,7 @@ fn register_all_tools(registry: &mut ToolRegistry) {
     registry.register(Arc::new(builtin::ListQueuedWeb3TxTool::new()));
     registry.register(Arc::new(builtin::Web3FunctionCallTool::new()));
     registry.register(Arc::new(builtin::TokenLookupTool::new()));
+    registry.register(Arc::new(builtin::ToRawAmountTool::new()));
     registry.register(Arc::new(builtin::RegisterSetTool::new()));
 
     // Filesystem tools (read-only, shared)

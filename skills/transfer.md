@@ -1,7 +1,7 @@
 ---
 name: transfer
 description: "Transfer (Send) ETH or ERC20 tokens on Base/Ethereum using the burner wallet"
-version: 3.2.0
+version: 3.3.0
 author: starkbot
 homepage: https://basescan.org
 metadata: {"requires_auth": false, "clawdbot":{"emoji":"💸"}}
@@ -121,44 +121,58 @@ uuid: <UUID_FROM_PREVIOUS_STEP>
 
 ## Transfer ERC20 Tokens
 
-### ⚠️ CRITICAL: Understanding User Amounts vs Raw Units
+### Required Tool Flow
 
-When a user says "send 1 STARKBOT" or "transfer 100 USDC", they mean **whole/human-readable units**, NOT raw blockchain units.
+**ALWAYS follow this sequence for ERC20 transfers:**
 
-**You MUST convert user amounts to raw units based on token decimals:**
+1. `token_lookup` → Get token address and decimals
+2. `to_raw_amount` → Convert human amount to raw units
+3. `web3_function_call` → Execute the transfer
 
-- **User says "1 token"** → Send `1 * 10^decimals` raw units
-- **User says "100 tokens"** → Send `100 * 10^decimals` raw units
+### Step 1: Look up the token
 
-| User Request | Token Decimals | Raw Amount to Send |
-|--------------|----------------|-------------------|
-| "Send 1 STARKBOT" | 18 | `1000000000000000000` (1e18) |
-| "Send 5 ETH" | 18 | `5000000000000000000` (5e18) |
-| "Send 100 USDC" | 6 | `100000000` (100e6) |
-| "Send 0.5 cbBTC" | 8 | `50000000` (0.5e8) |
+```tool:token_lookup
+symbol: "STARKBOT"
+network: base
+cache_as: token_address
+```
 
-**Example:** If user says "send 1 Starkbot" and STARKBOT has 18 decimals:
-- User means: 1 whole STARKBOT token
-- Raw units: 1 × 10^18 = `1000000000000000000`
-- This is what goes in the `params` array
+This sets registers:
+- `token_address` → contract address
+- `token_address_decimals` → decimals (e.g., 18)
 
-**NEVER send raw numbers the user provides directly** - always multiply by 10^decimals first!
+### Step 2: Convert amount to raw units
 
----
+```tool:to_raw_amount
+amount: "1"
+cache_as: "transfer_amount"
+```
 
-For ERC20 transfers, use `web3_function_call` directly (it handles encoding):
+This reads `token_address_decimals` automatically and sets:
+- `transfer_amount` → "1000000000000000000" (for 18 decimals)
+
+### Step 3: Execute the transfer
 
 ```tool:web3_function_call
 abi: erc20
-contract: "<TOKEN_ADDRESS>"
+contract: "<TOKEN_ADDRESS from step 1>"
 function: transfer
-params: ["<RECIPIENT_ADDRESS>", "<AMOUNT_IN_SMALLEST_UNIT>"]
+params: ["<RECIPIENT_ADDRESS>", "<RAW_AMOUNT from step 2>"]
 network: base
 ```
 
-### Example: Send 10 USDC
+### Complete Example: Send 10 USDC
 
-USDC has 6 decimals, so 10 USDC = `10000000`
+```tool:token_lookup
+symbol: "USDC"
+network: base
+cache_as: token_address
+```
+
+```tool:to_raw_amount
+amount: "10"
+cache_as: "transfer_amount"
+```
 
 ```tool:web3_function_call
 abi: erc20
@@ -167,6 +181,8 @@ function: transfer
 params: ["0x1234567890abcdef1234567890abcdef12345678", "10000000"]
 network: base
 ```
+
+> **Note:** The `transfer_amount` register is validated by `web3_function_call` to prevent hallucinated amounts.
 
 ---
 

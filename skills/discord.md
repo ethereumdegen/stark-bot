@@ -1,7 +1,7 @@
 ---
 name: discord
 description: "Control Discord: send messages, react, post stickers/emojis, run polls, manage threads/pins, fetch permissions/member/role/channel info, handle moderation."
-version: 2.2.0
+version: 2.3.0
 author: starkbot
 metadata: {"clawdbot":{"emoji":"🎮"}}
 tags: [discord, social, messaging, communication, social-media]
@@ -133,21 +133,14 @@ The **Context Bank** automatically extracts key information from user messages:
 
 Check the context bank in your system context for pre-extracted values before asking the user to repeat themselves.
 
-### ⚠️ CRITICAL: User Amounts vs Raw Units
+### Required Tool Flow
 
-When a user says "tip @jimmy 1 STARKBOT", they mean **1 whole token**, NOT 1 raw unit!
+**ALWAYS follow this sequence for tipping:**
 
-**You MUST convert user amounts to raw units based on token decimals:**
-
-| User Request | Token Decimals | Raw Amount to Send |
-|--------------|----------------|-------------------|
-| "tip 1 STARKBOT" | 18 | `1000000000000000000` (1e18) |
-| "tip 100 USDC" | 6 | `100000000` (100e6) |
-| "tip 0.5 ETH" | 18 | `500000000000000000` (0.5e18) |
-
-**Formula:** `raw_amount = user_amount × 10^decimals`
-
-**NEVER use the user's number directly** - always multiply by 10^decimals!
+1. `discord_resolve_user` → Get recipient's wallet address
+2. `token_lookup` → Get token address and decimals
+3. `to_raw_amount` → Convert human amount to raw units
+4. `web3_function_call` → Execute the transfer
 
 ---
 
@@ -161,7 +154,7 @@ This returns the user's registered public address (if they have one). Users regi
 
 **If the user is not registered**, inform them they need to register first.
 
-### Step 2: Look up the token (use context bank values)
+### Step 2: Look up the token
 
 ```tool:token_lookup
 symbol: "STARKBOT"
@@ -169,17 +162,27 @@ network: base
 cache_as: token_address
 ```
 
-This returns the token address and **decimals** (crucial for conversion).
+This sets registers:
+- `token_address` → contract address
+- `token_address_decimals` → decimals (e.g., 18)
 
-### Step 3: Transfer tokens to the resolved address
+### Step 3: Convert amount to raw units
 
-Convert the user's amount to raw units, then transfer:
+```tool:to_raw_amount
+amount: "1"
+cache_as: "transfer_amount"
+```
+
+This reads `token_address_decimals` automatically and sets:
+- `transfer_amount` → "1000000000000000000" (for 18 decimals)
+
+### Step 4: Transfer tokens to the resolved address
 
 ```tool:web3_function_call
 abi: erc20
-contract: "<TOKEN_ADDRESS>"
+contract: "<TOKEN_ADDRESS from step 2>"
 function: transfer
-params: ["<RESOLVED_ADDRESS>", "<AMOUNT_IN_RAW_UNITS>"]
+params: ["<RESOLVED_ADDRESS from step 1>", "<RAW_AMOUNT from step 3>"]
 network: base
 ```
 
@@ -197,10 +200,16 @@ Response: `{"public_address": "0x04abc...", "registered": true}`
 ```tool:token_lookup
 symbol: "STARKBOT"
 network: base
+cache_as: token_address
 ```
-Response: `{"address": "0x1234...", "decimals": 18}`
+Response: `STARKBOT on base, Address: 0x1234..., Decimals: 18`
 
-4. **Convert amount:** 1 × 10^18 = `1000000000000000000`
+4. Convert amount:
+```tool:to_raw_amount
+amount: "1"
+cache_as: "transfer_amount"
+```
+Response: `1 × 10^18 = 1000000000000000000` (cached as `transfer_amount`)
 
 5. Transfer:
 ```tool:web3_function_call

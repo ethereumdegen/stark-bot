@@ -675,6 +675,39 @@ impl Tool for Web3FunctionCallTool {
             }
         }
 
+        // SAFETY CHECK: For transfer function, verify amount comes from register
+        if function_name.to_lowercase() == "transfer" {
+            match context.registers.get("transfer_amount") {
+                Some(transfer_amount_val) => {
+                    // Get the transfer_amount as a string for comparison
+                    let expected_amount = match transfer_amount_val.as_str() {
+                        Some(s) => s.to_string(),
+                        None => transfer_amount_val.to_string().trim_matches('"').to_string(),
+                    };
+
+                    // Check if any param matches the expected amount
+                    let amount_found = call_params.iter().any(|p| {
+                        let param_str = match p.as_str() {
+                            Some(s) => s.to_string(),
+                            None => p.to_string().trim_matches('"').to_string(),
+                        };
+                        param_str == expected_amount
+                    });
+
+                    if !amount_found {
+                        return ToolResult::error(
+                            "transfer_amount not found in params. Suggest using the tool to_raw_amount with cache_as: \"transfer_amount\" first."
+                        );
+                    }
+                }
+                None => {
+                    return ToolResult::error(
+                        "transfer_amount not found in register. Suggest using the tool to_raw_amount with cache_as: \"transfer_amount\" first."
+                    );
+                }
+            }
+        }
+
         // Resolve RPC configuration from context (respects custom RPC settings)
         let rpc_config = resolve_rpc_from_context(&context.extra, &params.network);
 
