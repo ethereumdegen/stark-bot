@@ -2695,6 +2695,34 @@ impl MessageDispatcher {
         None
     }
 
+    /// Load GUIDELINES.md content if it exists
+    fn load_guidelines() -> Option<String> {
+        // Primary location: soul directory from config
+        let soul_dir = crate::config::soul_dir();
+        let guidelines_path = std::path::PathBuf::from(&soul_dir).join("GUIDELINES.md");
+        if let Ok(content) = std::fs::read_to_string(&guidelines_path) {
+            log::debug!("[GUIDELINES] Loaded from {:?}", guidelines_path);
+            return Some(content);
+        }
+
+        // Fallback: try repo root locations
+        let fallback_paths = [
+            "GUIDELINES.md",
+            "./GUIDELINES.md",
+            "/app/GUIDELINES.md",
+        ];
+
+        for path in fallback_paths {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                log::debug!("[GUIDELINES] Loaded from fallback {}", path);
+                return Some(content);
+            }
+        }
+
+        log::debug!("[GUIDELINES] No GUIDELINES.md found");
+        None
+    }
+
     /// Build the base system prompt with context from memories and user info
     /// Note: Tool-related instructions are added by the archetype's enhance_system_prompt
     fn build_system_prompt(
@@ -2711,6 +2739,12 @@ impl MessageDispatcher {
             prompt.push_str("\n\n");
         } else {
             prompt.push_str("You are StarkBot, an AI agent who can respond to users and operate tools.\n\n");
+        }
+
+        // Load GUIDELINES.md if available (operational guidelines)
+        if let Some(guidelines) = Self::load_guidelines() {
+            prompt.push_str(&guidelines);
+            prompt.push_str("\n\n");
         }
 
         // Add daily logs context

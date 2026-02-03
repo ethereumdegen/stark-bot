@@ -178,11 +178,28 @@ pub fn soul_document_path() -> PathBuf {
     PathBuf::from(soul_dir()).join("SOUL.md")
 }
 
+/// Get the path to GUIDELINES.md in the soul directory
+pub fn guidelines_document_path() -> PathBuf {
+    PathBuf::from(soul_dir()).join("GUIDELINES.md")
+}
+
 /// Find the original SOUL.md in the repo root
 fn find_original_soul() -> Option<PathBuf> {
     let candidates = [".", "..", "../..", "../../.."];
     for candidate in candidates {
         let path = PathBuf::from(candidate).join("SOUL.md");
+        if path.exists() {
+            return path.canonicalize().ok();
+        }
+    }
+    None
+}
+
+/// Find the original GUIDELINES.md in the repo root
+fn find_original_guidelines() -> Option<PathBuf> {
+    let candidates = [".", "..", "../..", "../../.."];
+    for candidate in candidates {
+        let path = PathBuf::from(candidate).join("GUIDELINES.md");
         if path.exists() {
             return path.canonicalize().ok();
         }
@@ -228,6 +245,24 @@ pub fn initialize_workspace() -> std::io::Result<()> {
         }
     } else {
         log::info!("Using existing soul document at {:?}", soul_document);
+    }
+
+    // Copy GUIDELINES.md from repo root to soul directory only if it doesn't exist
+    // GUIDELINES.md contains operational/business guidelines (vs SOUL.md for personality/culture)
+    let guidelines_document = soul_path.join("GUIDELINES.md");
+    if !guidelines_document.exists() {
+        if let Some(original_guidelines) = find_original_guidelines() {
+            log::info!(
+                "Initializing GUIDELINES.md from {:?} to {:?}",
+                original_guidelines,
+                guidelines_document
+            );
+            std::fs::copy(&original_guidelines, &guidelines_document)?;
+        } else {
+            log::debug!("Original GUIDELINES.md not found - no operational guidelines will be loaded");
+        }
+    } else {
+        log::info!("Using existing guidelines document at {:?}", guidelines_document);
     }
 
     Ok(())

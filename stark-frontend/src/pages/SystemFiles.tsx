@@ -9,6 +9,7 @@ import {
   Check,
   Lock,
   Sparkles,
+  ClipboardList,
 } from 'lucide-react';
 import {
   listIntrinsicFiles,
@@ -162,6 +163,8 @@ export default function SystemFiles() {
                   >
                     {file.name === 'soul.md' ? (
                       <Sparkles className="w-5 h-5 flex-shrink-0 text-purple-400" />
+                    ) : file.name === 'guidelines.md' ? (
+                      <ClipboardList className="w-5 h-5 flex-shrink-0 text-blue-400" />
                     ) : (
                       <FileCode className="w-5 h-5 flex-shrink-0 text-slate-400" />
                     )}
@@ -193,6 +196,8 @@ export default function SystemFiles() {
                 <div className="flex items-center gap-2">
                   {selectedFile === 'soul.md' ? (
                     <Sparkles className="w-4 h-4 text-purple-400" />
+                  ) : selectedFile === 'guidelines.md' ? (
+                    <ClipboardList className="w-4 h-4 text-blue-400" />
                   ) : (
                     <FileCode className="w-4 h-4 text-slate-400" />
                   )}

@@ -152,6 +152,17 @@ impl GitTool {
         );
 
         properties.insert(
+            "base_branch".to_string(),
+            PropertySchema {
+                schema_type: "string".to_string(),
+                description: "For diff: base branch to compare from (e.g., 'master'). Use with 'branch' to compare two branches.".to_string(),
+                default: None,
+                items: None,
+                enum_values: None,
+            },
+        );
+
+        properties.insert(
             "create".to_string(),
             PropertySchema {
                 schema_type: "boolean".to_string(),
@@ -241,6 +252,7 @@ struct GitParams {
     files: Option<Vec<String>>,
     message: Option<String>,
     branch: Option<String>,
+    base_branch: Option<String>,
     count: Option<usize>,
     staged: Option<bool>,
     create: Option<bool>,
@@ -292,9 +304,21 @@ impl Tool for GitTool {
 
             "diff" => {
                 let mut args = vec!["diff"];
-                if params.staged.unwrap_or(false) {
+
+                // Branch comparison: git diff base_branch..branch
+                let branch_range: Option<String> = match (&params.base_branch, &params.branch) {
+                    (Some(base), Some(target)) => Some(format!("{}..{}", base, target)),
+                    (Some(base), None) => Some(base.clone()), // Compare current HEAD to base
+                    (None, Some(target)) => Some(target.clone()), // Compare working tree to target
+                    (None, None) => None,
+                };
+
+                if let Some(ref range) = branch_range {
+                    args.push(range.as_str());
+                } else if params.staged.unwrap_or(false) {
                     args.push("--staged");
                 }
+
                 if let Some(ref files) = params.files {
                     args.push("--");
                     for f in files {

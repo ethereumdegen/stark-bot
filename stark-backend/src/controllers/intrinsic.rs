@@ -57,6 +57,12 @@ const INTRINSIC_FILES: &[IntrinsicFile] = &[
         writable: true,
     },
     IntrinsicFile {
+        name: "guidelines.md",
+        path: "soul/GUIDELINES.md",
+        description: "Operational and business guidelines",
+        writable: true,
+    },
+    IntrinsicFile {
         name: "assistant.md",
         path: "stark-backend/src/ai/multi_agent/prompts/assistant.md",
         description: "System instructions (read-only)",
