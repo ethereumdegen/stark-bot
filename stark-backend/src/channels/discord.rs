@@ -85,10 +85,17 @@ fn format_tool_result_for_discord(
     let status = if success { "✅" } else { "❌" };
     match verbosity {
         ToolOutputVerbosity::None => None,
-        ToolOutputVerbosity::Minimal => Some(format!(
-            "{} **Result:** `{}` ({} ms)",
-            status, tool_name, duration_ms
-        )),
+        ToolOutputVerbosity::Minimal => {
+            // say_to_user should always show content since that's its whole purpose
+            if tool_name == "say_to_user" {
+                Some(format!("{} {}", status, content))
+            } else {
+                Some(format!(
+                    "{} **Result:** `{}` ({} ms)",
+                    status, tool_name, duration_ms
+                ))
+            }
+        }
         ToolOutputVerbosity::Full => {
             // Truncate content if too long
             let content_display = if content.len() > 1200 {
