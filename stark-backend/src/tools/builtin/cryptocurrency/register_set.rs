@@ -111,6 +111,10 @@ impl RegisterSetTool {
         ("swap_value", "Use 'decode_calldata' tool with abi: '0x_settler' and calldata_register: 'swap_quote' to set swap parameters"),
         ("swap_function", "Use 'decode_calldata' tool with abi: '0x_settler' and calldata_register: 'swap_quote' to set swap parameters"),
         ("swap_contract", "Use 'decode_calldata' tool with abi: '0x_settler' and calldata_register: 'swap_quote' to set swap parameters"),
+        // ETH transfer registers - amount_raw must be set by to_raw_amount tool
+        ("amount_raw", "Use 'to_raw_amount' tool with decimals: 18 for ETH. This ensures safe conversion from human amounts."),
+        ("transfer_data", "Do not use transfer_data. Set 'send_to' and 'amount_raw' registers separately instead."),
+        ("transfer_tx", "Do not use transfer_tx. Set 'send_to' and 'amount_raw' registers separately instead."),
     ];
 
     /// Register keys that MUST contain valid Ethereum addresses (if not blocked)
@@ -306,10 +310,16 @@ mod tests {
         assert!(RegisterSetTool::check_blocked("swap_function").is_err());
         assert!(RegisterSetTool::check_blocked("swap_contract").is_err());
 
+        // ETH transfer registers are blocked (must use to_raw_amount)
+        assert!(RegisterSetTool::check_blocked("amount_raw").is_err());
+        assert!(RegisterSetTool::check_blocked("transfer_data").is_err());
+        assert!(RegisterSetTool::check_blocked("transfer_tx").is_err());
+
         // Other registers are allowed
         assert!(RegisterSetTool::check_blocked("sell_amount").is_ok());
         assert!(RegisterSetTool::check_blocked("swap_quote").is_ok());
         assert!(RegisterSetTool::check_blocked("gas_price").is_ok());
+        assert!(RegisterSetTool::check_blocked("send_to").is_ok());
     }
 
     #[test]

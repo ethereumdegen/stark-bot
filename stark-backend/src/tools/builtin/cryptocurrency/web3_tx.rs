@@ -52,17 +52,6 @@ impl SendEthTool {
         let mut properties = HashMap::new();
 
         properties.insert(
-            "from_register".to_string(),
-            PropertySchema {
-                schema_type: "string".to_string(),
-                description: "Register name containing transfer data (to, value). Use register_set to create.".to_string(),
-                default: None,
-                items: None,
-                enum_values: None,
-            },
-        );
-
-        properties.insert(
             "network".to_string(),
             PropertySchema {
                 schema_type: "string".to_string(),
@@ -76,11 +65,11 @@ impl SendEthTool {
         SendEthTool {
             definition: ToolDefinition {
                 name: "send_eth".to_string(),
-                description: "Send native ETH to an address. Reads 'to' and 'value' from register. Transaction is QUEUED - use broadcast_web3_tx to broadcast.".to_string(),
+                description: "Send native ETH to an address. Reads 'send_to' (recipient) and 'amount_raw' (wei value) from registers. Use 'register_set' to set 'send_to', and 'to_raw_amount' with decimals=18 to set 'amount_raw'. Transaction is QUEUED - use broadcast_web3_tx to broadcast.".to_string(),
                 input_schema: ToolInputSchema {
                     schema_type: "object".to_string(),
                     properties,
-                    required: vec!["from_register".to_string()],
+                    required: vec![],
                 },
                 group: ToolGroup::Finance,
             },
@@ -245,43 +234,54 @@ impl Default for SendEthTool {
 }
 
 impl ResolvedTxData {
-    /// Resolve transaction data from a register
+    /// Resolve transaction data from individual registers (send_to, amount_raw)
     /// IMPORTANT: We ONLY read from registers to prevent hallucination of tx data
-    fn from_register(register_name: &str, context: &ToolContext) -> Result<Self, String> {
-        // Read tx data from the register
-        let reg_data = context.registers.get(register_name)
-            .ok_or_else(|| format!(
-                "Register '{}' not found. Available registers: {:?}. Make sure to call x402_fetch with cache_as first.",
-                register_name,
-                context.registers.keys()
-            ))?;
-
-        log::info!(
-            "[web3_tx] Reading tx data from register '{}': {:?}",
-            register_name,
-            reg_data.as_object().map(|o| o.keys().collect::<Vec<_>>())
-        );
-
-        // Extract required fields from the register (ETH transfer: just to and value)
-        let to = reg_data.get("to")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| format!("Register '{}' missing 'to' field", register_name))?
+    /// - 'send_to' must be set via register_set (validated as address)
+    /// - 'amount_raw' must be set via to_raw_amount tool (enforced by blocked registers)
+    fn from_registers(context: &ToolContext) -> Result<Self, String> {
+        // Read recipient address from 'send_to' register
+        let to = context.registers.get("send_to")
+            .ok_or_else(|| {
+                "Register 'send_to' not found. Use register_set to set the recipient address first.\n\nExample:\n```tool:register_set\nkey: send_to\nvalue: \"0x1234...\"```".to_string()
+            })?
+            .as_str()
+            .ok_or_else(|| "Register 'send_to' must be a string (Ethereum address)".to_string())?
             .to_string();
 
-        let value = reg_data.get("value")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| format!("Register '{}' missing 'value' field", register_name))?
+        // Validate it looks like an Ethereum address
+        if !to.starts_with("0x") || to.len() != 42 {
+            return Err(format!(
+                "Register 'send_to' must contain a valid Ethereum address (0x + 40 hex chars), got '{}'",
+                to
+            ));
+        }
+
+        // Read amount from 'amount_raw' register (must be set by to_raw_amount)
+        let value = context.registers.get("amount_raw")
+            .ok_or_else(|| {
+                "Register 'amount_raw' not found. Use to_raw_amount tool with decimals=18 to set the ETH amount.\n\nExample:\n```tool:to_raw_amount\namount: \"0.01\"\ndecimals: 18\ncache_as: amount_raw```".to_string()
+            })?
+            .as_str()
+            .ok_or_else(|| "Register 'amount_raw' must be a string (wei value)".to_string())?
             .to_string();
 
+        // Validate it's a numeric string
+        if !value.chars().all(|c| c.is_ascii_digit()) {
+            return Err(format!(
+                "Register 'amount_raw' must be a numeric string (wei), got '{}'. Use to_raw_amount to convert human amounts.",
+                value
+            ));
+        }
+
         log::info!(
-            "[send_eth] Resolved from register: to={}, value={}",
+            "[send_eth] Resolved from registers: send_to={}, amount_raw={}",
             to, value
         );
 
         Ok(ResolvedTxData {
             to,
             value,
-            source: format!("register:{}", register_name),
+            source: "registers:send_to,amount_raw".to_string(),
         })
     }
 }
@@ -289,8 +289,6 @@ impl ResolvedTxData {
 /// Send ETH parameters
 #[derive(Debug, Deserialize)]
 struct SendEthParams {
-    /// Register name containing transfer data (to, value)
-    from_register: String,
     /// Network
     #[serde(default = "default_network")]
     network: String,
@@ -322,8 +320,8 @@ impl Tool for SendEthTool {
             Err(e) => return ToolResult::error(format!("Invalid parameters: {}", e)),
         };
 
-        // Resolve transfer data from register
-        let tx_data = match ResolvedTxData::from_register(&params.from_register, context) {
+        // Resolve transfer data from individual registers (send_to, amount_raw)
+        let tx_data = match ResolvedTxData::from_registers(context) {
             Ok(d) => d,
             Err(e) => return ToolResult::error(e),
         };
@@ -501,88 +499,100 @@ mod tests {
     #[test]
     fn test_send_eth_params_deserialization() {
         let json = json!({
-            "from_register": "transfer_tx",
             "network": "base"
         });
 
         let params: SendEthParams = serde_json::from_value(json).unwrap();
 
-        assert_eq!(params.from_register, "transfer_tx");
         assert_eq!(params.network, "base");
     }
 
     #[test]
-    fn test_send_eth_params_required_register() {
-        let json = json!({
-            "network": "base"
-        });
+    fn test_send_eth_params_default_network() {
+        let json = json!({});
 
-        // This should fail because from_register is missing
-        let result: Result<SendEthParams, _> = serde_json::from_value(json);
-        assert!(result.is_err());
+        let params: SendEthParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.network, "base");
     }
 
     #[test]
-    fn test_resolved_tx_data_from_register() {
+    fn test_resolved_tx_data_from_registers() {
         use crate::tools::RegisterStore;
 
         let registers = RegisterStore::new();
-        registers.set("transfer_tx", json!({
-            "to": "0x1234567890abcdef1234567890abcdef12345678",
-            "value": "100000000000000"
-        }), "register_set");
+        registers.set("send_to", json!("0x1234567890abcdef1234567890abcdef12345678"), "register_set");
+        registers.set("amount_raw", json!("100000000000000"), "to_raw_amount");
 
         let context = crate::tools::ToolContext::new()
             .with_registers(registers);
 
-        let tx_data = ResolvedTxData::from_register("transfer_tx", &context).unwrap();
+        let tx_data = ResolvedTxData::from_registers(&context).unwrap();
 
         assert_eq!(tx_data.to, "0x1234567890abcdef1234567890abcdef12345678");
         assert_eq!(tx_data.value, "100000000000000");
-        assert_eq!(tx_data.source, "register:transfer_tx");
+        assert_eq!(tx_data.source, "registers:send_to,amount_raw");
     }
 
     #[test]
-    fn test_resolved_tx_data_missing_register() {
-        let context = crate::tools::ToolContext::new();
-
-        let result = ResolvedTxData::from_register("nonexistent", &context);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("not found"));
-    }
-
-    #[test]
-    fn test_resolved_tx_data_missing_to_field() {
+    fn test_resolved_tx_data_missing_send_to() {
         use crate::tools::RegisterStore;
 
         let registers = RegisterStore::new();
-        registers.set("bad_tx", json!({
-            "value": "0"
-        }), "test");
+        registers.set("amount_raw", json!("100000000000000"), "to_raw_amount");
 
         let context = crate::tools::ToolContext::new()
             .with_registers(registers);
 
-        let result = ResolvedTxData::from_register("bad_tx", &context);
+        let result = ResolvedTxData::from_registers(&context);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("missing 'to' field"));
+        assert!(result.unwrap_err().contains("send_to"));
     }
 
     #[test]
-    fn test_resolved_tx_data_missing_value_field() {
+    fn test_resolved_tx_data_missing_amount_raw() {
         use crate::tools::RegisterStore;
 
         let registers = RegisterStore::new();
-        registers.set("bad_tx", json!({
-            "to": "0x1234567890abcdef1234567890abcdef12345678"
-        }), "test");
+        registers.set("send_to", json!("0x1234567890abcdef1234567890abcdef12345678"), "register_set");
 
         let context = crate::tools::ToolContext::new()
             .with_registers(registers);
 
-        let result = ResolvedTxData::from_register("bad_tx", &context);
+        let result = ResolvedTxData::from_registers(&context);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("missing 'value' field"));
+        assert!(result.unwrap_err().contains("amount_raw"));
+    }
+
+    #[test]
+    fn test_resolved_tx_data_invalid_address() {
+        use crate::tools::RegisterStore;
+
+        let registers = RegisterStore::new();
+        registers.set("send_to", json!("not-an-address"), "register_set");
+        registers.set("amount_raw", json!("100000000000000"), "to_raw_amount");
+
+        let context = crate::tools::ToolContext::new()
+            .with_registers(registers);
+
+        let result = ResolvedTxData::from_registers(&context);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("valid Ethereum address"));
+    }
+
+    #[test]
+    fn test_resolved_tx_data_invalid_amount() {
+        use crate::tools::RegisterStore;
+
+        let registers = RegisterStore::new();
+        registers.set("send_to", json!("0x1234567890abcdef1234567890abcdef12345678"), "register_set");
+        registers.set("amount_raw", json!("not-a-number"), "to_raw_amount");
+
+        let context = crate::tools::ToolContext::new()
+            .with_registers(registers);
+
+        let result = ResolvedTxData::from_registers(&context);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("numeric string"));
     }
 
     #[test]
