@@ -291,7 +291,10 @@ export default function MindMap() {
     const handleHeartbeatStarted = (data: unknown) => {
       const event = data as { mind_node_id?: number };
       console.log('[MindMap] Heartbeat started event received:', event);
-      if (event.mind_node_id && mounted) {
+      if (!mounted) return;
+      // Backend sets next_beat_at BEFORE execution, so load config now to update countdown
+      loadHeartbeatConfig();
+      if (event.mind_node_id) {
         console.log('[MindMap] Triggering animation for node:', event.mind_node_id);
         triggerHeartbeatAnimation(event.mind_node_id);
       }
@@ -320,6 +323,9 @@ export default function MindMap() {
     // Also listen for pulse_started as fallback (uses first node if no specific node)
     const handlePulseStarted = (data: unknown) => {
       console.log('[MindMap] Heartbeat pulse started:', data);
+      if (!mounted) return;
+      // Backend sets next_beat_at BEFORE execution, so load config now to update countdown
+      loadHeartbeatConfig();
       // Try to trigger animation on trunk node (node id 1) as fallback
       if (nodes.length > 0) {
         const trunkNode = nodes.find(n => n.is_trunk) || nodes[0];
@@ -390,6 +396,9 @@ export default function MindMap() {
       return;
     }
 
+    let lastFetchTime = 0;
+    const FETCH_INTERVAL_MS = 5000; // Poll every 5 seconds when stuck on "soon..."
+
     const updateCountdown = () => {
       const now = new Date().getTime();
       const target = new Date(nextBeatAt).getTime();
@@ -397,8 +406,11 @@ export default function MindMap() {
 
       if (diff <= 0) {
         setCountdown('soon...');
-        // Refresh config (WS will handle new session detection)
-        loadHeartbeatConfig();
+        // Poll periodically when stuck - backend may not have updated next_beat_at yet
+        if (now - lastFetchTime >= FETCH_INTERVAL_MS) {
+          lastFetchTime = now;
+          loadHeartbeatConfig();
+        }
         return;
       }
 

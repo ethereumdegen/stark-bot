@@ -387,12 +387,6 @@ impl Scheduler {
     /// Note: Only processes the MOST RECENT heartbeat config (highest ID) to avoid duplicates
     /// IMPORTANT: Only ONE heartbeat can run at a time
     async fn process_heartbeats(&self) -> Result<(), String> {
-        // Skip if a heartbeat is already running (check heartbeat channel)
-        if self.execution_tracker.get_execution_id(HEARTBEAT_CHANNEL_ID).is_some() {
-            log::debug!("[HEARTBEAT] Skipping - heartbeat already running");
-            return Ok(());
-        }
-
         let due_configs = self
             .db
             .list_due_heartbeat_configs()
@@ -403,6 +397,26 @@ impl Scheduler {
         if let Some(config) = due_configs.into_iter().max_by_key(|c| c.id) {
             // Check if within active hours
             if !self.is_within_active_hours(&config) {
+                // Outside active hours - still update next_beat_at so frontend doesn't get stuck on "soon..."
+                let next_beat = Utc::now() + Duration::minutes(config.interval_minutes as i64);
+                let next_beat_str = next_beat.to_rfc3339();
+                if let Err(e) = self.db.update_heartbeat_next_beat(config.id, &next_beat_str) {
+                    log::error!("Failed to update heartbeat next_beat_at (outside active hours): {}", e);
+                }
+                log::debug!("[HEARTBEAT] Skipping - outside active hours, next check at {}", next_beat_str);
+                return Ok(());
+            }
+
+            // Skip execution if a heartbeat is already running, but still update next_beat_at
+            // so the frontend doesn't get stuck on "soon..." while waiting
+            if self.execution_tracker.get_execution_id(HEARTBEAT_CHANNEL_ID).is_some() {
+                // Update next_beat_at even when skipping so frontend shows correct countdown
+                let next_beat = Utc::now() + Duration::minutes(config.interval_minutes as i64);
+                let next_beat_str = next_beat.to_rfc3339();
+                if let Err(e) = self.db.update_heartbeat_next_beat(config.id, &next_beat_str) {
+                    log::error!("Failed to update heartbeat next_beat_at (already running): {}", e);
+                }
+                log::debug!("[HEARTBEAT] Skipping - heartbeat already running, next check at {}", next_beat_str);
                 return Ok(());
             }
 

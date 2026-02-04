@@ -769,6 +769,7 @@ impl MessageDispatcher {
                 session.id,
                 &message,
                 archetype_id,
+                is_safe_mode,
             ).await
         } else {
             // Simple generation without tools - with x402 event emission
@@ -920,6 +921,7 @@ impl MessageDispatcher {
         session_id: i64,
         original_message: &NormalizedMessage,
         archetype_id: ArchetypeId,
+        is_safe_mode: bool,
     ) -> Result<String, String> {
         // Load existing agent context or create new one
         let mut orchestrator = match self.db.get_agent_context(session_id) {
@@ -1097,12 +1099,12 @@ impl MessageDispatcher {
         if archetype.uses_native_tool_calling() {
             self.generate_with_native_tools_orchestrated(
                 client, messages, tools, tool_config, tool_context,
-                original_message, archetype, &mut orchestrator, session_id
+                original_message, archetype, &mut orchestrator, session_id, is_safe_mode
             ).await
         } else {
             self.generate_with_text_tools_orchestrated(
                 client, messages, tools, tool_config, tool_context,
-                original_message, archetype, &mut orchestrator, session_id
+                original_message, archetype, &mut orchestrator, session_id, is_safe_mode
             ).await
         }
     }
@@ -1319,6 +1321,7 @@ impl MessageDispatcher {
         archetype: &dyn ModelArchetype,
         orchestrator: &mut Orchestrator,
         session_id: i64,
+        is_safe_mode: bool,
     ) -> Result<String, String> {
         // Get max tool iterations from bot settings
         let max_tool_iterations = self.db.get_bot_settings()
@@ -1355,6 +1358,9 @@ impl MessageDispatcher {
         let mut recent_call_signatures: Vec<String> = Vec::new();
         const MAX_REPEATED_CALLS: usize = 3; // Break loop after 3 identical consecutive calls
         const SIGNATURE_HISTORY_SIZE: usize = 20; // Track last 20 call signatures
+
+        // say_to_user loop prevention: don't allow say_to_user to be called twice in a row
+        let mut previous_iteration_had_say_to_user = false;
 
         loop {
             iterations += 1;
@@ -1797,6 +1803,20 @@ impl MessageDispatcher {
                 recent_call_signatures.drain(0..recent_call_signatures.len() - SIGNATURE_HISTORY_SIZE);
             }
 
+            // say_to_user consecutive call detection: don't allow say_to_user twice in a row
+            let current_iteration_has_say_to_user = ai_response.tool_calls.iter().any(|c| c.name == "say_to_user");
+            if current_iteration_has_say_to_user && previous_iteration_had_say_to_user {
+                log::warn!("[SAY_TO_USER_LOOP] Detected consecutive say_to_user calls, terminating loop");
+                // Return the last say_to_user message as the final response
+                if let Some(say_call) = ai_response.tool_calls.iter().find(|c| c.name == "say_to_user") {
+                    if let Some(msg) = say_call.arguments.get("message").and_then(|v| v.as_str()) {
+                        final_summary = msg.to_string();
+                    }
+                }
+                orchestrator_complete = true;
+                break;
+            }
+
             for call in &ai_response.tool_calls {
                 let args_pretty = serde_json::to_string_pretty(&call.arguments)
                     .unwrap_or_else(|_| call.arguments.to_string());
@@ -2062,6 +2082,13 @@ impl MessageDispatcher {
                             }
                         }
 
+                        // In safe mode, say_to_user is a terminating action - complete the loop after it
+                        if is_safe_mode && call.name == "say_to_user" && result.success {
+                            log::info!("[ORCHESTRATED_LOOP] say_to_user called in safe mode, terminating loop");
+                            orchestrator_complete = true;
+                            final_summary = result.content.clone();
+                        }
+
                         // Extract duration_ms from metadata if available
                         let duration_ms = result.metadata.as_ref()
                             .and_then(|m| m.get("duration_ms"))
@@ -2075,6 +2102,7 @@ impl MessageDispatcher {
                             result.success,
                             duration_ms,
                             &result.content,
+                            is_safe_mode,
                         ));
 
                         // Execute AfterToolCall hooks (for auto-memory, etc.)
@@ -2146,6 +2174,9 @@ impl MessageDispatcher {
                 log::info!("[ORCHESTRATED_LOOP] Breaking loop to wait for user response");
                 break;
             }
+
+            // Update say_to_user tracking for next iteration
+            previous_iteration_had_say_to_user = current_iteration_has_say_to_user;
         }
 
         // Save orchestrator context for next turn
@@ -2232,6 +2263,7 @@ impl MessageDispatcher {
         archetype: &dyn ModelArchetype,
         orchestrator: &mut Orchestrator,
         session_id: i64,
+        is_safe_mode: bool,
     ) -> Result<String, String> {
         // Get max tool iterations from bot settings
         let max_tool_iterations = self.db.get_bot_settings()
@@ -2266,6 +2298,9 @@ impl MessageDispatcher {
         let mut recent_call_signatures: Vec<String> = Vec::new();
         const MAX_REPEATED_CALLS: usize = 3; // Break loop after 3 identical consecutive calls
         const SIGNATURE_HISTORY_SIZE: usize = 20; // Track last 20 call signatures
+
+        // say_to_user loop prevention: don't allow say_to_user to be called twice in a row
+        let mut previous_iteration_had_say_to_user = false;
 
         loop {
             iterations += 1;
@@ -2429,6 +2464,18 @@ impl MessageDispatcher {
                         recent_call_signatures.push(call_signature);
                         if recent_call_signatures.len() > SIGNATURE_HISTORY_SIZE {
                             recent_call_signatures.drain(0..recent_call_signatures.len() - SIGNATURE_HISTORY_SIZE);
+                        }
+
+                        // say_to_user consecutive call detection: don't allow say_to_user twice in a row
+                        let current_iteration_has_say_to_user = tool_call.tool_name == "say_to_user";
+                        if current_iteration_has_say_to_user && previous_iteration_had_say_to_user {
+                            log::warn!("[TEXT_SAY_TO_USER_LOOP] Detected consecutive say_to_user calls, terminating loop");
+                            // Return the say_to_user message as the final response
+                            if let Some(msg) = tool_call.tool_params.get("message").and_then(|v| v.as_str()) {
+                                final_response = msg.to_string();
+                            }
+                            orchestrator_complete = true;
+                            break;
                         }
 
                         let args_pretty = serde_json::to_string_pretty(&tool_call.tool_params)
@@ -2644,6 +2691,13 @@ impl MessageDispatcher {
                                     }
                                 }
 
+                                // In safe mode, say_to_user is a terminating action - complete the loop after it
+                                if is_safe_mode && tool_call.tool_name == "say_to_user" && result.success {
+                                    log::info!("[TEXT_ORCHESTRATED] say_to_user called in safe mode, terminating loop");
+                                    orchestrator_complete = true;
+                                    final_response = result.content.clone();
+                                }
+
                                 // Extract duration_ms from metadata if available
                                 let duration_ms = result.metadata.as_ref()
                                     .and_then(|m| m.get("duration_ms"))
@@ -2657,6 +2711,7 @@ impl MessageDispatcher {
                                     result.success,
                                     duration_ms,
                                     &result.content,
+                                    is_safe_mode,
                                 ));
 
                                 // Execute AfterToolCall hooks (for auto-memory, etc.)
@@ -2734,6 +2789,9 @@ impl MessageDispatcher {
                             log::info!("[TEXT_ORCHESTRATED] Breaking loop to wait for user response");
                             break;
                         }
+
+                        // Update say_to_user tracking for next iteration
+                        previous_iteration_had_say_to_user = current_iteration_has_say_to_user;
                         continue;
                     } else {
                         // No tool call - check if this is allowed

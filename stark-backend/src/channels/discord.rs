@@ -347,6 +347,7 @@ impl DiscordHandler {
                             .unwrap_or("");
 
                         // say_to_user messages are sent as permanent new messages, not status updates
+                        // (same behavior for admin and non-admin queries)
                         if tool_name == "say_to_user" && success && !content.is_empty() {
                             let display_content = if content.len() > 2000 {
                                 format!("{}...", &content[..1997])
