@@ -325,13 +325,26 @@ export default function MindMap() {
       }
     };
 
-    // Listen for pulse completion (especially errors)
-    const handlePulseCompleted = (data: unknown) => {
+    // Listen for pulse completion (especially errors) and refresh sessions
+    const handlePulseCompleted = async (data: unknown) => {
       const event = data as { success?: boolean; error?: string };
       if (event.success) {
         console.log('[MindMap] Heartbeat pulse completed successfully');
       } else {
         console.error('[MindMap] Heartbeat pulse FAILED:', event.error);
+      }
+      // Always refresh sessions list after pulse completes
+      if (!mounted) return;
+      try {
+        const sessions = await getHeartbeatSessions();
+        if (mounted) {
+          setHeartbeatSessions(sessions);
+          if (sessions.length > 0) {
+            lastSessionIdRef.current = sessions[0].id;
+          }
+        }
+      } catch (e) {
+        console.error('Failed to refresh sessions:', e);
       }
     };
 

@@ -580,11 +580,13 @@ impl Scheduler {
             // Create dispatcher for this task (uses shared db pool)
             let tracker = Arc::new(ExecutionTracker::new(broadcaster.clone()));
             let tool_registry = Arc::new(ToolRegistry::new());
-            let dispatcher = Arc::new(MessageDispatcher::new(
+            let burner_wallet = std::env::var("BURNER_WALLET_BOT_PRIVATE_KEY").ok();
+            let dispatcher = Arc::new(MessageDispatcher::new_with_wallet(
                 db.clone(),
                 broadcaster.clone(),
                 tool_registry,
                 tracker,
+                burner_wallet,
             ));
 
             // Execute with timeout
