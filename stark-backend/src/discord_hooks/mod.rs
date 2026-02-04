@@ -237,14 +237,15 @@ pub async fn process(
         // Don't fail the whole request, just log it
     }
 
-    // Check if user is admin
-    let is_admin = config.is_admin(&user_id);
+    // Check if user is admin (explicit IDs or Discord Administrator permission)
+    let is_admin = config.is_admin(&user_id, msg, ctx).await;
 
     log::info!(
-        "Discord hooks: Processing message from {} ({}), admin={}, text='{}'",
+        "Discord hooks: Processing message from {} ({}), admin={} (explicit_admins={}), text='{}'",
         user_name,
         user_id,
         is_admin,
+        config.has_explicit_admins(),
         if command_text.len() > 50 {
             format!("{}...", &command_text[..50])
         } else {

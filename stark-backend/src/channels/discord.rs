@@ -5,7 +5,7 @@ use crate::db::Database;
 use crate::discord_hooks;
 use crate::gateway::events::EventBroadcaster;
 use crate::gateway::protocol::GatewayEvent;
-use crate::models::{Channel, ChannelSettingKey, ToolOutputVerbosity};
+use crate::models::{Channel, ToolOutputVerbosity};
 use serenity::all::{
     Client, Context, EditMessage, EventHandler, GatewayIntents, Message, MessageId, Ready,
 };
@@ -13,6 +13,7 @@ use std::sync::Arc;
 use tokio::sync::oneshot;
 
 /// Discord channel output configuration
+/// Verbosity is hard-coded to Minimal for cleaner output
 #[derive(Debug, Clone)]
 pub struct DiscordOutputConfig {
     pub tool_call_verbosity: ToolOutputVerbosity,
@@ -20,26 +21,9 @@ pub struct DiscordOutputConfig {
 }
 
 impl DiscordOutputConfig {
-    /// Load configuration from channel settings in the database
-    pub fn from_channel_settings(db: &Arc<Database>, channel_id: i64) -> Self {
-        let tool_call_verbosity = db
-            .get_channel_setting(channel_id, ChannelSettingKey::DiscordToolCallVerbosity.as_ref())
-            .ok()
-            .flatten()
-            .map(|v| ToolOutputVerbosity::from_str_or_default(&v))
-            .unwrap_or(ToolOutputVerbosity::Minimal);
-
-        let tool_result_verbosity = db
-            .get_channel_setting(channel_id, ChannelSettingKey::DiscordToolResultVerbosity.as_ref())
-            .ok()
-            .flatten()
-            .map(|v| ToolOutputVerbosity::from_str_or_default(&v))
-            .unwrap_or(ToolOutputVerbosity::Minimal);
-
-        Self {
-            tool_call_verbosity,
-            tool_result_verbosity,
-        }
+    /// Get the output configuration (hard-coded to minimal)
+    pub fn get() -> Self {
+        Self::default()
     }
 }
 
@@ -183,7 +167,9 @@ impl EventHandler for DiscordHandler {
                     if forward.force_safe_mode {
                         if let Err(rate_limit_msg) = self.safe_mode_rate_limiter.check_and_record_query(&user_id, "discord") {
                             log::info!("Discord: Rate limiting user {} - {}", user_id, rate_limit_msg);
-                            let _ = msg.channel_id.say(&ctx.http, format!("⏳ {}", rate_limit_msg)).await;
+                            if let Err(e) = msg.channel_id.say(&ctx.http, format!("⏳ {}", rate_limit_msg)).await {
+                                log::error!("Discord: Failed to send rate limit message to user {}: {}", user_id, e);
+                            }
                             return;
                         }
                     }
@@ -278,8 +264,8 @@ impl DiscordHandler {
         user_name: &str,
     ) {
         // Load output configuration from channel settings
-        let output_config = DiscordOutputConfig::from_channel_settings(&self.db, self.channel_id);
-        log::info!(
+        let output_config = DiscordOutputConfig::get();
+        log::debug!(
             "Discord: Output config - tool_call={:?}, tool_result={:?}",
             output_config.tool_call_verbosity,
             output_config.tool_result_verbosity

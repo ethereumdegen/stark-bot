@@ -1307,25 +1307,7 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
         }
     }
 
-    // Restore channel settings (already cleared above)
-    let mut restored_channel_settings = 0;
-    for setting in &backup_data.channel_settings {
-        if let Err(e) = state.db.set_channel_setting(
-            setting.channel_id,
-            &setting.setting_key,
-            &setting.setting_value,
-        ) {
-            log::warn!(
-                "Failed to restore channel setting {}/{}: {}",
-                setting.channel_id, setting.setting_key, e
-            );
-        } else {
-            restored_channel_settings += 1;
-        }
-    }
-
-    // Restore channels (already cleared above)
-    // We need to track old->new ID mapping for channel settings that reference channel IDs
+    // Restore channels first (we need ID mapping for channel settings)
     let mut old_channel_to_new_id: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
     let mut restored_channels = 0;
     for channel in &backup_data.channels {
@@ -1346,6 +1328,29 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
             Err(e) => {
                 log::warn!("Failed to restore channel {}: {}", channel.name, e);
             }
+        }
+    }
+
+    // Restore channel settings (using new channel IDs from mapping)
+    let mut restored_channel_settings = 0;
+    for setting in &backup_data.channel_settings {
+        // Map old channel ID to new channel ID
+        let new_channel_id = old_channel_to_new_id
+            .get(&setting.channel_id)
+            .copied()
+            .unwrap_or(setting.channel_id); // Fallback to original ID if not found
+
+        if let Err(e) = state.db.set_channel_setting(
+            new_channel_id,
+            &setting.setting_key,
+            &setting.setting_value,
+        ) {
+            log::warn!(
+                "Failed to restore channel setting {}/{}: {}",
+                new_channel_id, setting.setting_key, e
+            );
+        } else {
+            restored_channel_settings += 1;
         }
     }
 

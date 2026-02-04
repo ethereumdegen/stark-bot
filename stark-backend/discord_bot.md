@@ -28,6 +28,8 @@ In the Bot section of your application, enable these **Privileged Gateway Intent
 
 Without Message Content Intent, the bot cannot read what users type.
 
+> **Warning**: Only install Starkbot in your own Discord server. The admin will have full control over the Agentic Loop and Tools.
+
 ### 3. Set Bot Permissions
 
 When generating the invite URL, select these permissions:
@@ -242,6 +244,43 @@ Discord has rate limits. If sending many messages:
 - The bot handles chunking automatically
 - Very rapid messages may be delayed
 - Check Discord API rate limit headers in logs
+
+## Admin Permissions
+
+StarkBot distinguishes between admin and non-admin users:
+
+| User Type | Capabilities |
+|-----------|-------------|
+| Admin | Full agent queries, no safe mode, no rate limit |
+| Non-admin | Safe mode only, rate limited, basic commands |
+
+### How Admins are Determined
+
+By default, StarkBot uses **Discord's built-in Administrator permission** to determine who is an admin. Users who are:
+- The server owner, OR
+- Have a role with the Administrator permission
+
+...are automatically treated as StarkBot admins.
+
+### Optional: Explicit Admin User IDs
+
+You can optionally configure specific Discord user IDs to be admins via channel settings:
+
+```bash
+curl -X PUT http://localhost:8080/api/channels/{id}/settings \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "settings": [
+      {
+        "key": "discord_admin_user_ids",
+        "value": "123456789012345678, 987654321098765432"
+      }
+    ]
+  }'
+```
+
+When explicit admin IDs are configured, **only those users** are treated as admins (Discord Administrator permission is ignored).
 
 ## Security Notes
 

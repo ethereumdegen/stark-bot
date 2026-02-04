@@ -87,6 +87,9 @@ Enable these events:
 1. Create app at [Discord Developer Portal](https://discord.com/developers/applications)
 2. Create Bot under application
 3. Enable **Message Content Intent**
+
+> **Warning**: Only install Starkbot in your own Discord server. The admin will have full control over the Agentic Loop and Tools.
+
 4. Generate invite URL:
    - Scopes: `bot`, `applications.commands`
    - Permissions: Send Messages, Read Message History, View Channels

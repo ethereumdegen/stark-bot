@@ -36,11 +36,8 @@ impl ToolOutputVerbosity {
 #[strum(serialize_all = "snake_case")]
 pub enum ChannelSettingKey {
     /// Discord: Comma-separated list of Discord user IDs with admin access
+    /// If empty, falls back to Discord's built-in Administrator permission
     DiscordAdminUserIds,
-    /// Discord: How verbose tool call output should be (full, minimal, none)
-    DiscordToolCallVerbosity,
-    /// Discord: How verbose tool result output should be (full, minimal, none)
-    DiscordToolResultVerbosity,
     /// Twitter: Bot's Twitter handle without @ (e.g., "starkbotai")
     TwitterBotHandle,
     /// Twitter: Numeric Twitter user ID (required for mentions API)
@@ -53,9 +50,7 @@ impl ChannelSettingKey {
     /// Get the display label for this setting
     pub fn label(&self) -> &'static str {
         match self {
-            Self::DiscordAdminUserIds => "Admin User IDs",
-            Self::DiscordToolCallVerbosity => "Tool Call Verbosity",
-            Self::DiscordToolResultVerbosity => "Tool Result Verbosity",
+            Self::DiscordAdminUserIds => "Admin User IDs (Optional)",
             Self::TwitterBotHandle => "Bot Handle",
             Self::TwitterBotUserId => "Bot User ID",
             Self::TwitterPollIntervalSecs => "Poll Interval (seconds)",
@@ -66,16 +61,9 @@ impl ChannelSettingKey {
     pub fn description(&self) -> &'static str {
         match self {
             Self::DiscordAdminUserIds => {
-                "Comma-separated Discord user IDs that have full agent access. \
+                "Optional: Comma-separated Discord user IDs that have full agent access. \
+                 If left empty, users with Discord's Administrator permission are treated as admins. \
                  Get your ID by enabling Developer Mode in Discord, then right-click your username."
-            }
-            Self::DiscordToolCallVerbosity => {
-                "Controls how much detail to show when tools are called. \
-                 'full' shows tool name and parameters, 'minimal' shows only tool name, 'none' hides tool calls."
-            }
-            Self::DiscordToolResultVerbosity => {
-                "Controls how much detail to show for tool results. \
-                 'full' shows tool name and result content, 'minimal' shows only tool name and status, 'none' hides tool results."
             }
             Self::TwitterBotHandle => {
                 "Your bot's Twitter handle without the @ symbol (e.g., 'starkbotai'). \
@@ -96,8 +84,6 @@ impl ChannelSettingKey {
     pub fn input_type(&self) -> SettingInputType {
         match self {
             Self::DiscordAdminUserIds => SettingInputType::Text,
-            Self::DiscordToolCallVerbosity => SettingInputType::Select,
-            Self::DiscordToolResultVerbosity => SettingInputType::Select,
             Self::TwitterBotHandle => SettingInputType::Text,
             Self::TwitterBotUserId => SettingInputType::Text,
             Self::TwitterPollIntervalSecs => SettingInputType::Number,
@@ -107,9 +93,7 @@ impl ChannelSettingKey {
     /// Get the placeholder text for the input
     pub fn placeholder(&self) -> &'static str {
         match self {
-            Self::DiscordAdminUserIds => "123456789012345678, 987654321098765432",
-            Self::DiscordToolCallVerbosity => "minimal",
-            Self::DiscordToolResultVerbosity => "minimal",
+            Self::DiscordAdminUserIds => "Leave empty to use Discord Administrator permission",
             Self::TwitterBotHandle => "starkbotai",
             Self::TwitterBotUserId => "1234567890123456789",
             Self::TwitterPollIntervalSecs => "120",
@@ -118,22 +102,13 @@ impl ChannelSettingKey {
 
     /// Get the available options for select inputs
     pub fn options(&self) -> Option<Vec<(&'static str, &'static str)>> {
-        match self {
-            Self::DiscordToolCallVerbosity | Self::DiscordToolResultVerbosity => Some(vec![
-                ("full", "Full - Show all details"),
-                ("minimal", "Minimal - Tool name only"),
-                ("none", "None - Hide completely"),
-            ]),
-            _ => None,
-        }
+        None
     }
 
     /// Get the default value for this setting
     pub fn default_value(&self) -> &'static str {
         match self {
             Self::DiscordAdminUserIds => "",
-            Self::DiscordToolCallVerbosity => "minimal",
-            Self::DiscordToolResultVerbosity => "minimal",
             Self::TwitterBotHandle => "",
             Self::TwitterBotUserId => "",
             Self::TwitterPollIntervalSecs => "120",
@@ -239,8 +214,6 @@ pub fn get_settings_for_channel_type(channel_type: ChannelType) -> Vec<ChannelSe
     match channel_type {
         ChannelType::Discord => vec![
             ChannelSettingKey::DiscordAdminUserIds.into(),
-            ChannelSettingKey::DiscordToolCallVerbosity.into(),
-            ChannelSettingKey::DiscordToolResultVerbosity.into(),
         ],
         ChannelType::Telegram => vec![
             // No custom settings yet
@@ -269,10 +242,8 @@ mod tests {
     #[test]
     fn test_discord_settings() {
         let settings = get_settings_for_channel_type(ChannelType::Discord);
-        assert_eq!(settings.len(), 3);
+        assert_eq!(settings.len(), 1);
         assert_eq!(settings[0].key, "discord_admin_user_ids");
-        assert_eq!(settings[1].key, "discord_tool_call_verbosity");
-        assert_eq!(settings[2].key, "discord_tool_result_verbosity");
     }
 
     #[test]

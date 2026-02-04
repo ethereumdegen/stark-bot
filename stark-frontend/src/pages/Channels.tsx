@@ -29,6 +29,7 @@ function getChannelHints(channelType: string): string[] {
     case 'discord':
       return [
         'In the Discord Developer Portal, enable Presence Intent, Server Members Intent, and Message Content Intent under Bot settings.',
+        'Warning: Only install Starkbot in your own Discord server. The admin will have full control over the Agentic Loop and Tools.',
       ];
     default:
       return [];
