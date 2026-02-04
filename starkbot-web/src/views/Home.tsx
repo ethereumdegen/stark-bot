@@ -3,6 +3,7 @@ import { Navbar } from '../components/Navbar'
 import { Hero } from '../components/Hero'
 import { Features } from '../components/Features'
 import { GetStarted } from '../components/GetStarted'
+import { InteractiveDemo } from '../components/InteractiveDemo'
 import { CTA } from '../components/CTA'
 import { Footer } from '../components/Footer'
 import { GridBackground } from '../components/GridBackground'
@@ -38,6 +39,7 @@ export default function Home() {
         <Hero />
         <Features />
         <Token />
+        <InteractiveDemo />
         <GetStarted />
         <CTA />
         <Footer />

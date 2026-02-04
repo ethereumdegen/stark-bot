@@ -58,6 +58,17 @@ export function Hero() {
             <Github className="w-6 h-6" />
             View on GitHub
           </a>
+          <a
+            href="https://railway.app/new/template?template=https%3A%2F%2Fgithub.com%2Fethereumdegen%2Fstark-bot"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-8 py-4 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-400 hover:to-green-500 text-white font-semibold rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-green-500/25 flex items-center justify-center gap-3"
+          >
+            <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2L2 7v10c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-10-5z"/>
+            </svg>
+            Deploy on Railway
+          </a>
           <Link
             to="/docs"
             className="px-8 py-4 bg-white/5 hover:bg-white/10 text-white font-semibold rounded-xl transition-all duration-300 border border-white/20 hover:border-blue-500/50 flex items-center justify-center gap-3"
