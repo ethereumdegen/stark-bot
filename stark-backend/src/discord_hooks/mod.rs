@@ -82,6 +82,8 @@ pub struct ForwardRequest {
     pub user_name: String,
     /// Whether the user is an admin
     pub is_admin: bool,
+    /// Force safe mode for this request (e.g., non-admin Discord queries)
+    pub force_safe_mode: bool,
 }
 
 /// Check if a user is in "listening for query" mode
@@ -243,6 +245,7 @@ pub async fn process(
                 user_id,
                 user_name,
                 is_admin: true,
+                force_safe_mode: false,
             }))
         } else if contains_query_keyword(&command_text) {
             // Admin said "query" - activate listening mode
@@ -286,6 +289,7 @@ pub async fn process(
                     user_id,
                     user_name,
                     is_admin: true,
+                    force_safe_mode: false,
                 }))
             } else {
                 // Explain how to activate query mode
@@ -319,8 +323,19 @@ pub async fn process(
                 Ok(ProcessResult::handled(response))
             }
             None => {
-                // Not a recognized limited command
-                Ok(ProcessResult::handled(commands::permission_denied_message()))
+                // Forward to agent with safe mode restrictions
+                log::info!(
+                    "Discord hooks: Non-admin {} querying with safe mode: '{}'",
+                    user_name,
+                    command_text.chars().take(50).collect::<String>()
+                );
+                Ok(ProcessResult::forward_to_agent(ForwardRequest {
+                    text: command_text,
+                    user_id,
+                    user_name,
+                    is_admin: false,
+                    force_safe_mode: true,
+                }))
             }
         }
     }

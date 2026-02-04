@@ -206,6 +206,7 @@ async fn chat(
         message_id: None,
         session_mode: None,
         selected_network: body.network.clone(),
+        force_safe_mode: false,
     };
 
     // Dispatch through the unified pipeline

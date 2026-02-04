@@ -78,6 +78,9 @@ pub struct NormalizedMessage {
     /// Used as default for web3 operations unless user explicitly specifies otherwise
     #[serde(default)]
     pub selected_network: Option<String>,
+    /// Force safe mode for this message (e.g., non-admin Discord queries)
+    #[serde(default)]
+    pub force_safe_mode: bool,
 }
 
 /// Handle to a running channel listener

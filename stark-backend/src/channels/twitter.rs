@@ -643,6 +643,7 @@ async fn process_mention(
         message_id: Some(tweet.id.clone()),
         session_mode: None,
         selected_network: None,
+        force_safe_mode: false,
     };
 
     // Subscribe to events (for logging, not forwarding)

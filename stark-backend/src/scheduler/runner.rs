@@ -17,6 +17,9 @@ pub const HEARTBEAT_USER_ID: &str = "heartbeat-system";
 pub const HEARTBEAT_USER_NAME: &str = "Heartbeat";
 /// Fixed chat_id ensures we reuse the same session (no timestamp suffix)
 pub const HEARTBEAT_CHAT_ID: &str = "heartbeat:global";
+/// Dedicated channel ID for heartbeat - NEVER use channel 0 (web UI)
+/// Using -999 to avoid collision with real channels and cron job negative IDs
+pub const HEARTBEAT_CHANNEL_ID: i64 = -999;
 
 /// Scheduler configuration
 #[derive(Debug, Clone)]
@@ -256,6 +259,7 @@ impl Scheduler {
             message_id: Some(format!("cron-run-{}", started_at.timestamp())),
             session_mode: Some(job.session_mode.clone()),
             selected_network: None,
+            force_safe_mode: false,
         };
 
         // Execute the job
@@ -516,8 +520,9 @@ impl Scheduler {
 
         // Use fixed constants for heartbeat identity, but isolated session mode
         // to prevent session state corruption from breaking other functionality
+        // IMPORTANT: Always use HEARTBEAT_CHANNEL_ID (-999) to avoid polluting web UI (channel 0)
         let normalized = NormalizedMessage {
-            channel_id: config.channel_id.unwrap_or(0),
+            channel_id: HEARTBEAT_CHANNEL_ID,
             channel_type: HEARTBEAT_CHANNEL_TYPE.to_string(),
             chat_id: HEARTBEAT_CHAT_ID.to_string(),
             user_id: HEARTBEAT_USER_ID.to_string(),
@@ -526,6 +531,7 @@ impl Scheduler {
             message_id: Some(format!("heartbeat-{}", now.timestamp())),
             session_mode: Some("isolated".to_string()), // Isolated to prevent state corruption
             selected_network: None,
+            force_safe_mode: false,
         };
 
         // Execute the heartbeat
@@ -533,7 +539,7 @@ impl Scheduler {
 
         // === GET SESSION ID ===
         // Query the session using the fixed heartbeat session key
-        let session_key = format!("{}:{}:{}", HEARTBEAT_CHANNEL_TYPE, config.channel_id.unwrap_or(0), HEARTBEAT_CHAT_ID);
+        let session_key = format!("{}:{}:{}", HEARTBEAT_CHANNEL_TYPE, HEARTBEAT_CHANNEL_ID, HEARTBEAT_CHAT_ID);
         let new_session_id = self.db.get_chat_session_by_key(&session_key)
             .ok()
             .flatten()
@@ -759,8 +765,9 @@ async fn execute_heartbeat_isolated(
         node_content
     );
 
+    // IMPORTANT: Always use HEARTBEAT_CHANNEL_ID (-999) to avoid polluting web UI (channel 0)
     let normalized = NormalizedMessage {
-        channel_id: config.channel_id.unwrap_or(0),
+        channel_id: HEARTBEAT_CHANNEL_ID,
         channel_type: HEARTBEAT_CHANNEL_TYPE.to_string(),
         chat_id: HEARTBEAT_CHAT_ID.to_string(),
         user_id: HEARTBEAT_USER_ID.to_string(),
@@ -769,20 +776,21 @@ async fn execute_heartbeat_isolated(
         message_id: Some(format!("heartbeat-{}", now.timestamp())),
         session_mode: Some("isolated".to_string()),
         selected_network: None,
+        force_safe_mode: false,
     };
 
     // === DEFERRED AI CALL (fire and forget) ===
     let dispatcher = Arc::clone(dispatcher);
     let broadcaster = Arc::clone(broadcaster);
     let config_id = config.id;
-    let channel_id = config.channel_id;
+    let config_channel_id = config.channel_id; // Keep for broadcast events only
     let node_id = next_node.id;
     let db = Arc::clone(db);
 
     tokio::spawn(async move {
         log::info!("[HEARTBEAT-AI] Starting dispatch task for node {}", node_id);
         log::info!("[HEARTBEAT-AI] channel_type={}, channel_id={}, chat_id={}",
-            HEARTBEAT_CHANNEL_TYPE, channel_id.unwrap_or(0), HEARTBEAT_CHAT_ID);
+            HEARTBEAT_CHANNEL_TYPE, HEARTBEAT_CHANNEL_ID, HEARTBEAT_CHAT_ID);
 
         let result = dispatcher.dispatch(normalized).await;
 
@@ -796,7 +804,7 @@ async fn execute_heartbeat_isolated(
         }
 
         // Update session ID after dispatch (session created during dispatch)
-        let session_key = format!("{}:{}:{}", HEARTBEAT_CHANNEL_TYPE, channel_id.unwrap_or(0), HEARTBEAT_CHAT_ID);
+        let session_key = format!("{}:{}:{}", HEARTBEAT_CHANNEL_TYPE, HEARTBEAT_CHANNEL_ID, HEARTBEAT_CHAT_ID);
         log::info!("[HEARTBEAT-AI] Looking for session with key: {}", session_key);
 
         match db.get_chat_session_by_key(&session_key) {
@@ -817,7 +825,7 @@ async fn execute_heartbeat_isolated(
             "heartbeat_completed",
             serde_json::json!({
                 "config_id": config_id,
-                "channel_id": channel_id,
+                "channel_id": config_channel_id,
                 "mind_node_id": node_id,
                 "success": result.error.is_none(),
                 "error": result.error,

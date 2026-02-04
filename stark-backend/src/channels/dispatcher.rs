@@ -474,18 +474,20 @@ impl MessageDispatcher {
         let mut tool_config = self.db.get_effective_tool_config(Some(message.channel_id))
             .unwrap_or_default();
 
-        // Check if this channel has safe_mode enabled (e.g., Twitter channels with untrusted input)
-        // Safe mode overrides the tool profile with SafeMode for security
-        let is_safe_mode = self.db.get_channel(message.channel_id)
+        // Check channel safe_mode OR message-level force_safe_mode
+        let channel_safe_mode = self.db.get_channel(message.channel_id)
             .ok()
             .flatten()
             .map(|ch| ch.safe_mode)
             .unwrap_or(false);
 
+        let is_safe_mode = channel_safe_mode || message.force_safe_mode;
+
         if is_safe_mode {
             log::info!(
-                "[DISPATCH] Channel {} has safe_mode enabled, overriding tool profile to SafeMode",
-                message.channel_id
+                "[DISPATCH] Safe mode enabled (channel={}, force={}), restricting tools",
+                channel_safe_mode,
+                message.force_safe_mode
             );
             tool_config.profile = crate::tools::ToolProfile::SafeMode;
             // Convert ToolGroup enum to String for allowed_groups

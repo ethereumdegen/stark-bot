@@ -131,6 +131,7 @@ pub async fn start_telegram_listener(
                         message_id: Some(msg.id.to_string()),
                         session_mode: None,
                         selected_network: None,
+                        force_safe_mode: false,
                     };
 
                     // Subscribe to events for real-time tool call forwarding
