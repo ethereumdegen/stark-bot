@@ -1,9 +1,9 @@
-import { Github, ChevronDown, Monitor, BookOpen } from 'lucide-react'
+import { Github, ChevronDown, Monitor, BookOpen, Heart } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 export function Hero() {
   return (
-    <section className="pt-32 pb-20 px-6">
+    <section className="pt-32 pb-20 px-6 relative">
       <div className="max-w-4xl mx-auto text-center">
         {/* Mascot/Logo */}
         <div className="mb-8 animate-float">
@@ -18,10 +18,22 @@ export function Hero() {
           </div>
         </div>
 
-        {/* Title */}
-        <h1 className="text-5xl sm:text-7xl font-black mb-6 tracking-tight text-white">
-          StarkBot
-        </h1>
+        {/* Title with Heart */}
+        <div className="relative inline-block">
+          <h1 className="text-5xl sm:text-7xl font-black mb-6 tracking-tight text-white">
+            StarkBot
+          </h1>
+          <Link
+            to="/docs/scheduling"
+            className="absolute -top-2 -right-10 sm:-right-14 group cursor-pointer"
+            title="Heartbeat scheduling"
+          >
+            <Heart
+              size={24}
+              className="text-red-500 fill-red-500 group-hover:animate-heartbeat"
+            />
+          </Link>
+        </div>
 
         {/* Tagline */}
         <p className="text-blue-400 text-xl sm:text-2xl font-semibold uppercase tracking-widest mb-2">

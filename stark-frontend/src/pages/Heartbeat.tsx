@@ -164,6 +164,43 @@ interface HeartbeatSectionProps {
 function HeartbeatSection({ config, setConfig, setMessage }: HeartbeatSectionProps) {
   const [isSaving, setIsSaving] = useState(false);
   const [isPulsing, setIsPulsing] = useState(false);
+  const [countdown, setCountdown] = useState<string | null>(null);
+
+  // Countdown timer effect
+  useEffect(() => {
+    if (!config?.next_beat_at || !config?.enabled) {
+      setCountdown(null);
+      return;
+    }
+
+    const updateCountdown = () => {
+      const now = new Date().getTime();
+      const target = new Date(config.next_beat_at!).getTime();
+      const diff = target - now;
+
+      if (diff <= 0) {
+        setCountdown('soon...');
+        return;
+      }
+
+      const hours = Math.floor(diff / (1000 * 60 * 60));
+      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+      if (hours > 0) {
+        setCountdown(`${hours}h ${minutes}m ${seconds}s`);
+      } else if (minutes > 0) {
+        setCountdown(`${minutes}m ${seconds}s`);
+      } else {
+        setCountdown(`${seconds}s`);
+      }
+    };
+
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+
+    return () => clearInterval(interval);
+  }, [config?.next_beat_at, config?.enabled]);
 
   // Helper to convert minutes to value + unit
   const minutesToValueUnit = (minutes: number): { value: number; unit: 'minutes' | 'hours' | 'days' } => {
@@ -272,19 +309,26 @@ function HeartbeatSection({ config, setConfig, setMessage }: HeartbeatSectionPro
             <Heart className="w-5 h-5 text-red-400" />
             Heartbeat
           </CardTitle>
-          <button
-            onClick={toggleEnabled}
-            disabled={isSaving || !config}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-              formData.enabled ? 'bg-stark-500' : 'bg-slate-600'
-            } ${!config ? 'opacity-50 cursor-not-allowed' : ''}`}
-          >
-            <span
-              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                formData.enabled ? 'translate-x-6' : 'translate-x-1'
-              }`}
-            />
-          </button>
+          <div className="flex items-center gap-3">
+            {countdown && formData.enabled && (
+              <span className="text-sm text-slate-400" title="Time to next pulse">
+                {countdown}
+              </span>
+            )}
+            <button
+              onClick={toggleEnabled}
+              disabled={isSaving || !config}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                formData.enabled ? 'bg-stark-500' : 'bg-slate-600'
+              } ${!config ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  formData.enabled ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
         </div>
       </CardHeader>
       <CardContent>

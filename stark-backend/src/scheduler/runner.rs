@@ -419,36 +419,6 @@ impl Scheduler {
             next_node.id, node_depth, next_node.is_trunk, next_node.body.len()
         );
 
-        // === GET PREVIOUS HEARTBEAT CONTEXT ===
-        let previous_context = if let Some(last_session_id) = config.last_session_id {
-            match self.db.get_recent_session_messages(last_session_id, 6) {
-                Ok(messages) => {
-                    if messages.is_empty() {
-                        String::new()
-                    } else {
-                        let mut ctx = String::from("\n--- Previous Heartbeat Context ---\n");
-                        for msg in messages {
-                            let role = msg.role.as_str();
-                            let content_preview = if msg.content.len() > 500 {
-                                format!("{}...", &msg.content[..500])
-                            } else {
-                                msg.content.clone()
-                            };
-                            ctx.push_str(&format!("[{}]: {}\n", role, content_preview));
-                        }
-                        ctx.push_str("--- End Previous Context ---\n\n");
-                        ctx
-                    }
-                }
-                Err(e) => {
-                    log::warn!("Failed to get previous heartbeat context: {}", e);
-                    String::new()
-                }
-            }
-        } else {
-            String::new()
-        };
-
         // Broadcast heartbeat start event with node info
         self.broadcaster.broadcast(GatewayEvent::custom(
             "heartbeat_started",
@@ -474,7 +444,6 @@ impl Scheduler {
 
         let message_text = format!(
             "[HEARTBEAT - Mind Map Reflection]\n\
-            {}\
             Current Position: Node #{} (depth: {}{})\n\
             Node Content: {}\n\n\
             Instructions:\n\
@@ -484,7 +453,6 @@ impl Scheduler {
             - You may update this node's content or create new connected nodes\n\
             - Review any pending tasks or items that relate to this area\n\
             - Respond with HEARTBEAT_OK if no action needed",
-            previous_context,
             next_node.id,
             node_depth,
             if next_node.is_trunk { ", trunk" } else { "" },
