@@ -442,18 +442,50 @@ export default function Channels() {
                         <>
                           {settingsSchema.map((setting) => (
                             <div key={setting.key}>
-                              <Input
-                                label={setting.label}
-                                value={settingsValues[setting.key] || ''}
-                                onChange={(e) =>
-                                  setSettingsValues({
-                                    ...settingsValues,
-                                    [setting.key]: e.target.value,
-                                  })
-                                }
-                                placeholder={setting.placeholder}
-                              />
-                              <p className="mt-1 text-xs text-slate-500">{setting.description}</p>
+                              {setting.input_type === 'toggle' ? (
+                                <div className="flex items-center justify-between">
+                                  <div>
+                                    <label className="block text-sm font-medium text-slate-300">
+                                      {setting.label}
+                                    </label>
+                                    <p className="mt-1 text-xs text-slate-500">{setting.description}</p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setSettingsValues({
+                                        ...settingsValues,
+                                        [setting.key]: settingsValues[setting.key] === 'true' ? 'false' : 'true',
+                                      })
+                                    }
+                                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                                      settingsValues[setting.key] === 'true' ? 'bg-stark-500' : 'bg-slate-600'
+                                    }`}
+                                  >
+                                    <span
+                                      className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
+                                        settingsValues[setting.key] === 'true' ? 'translate-x-6' : 'translate-x-1'
+                                      }`}
+                                    />
+                                  </button>
+                                </div>
+                              ) : (
+                                <>
+                                  <Input
+                                    label={setting.label}
+                                    value={settingsValues[setting.key] || ''}
+                                    onChange={(e) =>
+                                      setSettingsValues({
+                                        ...settingsValues,
+                                        [setting.key]: e.target.value,
+                                      })
+                                    }
+                                    placeholder={setting.placeholder}
+                                    type={setting.input_type === 'number' ? 'number' : 'text'}
+                                  />
+                                  <p className="mt-1 text-xs text-slate-500">{setting.description}</p>
+                                </>
+                              )}
                             </div>
                           ))}
                           <div className="flex gap-2 justify-end pt-2">

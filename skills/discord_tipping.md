@@ -21,6 +21,8 @@ When a user says "tip @someone X TOKEN", follow these 4 steps in order:
 3. **Convert amount** → Human readable to raw units
 4. **Transfer** → Execute the ERC20 transfer
 
+**Amount shorthand:** Users can use "k" for thousands (1k = 1,000) and "m" for millions (1m = 1,000,000). For example: "tip @user 5k STARKBOT" means 5,000 tokens.
+
 ## Step 1: Resolve Discord Mention
 
 Extract the Discord user ID from the mention and resolve it to a wallet address:

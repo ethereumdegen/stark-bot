@@ -35,6 +35,8 @@ impl ToolOutputVerbosity {
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum ChannelSettingKey {
+    /// Common: Auto-start this channel when the server boots (after restore from backup)
+    AutoStartOnBoot,
     /// Discord: Comma-separated list of Discord user IDs with admin access
     /// If empty, falls back to Discord's built-in Administrator permission
     DiscordAdminUserIds,
@@ -50,6 +52,7 @@ impl ChannelSettingKey {
     /// Get the display label for this setting
     pub fn label(&self) -> &'static str {
         match self {
+            Self::AutoStartOnBoot => "Auto-Start on Boot",
             Self::DiscordAdminUserIds => "Admin User IDs (Optional)",
             Self::TwitterBotHandle => "Bot Handle",
             Self::TwitterBotUserId => "Bot User ID",
@@ -60,10 +63,15 @@ impl ChannelSettingKey {
     /// Get the description for this setting
     pub fn description(&self) -> &'static str {
         match self {
+            Self::AutoStartOnBoot => {
+                "Automatically start this channel when the server boots or restores from backup. \
+                 Useful for ensuring your bot is always running after container updates."
+            }
             Self::DiscordAdminUserIds => {
-                "Optional: Comma-separated Discord user IDs that have full agent access. \
-                 If left empty, users with Discord's Administrator permission are treated as admins. \
-                 Get your ID by enabling Developer Mode in Discord, then right-click your username."
+                "Comma-separated Discord user IDs that have full agent access. \
+                 If left empty, Discord's Administrator permission is used. \
+                 If any IDs are set, ONLY those users have admin access (Discord admin role is ignored). \
+                 Get your ID: enable Developer Mode in Discord settings, then right-click your username."
             }
             Self::TwitterBotHandle => {
                 "Your bot's Twitter handle without the @ symbol (e.g., 'starkbotai'). \
@@ -83,6 +91,7 @@ impl ChannelSettingKey {
     /// Get the input type for the UI
     pub fn input_type(&self) -> SettingInputType {
         match self {
+            Self::AutoStartOnBoot => SettingInputType::Toggle,
             Self::DiscordAdminUserIds => SettingInputType::Text,
             Self::TwitterBotHandle => SettingInputType::Text,
             Self::TwitterBotUserId => SettingInputType::Text,
@@ -93,7 +102,8 @@ impl ChannelSettingKey {
     /// Get the placeholder text for the input
     pub fn placeholder(&self) -> &'static str {
         match self {
-            Self::DiscordAdminUserIds => "Leave empty to use Discord Administrator permission",
+            Self::AutoStartOnBoot => "",
+            Self::DiscordAdminUserIds => "123456789012345678, 987654321098765432",
             Self::TwitterBotHandle => "starkbotai",
             Self::TwitterBotUserId => "1234567890123456789",
             Self::TwitterPollIntervalSecs => "120",
@@ -108,11 +118,17 @@ impl ChannelSettingKey {
     /// Get the default value for this setting
     pub fn default_value(&self) -> &'static str {
         match self {
+            Self::AutoStartOnBoot => "false",
             Self::DiscordAdminUserIds => "",
             Self::TwitterBotHandle => "",
             Self::TwitterBotUserId => "",
             Self::TwitterPollIntervalSecs => "120",
         }
+    }
+
+    /// Check if this setting applies to all channel types (common setting)
+    pub fn is_common(&self) -> bool {
+        matches!(self, Self::AutoStartOnBoot)
     }
 }
 
@@ -209,9 +225,18 @@ pub struct SettingUpdate {
     pub value: String,
 }
 
+/// Get common settings that apply to all channel types
+fn get_common_settings() -> Vec<ChannelSettingDefinition> {
+    vec![
+        ChannelSettingKey::AutoStartOnBoot.into(),
+    ]
+}
+
 /// Get the available settings for a channel type
 pub fn get_settings_for_channel_type(channel_type: ChannelType) -> Vec<ChannelSettingDefinition> {
-    match channel_type {
+    let mut settings = get_common_settings();
+
+    let type_specific: Vec<ChannelSettingDefinition> = match channel_type {
         ChannelType::Discord => vec![
             ChannelSettingKey::DiscordAdminUserIds.into(),
         ],
@@ -226,7 +251,10 @@ pub fn get_settings_for_channel_type(channel_type: ChannelType) -> Vec<ChannelSe
             ChannelSettingKey::TwitterBotUserId.into(),
             ChannelSettingKey::TwitterPollIntervalSecs.into(),
         ],
-    }
+    };
+
+    settings.extend(type_specific);
+    settings
 }
 
 #[cfg(test)]
@@ -242,14 +270,18 @@ mod tests {
     #[test]
     fn test_discord_settings() {
         let settings = get_settings_for_channel_type(ChannelType::Discord);
-        assert_eq!(settings.len(), 1);
-        assert_eq!(settings[0].key, "discord_admin_user_ids");
+        // 1 common setting (auto_start_on_boot) + 1 Discord-specific setting
+        assert_eq!(settings.len(), 2);
+        assert_eq!(settings[0].key, "auto_start_on_boot"); // Common setting first
+        assert_eq!(settings[1].key, "discord_admin_user_ids");
     }
 
     #[test]
     fn test_telegram_settings() {
         let settings = get_settings_for_channel_type(ChannelType::Telegram);
-        assert!(settings.is_empty());
+        // Only common setting (auto_start_on_boot)
+        assert_eq!(settings.len(), 1);
+        assert_eq!(settings[0].key, "auto_start_on_boot");
     }
 
     #[test]

@@ -71,7 +71,7 @@ impl Gateway {
         }
     }
 
-    /// Start all channels that are marked as enabled in the database
+    /// Start all channels that have auto_start_on_boot setting enabled
     pub async fn start_enabled_channels(&self) {
         match self.db.list_enabled_channels() {
             Ok(channels) => {
@@ -80,19 +80,34 @@ impl Gateway {
                     let name = channel.name.clone();
                     let channel_type = channel.channel_type.clone();
 
+                    // Check if channel has auto_start_on_boot setting enabled
+                    let should_auto_start = self.db
+                        .get_channel_setting(id, "auto_start_on_boot")
+                        .ok()
+                        .flatten()
+                        .map(|v| v == "true")
+                        .unwrap_or(false);
+
+                    if !should_auto_start {
+                        log::debug!(
+                            "Skipping {} channel {} (auto_start_on_boot not enabled)",
+                            channel_type,
+                            name
+                        );
+                        continue;
+                    }
+
                     match self.channel_manager.start_channel(channel).await {
                         Ok(()) => {
-                            log::info!("Started {} channel: {}", channel_type, name);
+                            log::info!("Auto-started {} channel: {}", channel_type, name);
                         }
                         Err(e) => {
                             log::error!(
-                                "Failed to start {} channel {}: {}",
+                                "Failed to auto-start {} channel {}: {}",
                                 channel_type,
                                 name,
                                 e
                             );
-                            // Disable the channel in DB since it failed to start
-                            let _ = self.db.set_channel_enabled(id, false);
                         }
                     }
                 }

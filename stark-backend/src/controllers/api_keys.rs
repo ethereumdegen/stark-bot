@@ -1354,6 +1354,36 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
         }
     }
 
+    // Auto-start channels with auto_start_on_boot setting enabled
+    let mut auto_started_channels = 0;
+    for (old_id, new_id) in &old_channel_to_new_id {
+        // Check if this channel has auto_start_on_boot enabled
+        let should_auto_start = state.db
+            .get_channel_setting(*new_id, "auto_start_on_boot")
+            .ok()
+            .flatten()
+            .map(|v| v == "true")
+            .unwrap_or(false);
+
+        if should_auto_start {
+            // Get the channel and start it
+            if let Ok(Some(channel)) = state.db.get_channel(*new_id) {
+                match state.channel_manager.start_channel(channel).await {
+                    Ok(_) => {
+                        auto_started_channels += 1;
+                        log::info!("Auto-started channel {} (old_id={})", new_id, old_id);
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to auto-start channel {}: {}", new_id, e);
+                    }
+                }
+            }
+        }
+    }
+    if auto_started_channels > 0 {
+        log::info!("Auto-started {} channels after restore", auto_started_channels);
+    }
+
     // Record retrieval in local state
     if let Some(wallet_address) = get_wallet_address(&private_key) {
         let _ = state.db.record_keystore_retrieval(&wallet_address);
