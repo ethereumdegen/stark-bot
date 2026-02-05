@@ -9,6 +9,7 @@ use crate::channels::ChannelManager;
 use crate::db::Database;
 use crate::tools::ToolRegistry;
 use crate::tx_queue::TxQueueManager;
+use crate::wallet::WalletProvider;
 use std::sync::Arc;
 
 /// Main Gateway struct that owns all channel connections and exposes WebSocket RPC
@@ -35,20 +36,22 @@ impl Gateway {
         Self::new_with_tools_and_wallet(db, tool_registry, None)
     }
 
-    /// Create a new Gateway with tool registry and wallet support for x402 payments
+    /// Create a new Gateway with tool registry and wallet provider for x402 payments
+    /// The wallet_provider encapsulates both Standard mode (EnvWalletProvider)
+    /// and Flash mode (FlashWalletProvider)
     pub fn new_with_tools_and_wallet(
         db: Arc<Database>,
         tool_registry: Arc<ToolRegistry>,
-        burner_wallet_private_key: Option<String>,
+        wallet_provider: Option<Arc<dyn WalletProvider>>,
     ) -> Self {
-        Self::new_with_tools_wallet_and_tx_queue(db, tool_registry, burner_wallet_private_key, None)
+        Self::new_with_tools_wallet_and_tx_queue(db, tool_registry, wallet_provider, None)
     }
 
-    /// Create a new Gateway with tool registry, wallet, and transaction queue support
+    /// Create a new Gateway with tool registry, wallet provider, and transaction queue support
     pub fn new_with_tools_wallet_and_tx_queue(
         db: Arc<Database>,
         tool_registry: Arc<ToolRegistry>,
-        burner_wallet_private_key: Option<String>,
+        wallet_provider: Option<Arc<dyn WalletProvider>>,
         tx_queue: Option<Arc<TxQueueManager>>,
     ) -> Self {
         let broadcaster = Arc::new(EventBroadcaster::new());
@@ -56,7 +59,7 @@ impl Gateway {
             db.clone(),
             broadcaster.clone(),
             tool_registry,
-            burner_wallet_private_key,
+            wallet_provider,
         );
         // Add tx_queue if provided (needed for web3 transactions in channels)
         if let Some(tq) = tx_queue {

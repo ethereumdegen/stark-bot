@@ -16,7 +16,7 @@ use crate::tools::{ToolContext, ToolDefinition, ToolRegistry};
 use dashmap::DashMap;
 use serde_json::json;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use tokio::sync::{oneshot, Semaphore};
 use tokio::time::{timeout, Duration};
 
@@ -50,9 +50,9 @@ pub struct SubAgentManager {
     channel_semaphores: DashMap<i64, Arc<Semaphore>>,
     /// Active sub-agents indexed by ID (Arc-wrapped for sharing with spawned tasks)
     active_agents: Arc<DashMap<String, SubAgentHandle>>,
-    /// Burner wallet private key for x402 payments (Standard mode)
-    burner_wallet_private_key: Option<String>,
-    /// Wallet provider for x402 payments (Flash mode - uses this instead of private key)
+    /// Wallet provider for x402 payments and transaction signing
+    /// Encapsulates both Standard mode (EnvWalletProvider with raw private key)
+    /// and Flash mode (FlashWalletProvider with Privy proxy)
     wallet_provider: Option<Arc<dyn crate::wallet::WalletProvider>>,
 }
 
@@ -66,13 +66,15 @@ impl SubAgentManager {
         Self::new_with_config(db, broadcaster, tool_registry, SubAgentConfig::default(), None)
     }
 
-    /// Create a new sub-agent manager with configuration
+    /// Create a new sub-agent manager with configuration and wallet provider
+    /// The wallet_provider encapsulates both Standard mode (EnvWalletProvider)
+    /// and Flash mode (FlashWalletProvider)
     pub fn new_with_config(
         db: Arc<Database>,
         broadcaster: Arc<EventBroadcaster>,
         tool_registry: Arc<ToolRegistry>,
         config: SubAgentConfig,
-        burner_wallet_private_key: Option<String>,
+        wallet_provider: Option<Arc<dyn crate::wallet::WalletProvider>>,
     ) -> Self {
         Self {
             db,
@@ -82,15 +84,8 @@ impl SubAgentManager {
             channel_semaphores: DashMap::new(),
             active_agents: Arc::new(DashMap::new()),
             config,
-            burner_wallet_private_key,
-            wallet_provider: None,
+            wallet_provider,
         }
-    }
-
-    /// Set the wallet provider for x402 payments (Flash mode)
-    pub fn with_wallet_provider(mut self, wallet_provider: Arc<dyn crate::wallet::WalletProvider>) -> Self {
-        self.wallet_provider = Some(wallet_provider);
-        self
     }
 
     /// Generate a unique sub-agent ID
@@ -156,7 +151,6 @@ impl SubAgentManager {
         let tool_registry = self.tool_registry.clone();
         let total_sem = self.total_semaphore.clone();
         let channel_sem = self.get_channel_semaphore(context.parent_channel_id);
-        let burner_key = self.burner_wallet_private_key.clone();
         let wallet_provider = self.wallet_provider.clone();
         let active_agents = self.active_agents.clone();
         let subagent_id_for_cleanup = subagent_id.clone();
@@ -185,7 +179,6 @@ impl SubAgentManager {
                 broadcaster.clone(),
                 tool_registry.clone(),
                 context.clone(),
-                burner_key,
                 wallet_provider,
             );
 
@@ -264,7 +257,6 @@ impl SubAgentManager {
         broadcaster: Arc<EventBroadcaster>,
         tool_registry: Arc<ToolRegistry>,
         mut context: SubAgentContext,
-        burner_wallet_private_key: Option<String>,
         wallet_provider: Option<Arc<dyn crate::wallet::WalletProvider>>,
     ) -> Result<String, String> {
         log::info!("[SUBAGENT] Starting execution for {}", context.id);
@@ -301,13 +293,8 @@ impl SubAgentManager {
             settings
         };
 
-        // Create AI client with broadcaster for retry events
-        // Prefer wallet_provider (Flash mode) over private key (Standard mode)
-        let client = match if wallet_provider.is_some() {
-            AiClient::from_settings_with_wallet_provider(&effective_settings, wallet_provider.clone())
-        } else {
-            AiClient::from_settings_with_wallet(&effective_settings, burner_wallet_private_key.as_deref())
-        } {
+        // Create AI client with wallet provider for x402 payments
+        let client = match AiClient::from_settings_with_wallet_provider(&effective_settings, wallet_provider.clone()) {
             Ok(c) => c.with_broadcaster(Arc::clone(&broadcaster), context.parent_channel_id),
             Err(e) => return Err(format!("Failed to create AI client: {}", e)),
         };

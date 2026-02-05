@@ -28,7 +28,9 @@ pub struct ChannelManager {
     running_channels: Arc<DashMap<i64, ChannelHandle>>,
     tool_registry: Option<Arc<ToolRegistry>>,
     execution_tracker: Arc<ExecutionTracker>,
-    burner_wallet_private_key: Option<String>,
+    /// Wallet provider for x402 payments and transaction signing
+    /// Either EnvWalletProvider (Standard mode) or FlashWalletProvider (Flash mode)
+    wallet_provider: Option<Arc<dyn crate::wallet::WalletProvider>>,
     tx_queue: Option<Arc<TxQueueManager>>,
 }
 
@@ -41,7 +43,7 @@ impl ChannelManager {
             running_channels: Arc::new(DashMap::new()),
             tool_registry: None,
             execution_tracker,
-            burner_wallet_private_key: None,
+            wallet_provider: None,
             tx_queue: None,
         }
     }
@@ -54,11 +56,14 @@ impl ChannelManager {
         Self::new_with_tools_and_wallet(db, broadcaster, tool_registry, None)
     }
 
+    /// Create a ChannelManager with tools and wallet provider
+    /// The wallet_provider encapsulates both Standard mode (EnvWalletProvider)
+    /// and Flash mode (FlashWalletProvider)
     pub fn new_with_tools_and_wallet(
         db: Arc<Database>,
         broadcaster: Arc<EventBroadcaster>,
         tool_registry: Arc<ToolRegistry>,
-        burner_wallet_private_key: Option<String>,
+        wallet_provider: Option<Arc<dyn crate::wallet::WalletProvider>>,
     ) -> Self {
         let execution_tracker = Arc::new(ExecutionTracker::new(broadcaster.clone()));
         Self {
@@ -67,7 +72,7 @@ impl ChannelManager {
             running_channels: Arc::new(DashMap::new()),
             tool_registry: Some(tool_registry),
             execution_tracker,
-            burner_wallet_private_key,
+            wallet_provider,
             tx_queue: None,
         }
     }
@@ -102,14 +107,14 @@ impl ChannelManager {
         // Create shutdown channel
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
-        // Create dispatcher with or without tools (and wallet for x402 payment support)
+        // Create dispatcher with or without tools (and wallet provider for x402 payment support)
         let dispatcher = if let Some(ref tool_registry) = self.tool_registry {
             let mut disp = MessageDispatcher::new_with_wallet(
                 self.db.clone(),
                 self.broadcaster.clone(),
                 tool_registry.clone(),
                 self.execution_tracker.clone(),
-                self.burner_wallet_private_key.clone(),
+                self.wallet_provider.clone(),
             );
             // Add tx_queue if available (needed for web3 transactions)
             if let Some(ref tx_queue) = self.tx_queue {

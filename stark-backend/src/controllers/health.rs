@@ -25,13 +25,16 @@ async fn get_version() -> impl Responder {
 }
 
 async fn get_config_status(state: web::Data<AppState>) -> impl Responder {
-    // Get the bot's wallet address from the wallet provider
-    let wallet_address = state.wallet_provider.get_address();
-    let wallet_mode = state.wallet_provider.mode_name();
+    // Get the bot's wallet address and mode from the wallet provider (if configured)
+    let (wallet_address, wallet_mode) = match &state.wallet_provider {
+        Some(provider) => (Some(provider.get_address()), Some(provider.mode_name())),
+        None => (None, None),
+    };
 
     HttpResponse::Ok().json(serde_json::json!({
         "login_configured": state.config.login_admin_public_address.is_some(),
         "burner_wallet_configured": config::burner_wallet_private_key().is_some(),
+        "wallet_configured": state.wallet_provider.is_some(),
         "guest_dashboard_enabled": config::guest_dashboard_enabled(),
         "wallet_address": wallet_address,
         "wallet_mode": wallet_mode

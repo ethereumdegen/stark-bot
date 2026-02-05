@@ -6,6 +6,7 @@ use crate::gateway::events::EventBroadcaster;
 use crate::gateway::protocol::GatewayEvent;
 use crate::models::{CronJob, HeartbeatConfig, JobStatus, ScheduleType};
 use crate::tools::ToolRegistry;
+use crate::wallet;
 use chrono::{DateTime, Duration, Local, NaiveTime, Utc, Weekday, Datelike, Timelike};
 use std::sync::Arc;
 use tokio::sync::oneshot;
@@ -650,13 +651,19 @@ impl Scheduler {
             // Create dispatcher for this task (uses shared db pool)
             let tracker = Arc::new(ExecutionTracker::new(broadcaster.clone()));
             let tool_registry = Arc::new(ToolRegistry::new());
-            let burner_wallet = std::env::var("BURNER_WALLET_BOT_PRIVATE_KEY").ok();
+
+            // Create wallet provider from env var if available
+            let wallet_provider: Option<Arc<dyn wallet::WalletProvider>> = std::env::var("BURNER_WALLET_BOT_PRIVATE_KEY")
+                .ok()
+                .and_then(|pk| wallet::EnvWalletProvider::from_private_key(&pk).ok())
+                .map(|p| Arc::new(p) as Arc<dyn wallet::WalletProvider>);
+
             let dispatcher = Arc::new(MessageDispatcher::new_with_wallet(
                 db.clone(),
                 broadcaster.clone(),
                 tool_registry,
                 tracker,
-                burner_wallet,
+                wallet_provider,
             ));
 
             // Execute with timeout

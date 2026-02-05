@@ -229,12 +229,13 @@ impl OpenAIClient {
         };
 
         Ok(Self {
-            api_key: api_key.to_string(),
+            client,
             endpoint: endpoint_url,
             model: effective_model,
-            client,
+            max_tokens: max_tokens.unwrap_or(40096),
             x402_client,
-            max_tokens,
+            broadcaster: None,
+            channel_id: None,
         })
     }
 

@@ -56,8 +56,10 @@ pub struct AppState {
     pub hook_manager: Arc<HookManager>,
     pub tx_queue: Arc<TxQueueManager>,
     pub safe_mode_rate_limiter: SafeModeChannelRateLimiter,
-    /// Wallet provider - abstracts standard vs flash mode
-    pub wallet_provider: Arc<dyn WalletProvider>,
+    /// Wallet provider for x402 payments and transaction signing
+    /// Either EnvWalletProvider (Standard mode) or FlashWalletProvider (Flash mode)
+    /// None if no wallet is configured (graceful degradation - shows warning on login page)
+    pub wallet_provider: Option<Arc<dyn WalletProvider>>,
 }
 
 /// Auto-retrieve backup from keystore on fresh instance
@@ -572,12 +574,50 @@ async fn main() -> std::io::Result<()> {
     log::info!("Initializing transaction queue manager");
     let tx_queue = Arc::new(TxQueueManager::with_db(db.clone()));
 
-    // Initialize Gateway with tool registry, wallet, and tx_queue for channels
+    // Create wallet provider - try Flash mode first, then Standard mode
+    // Flash mode: Uses FlashWalletProvider which proxies signing to Privy via Flash backend
+    // Standard mode: Uses EnvWalletProvider which signs locally with raw private key
+    // If neither is configured, wallet_provider will be None (graceful degradation)
+    let wallet_provider: Option<Arc<dyn wallet::WalletProvider>> =
+        if std::env::var("FLASH_KEYSTORE_URL").is_ok() {
+            // Flash mode - env vars are set, create FlashWalletProvider
+            log::info!("Flash mode detected, initializing FlashWalletProvider...");
+            match tokio::runtime::Handle::current().block_on(wallet::FlashWalletProvider::new()) {
+                Ok(provider) => {
+                    log::info!("Initialized Flash wallet provider: {} (mode: {})",
+                        provider.get_address(), provider.mode_name());
+                    Some(Arc::new(provider) as Arc<dyn wallet::WalletProvider>)
+                }
+                Err(e) => {
+                    log::error!("Failed to create Flash wallet provider: {}", e);
+                    None
+                }
+            }
+        } else if let Some(ref pk) = config.burner_wallet_private_key {
+            // Standard mode - use raw private key
+            log::info!("Standard mode, initializing EnvWalletProvider...");
+            match wallet::EnvWalletProvider::from_private_key(pk) {
+                Ok(provider) => {
+                    log::info!("Initialized wallet provider: {} (mode: {})",
+                        provider.get_address(), provider.mode_name());
+                    Some(Arc::new(provider) as Arc<dyn wallet::WalletProvider>)
+                }
+                Err(e) => {
+                    log::warn!("Failed to create wallet provider: {}", e);
+                    None
+                }
+            }
+        } else {
+            log::warn!("No wallet provider configured - set FLASH_KEYSTORE_URL (Flash mode) or BURNER_WALLET_BOT_PRIVATE_KEY (Standard mode)");
+            None
+        };
+
+    // Initialize Gateway with tool registry, wallet provider, and tx_queue for channels
     log::info!("Initializing Gateway");
     let gateway = Arc::new(Gateway::new_with_tools_wallet_and_tx_queue(
         db.clone(),
         tool_registry.clone(),
-        config.burner_wallet_private_key.clone(),
+        wallet_provider.clone(),
         Some(tx_queue.clone()),
     ));
 
@@ -603,7 +643,7 @@ async fn main() -> std::io::Result<()> {
             gateway.broadcaster().clone(),
             tool_registry.clone(),
             execution_tracker.clone(),
-            config.burner_wallet_private_key.clone(),
+            wallet_provider.clone(),
             Some(skill_registry.clone()),
         ).with_hook_manager(hook_manager.clone())
          .with_validator_registry(validator_registry.clone())
@@ -696,7 +736,7 @@ async fn main() -> std::io::Result<()> {
                 hook_manager: Arc::clone(&hook_mgr),
                 tx_queue: Arc::clone(&tx_q),
                 safe_mode_rate_limiter: safe_mode_rl.clone(),
-                wallet_provider: Arc::clone(&wallet_prov),
+                wallet_provider: wallet_prov.clone(),
             }))
             .app_data(web::Data::new(Arc::clone(&sched)))
             // WebSocket data for /ws route
