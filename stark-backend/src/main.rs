@@ -376,6 +376,19 @@ async fn restore_backup_data(
         log::info!("[Keystore] Restored {} channel settings", restored_channel_settings);
     }
 
+    // Restore soul document if present
+    if let Some(soul_content) = &backup_data.soul_document {
+        let soul_path = config::soul_document_path();
+        // Ensure soul directory exists
+        if let Some(parent) = soul_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match std::fs::write(&soul_path, soul_content) {
+            Ok(_) => log::info!("[Keystore] Restored soul document"),
+            Err(e) => log::warn!("[Keystore] Failed to restore soul document: {}", e),
+        }
+    }
+
     log::info!("[Keystore] Restore complete");
     Ok((restored_keys, restored_nodes))
 }

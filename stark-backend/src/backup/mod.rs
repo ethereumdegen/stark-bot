@@ -45,6 +45,9 @@ pub struct BackupData {
     /// Channels (with bot tokens)
     #[serde(default)]
     pub channels: Vec<ChannelEntry>,
+    /// Soul document content (SOUL.md - agent's personality and truths)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub soul_document: Option<String>,
 }
 
 impl BackupData {
@@ -63,6 +66,7 @@ impl BackupData {
             bot_settings: None,
             channel_settings: Vec::new(),
             channels: Vec::new(),
+            soul_document: None,
         }
     }
 
@@ -77,6 +81,7 @@ impl BackupData {
             + if self.heartbeat_config.is_some() { 1 } else { 0 }
             + self.channel_settings.len()
             + self.channels.len()
+            + if self.soul_document.is_some() { 1 } else { 0 }
     }
 }
 

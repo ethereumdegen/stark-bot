@@ -834,6 +834,7 @@ export interface BackupResponse {
   channel_setting_count?: number;
   has_settings?: boolean;
   has_heartbeat?: boolean;
+  has_soul?: boolean;
   message?: string;
   error?: string;
 }
@@ -854,6 +855,7 @@ export interface CloudBackupPreview {
   channel_setting_count?: number;
   has_settings?: boolean;
   has_heartbeat?: boolean;
+  has_soul?: boolean;
   backup_version?: number;
   message?: string;
   error?: string;

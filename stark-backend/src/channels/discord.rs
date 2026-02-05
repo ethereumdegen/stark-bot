@@ -110,6 +110,21 @@ fn format_mode_change_for_discord(mode: &str, label: &str, reason: Option<&str>)
     }
 }
 
+/// Check if a tool terminates the chat loop and sets the final response.
+/// When true, the tool's output will be included in the final response, so we skip direct output.
+/// When false, the tool does NOT set the final response, so we must output directly.
+fn tool_terminates_loop(tool_name: &str, is_safe_mode: bool) -> bool {
+    match tool_name {
+        // say_to_user only terminates the loop in safe mode
+        // In admin mode, it continues and final response may not include the message
+        "say_to_user" => is_safe_mode,
+        // task_complete always terminates
+        "task_complete" => true,
+        // Other tools don't terminate
+        _ => false,
+    }
+}
+
 struct DiscordHandler {
     channel_id: i64,
     dispatcher: Arc<MessageDispatcher>,
@@ -336,12 +351,35 @@ impl DiscordHandler {
                         let content = event.data.get("content")
                             .and_then(|v| v.as_str())
                             .unwrap_or("");
+                        let is_safe_mode = event.data.get("safe_mode")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
 
-                        // say_to_user messages: skip sending via event stream for gateway channels
-                        // because the final response already contains this content.
-                        // Sending here would cause duplicate messages.
+                        // For tools that terminate the loop, skip output here (final response handles it)
+                        // For tools that don't terminate, output directly if they have user-facing content
                         if tool_name == "say_to_user" {
-                            None // Don't send - final response will handle it
+                            if !tool_terminates_loop(tool_name, is_safe_mode) && success && !content.is_empty() {
+                                // Send as permanent message (won't be in final response)
+                                let say_text = content.to_string();
+                                if say_text.len() <= 2000 {
+                                    if let Err(e) = discord_channel_id.say(&http, &say_text).await {
+                                        log::error!("Discord: Failed to send say_to_user message: {}", e);
+                                    }
+                                } else {
+                                    // Simple split for long messages
+                                    let mut remaining = say_text.as_str();
+                                    while !remaining.is_empty() {
+                                        let chunk_len = remaining.len().min(2000);
+                                        let chunk = &remaining[..chunk_len];
+                                        if let Err(e) = discord_channel_id.say(&http, chunk).await {
+                                            log::error!("Discord: Failed to send say_to_user chunk: {}", e);
+                                        }
+                                        remaining = &remaining[chunk_len..];
+                                    }
+                                }
+                            }
+                            // Don't add to status message (either final response has it, or we just sent it)
+                            None
                         } else {
                             format_tool_result_for_discord(tool_name, success, duration_ms, content, output_config.tool_result_verbosity)
                         }
