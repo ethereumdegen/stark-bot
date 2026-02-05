@@ -6,20 +6,32 @@ use super::abi::common::keccak256;
 use super::abi::reputation::*;
 use super::config::Eip8004Config;
 use super::types::*;
+use crate::wallet::WalletProvider;
 use crate::x402::X402EvmRpc;
 use ethers::types::Address;
 use std::str::FromStr;
+use std::sync::Arc;
 
 /// Reputation Registry client
 pub struct ReputationRegistry {
     config: Eip8004Config,
     rpc: Option<X402EvmRpc>,
+    wallet_provider: Option<Arc<dyn WalletProvider>>,
 }
 
 impl ReputationRegistry {
     /// Create a new Reputation Registry client
     pub fn new(config: Eip8004Config) -> Self {
-        Self { config, rpc: None }
+        Self { config, rpc: None, wallet_provider: None }
+    }
+
+    /// Create with a wallet provider (for Flash/Privy mode)
+    pub fn new_with_wallet_provider(config: Eip8004Config, wallet_provider: Arc<dyn WalletProvider>) -> Self {
+        Self {
+            config,
+            rpc: None,
+            wallet_provider: Some(wallet_provider),
+        }
     }
 
     /// Create with an existing RPC client
@@ -27,16 +39,22 @@ impl ReputationRegistry {
         Self {
             config,
             rpc: Some(rpc),
+            wallet_provider: None,
         }
     }
 
     /// Get or create RPC client
     fn get_rpc(&self) -> Result<X402EvmRpc, String> {
+        let network = if self.config.chain_id == 1 { "mainnet" } else { "base" };
+
+        // Prefer wallet provider (works in both Standard and Flash/Privy mode)
+        if let Some(ref wp) = self.wallet_provider {
+            return X402EvmRpc::new_with_wallet_provider(wp.clone(), network, None, true);
+        }
+
+        // Fall back to raw private key (Standard mode only)
         let private_key = crate::config::burner_wallet_private_key()
             .ok_or("BURNER_WALLET_BOT_PRIVATE_KEY not set")?;
-
-        // Use "base" for Base mainnet (8453), "mainnet" for Ethereum mainnet
-        let network = if self.config.chain_id == 1 { "mainnet" } else { "base" };
         X402EvmRpc::new(&private_key, network)
     }
 

@@ -237,18 +237,25 @@ impl PolymarketTradeTool {
             .ok_or_else(|| "BURNER_WALLET_BOT_PRIVATE_KEY not set. Configure this env var to trade on Polymarket.".to_string())
     }
 
-    /// Get wallet address from private key
+    /// Get wallet address from private key (for trading operations that use the local key)
     fn get_wallet_address() -> Result<String, String> {
         let pk = Self::get_private_key()?;
         let pk_clean = pk.strip_prefix("0x").unwrap_or(&pk);
 
-        // Use ethers to derive address (already in deps, simpler than alloy for this)
         let wallet: ethers::signers::LocalWallet = pk_clean
             .parse()
             .map_err(|e| format!("Invalid private key: {}", e))?;
 
         use ethers::signers::Signer as EthersSigner;
         Ok(format!("{:?}", wallet.address()))
+    }
+
+    /// Get wallet address — prefers wallet provider (correct in Flash/Privy mode)
+    fn get_wallet_address_from_context(context: &ToolContext) -> Result<String, String> {
+        if let Some(ref wp) = context.wallet_provider {
+            return Ok(wp.get_address());
+        }
+        Self::get_wallet_address()
     }
 
     /// Get or create authenticated CLOB client
@@ -514,7 +521,11 @@ impl PolymarketTradeTool {
 
     /// Get current positions from Data API
     async fn get_positions(&self) -> ToolResult {
-        let wallet_address = match Self::get_wallet_address() {
+        self.get_positions_with_context(&ToolContext::new()).await
+    }
+
+    async fn get_positions_with_context(&self, context: &ToolContext) -> ToolResult {
+        let wallet_address = match Self::get_wallet_address_from_context(context) {
             Ok(addr) => addr,
             Err(e) => return ToolResult::error(e),
         };
@@ -543,12 +554,16 @@ impl PolymarketTradeTool {
 
     /// Get balance and allowance info
     async fn get_balance(&self) -> ToolResult {
+        self.get_balance_with_context(&ToolContext::new()).await
+    }
+
+    async fn get_balance_with_context(&self, context: &ToolContext) -> ToolResult {
         let client = match self.get_authenticated_client().await {
             Ok(c) => c,
             Err(e) => return ToolResult::error(e),
         };
 
-        let wallet_address = Self::get_wallet_address().unwrap_or_else(|_| "unknown".to_string());
+        let wallet_address = Self::get_wallet_address_from_context(context).unwrap_or_else(|_| "unknown".to_string());
 
         use polymarket_client_sdk::clob::types::request::BalanceAllowanceRequest;
 
@@ -897,7 +912,7 @@ impl Tool for PolymarketTradeTool {
         self.definition.clone()
     }
 
-    async fn execute(&self, params: Value, _context: &ToolContext) -> ToolResult {
+    async fn execute(&self, params: Value, context: &ToolContext) -> ToolResult {
         let params: PolymarketParams = match serde_json::from_value(params) {
             Ok(p) => p,
             Err(e) => return ToolResult::error(format!("Invalid parameters: {}", e)),
@@ -914,8 +929,8 @@ impl Tool for PolymarketTradeTool {
             "cancel_order" => self.cancel_order(&params).await,
             "cancel_all" => self.cancel_all().await,
             "get_orders" => self.get_orders().await,
-            "get_positions" => self.get_positions().await,
-            "get_balance" => self.get_balance().await,
+            "get_positions" => self.get_positions_with_context(context).await,
+            "get_balance" => self.get_balance_with_context(context).await,
             _ => ToolResult::error(format!(
                 "Unknown action: '{}'. Discovery: search_markets, trending_markets, get_market, get_price. Trading: place_order, cancel_order, cancel_all, get_orders, get_positions, get_balance",
                 params.action

@@ -196,7 +196,11 @@ async fn get_agent_identity(
         return HttpResponse::BadRequest().json(ApiResponse::<()>::error("Identity Registry not deployed"));
     }
 
-    let registry = IdentityRegistry::new(config);
+    let registry = if let Some(ref wp) = state.wallet_provider {
+        IdentityRegistry::new_with_wallet_provider(config, wp.clone())
+    } else {
+        IdentityRegistry::new(config)
+    };
 
     match registry.get_agent_details(agent_id).await {
         Ok(agent) => HttpResponse::Ok().json(ApiResponse::success(agent)),
@@ -259,7 +263,11 @@ async fn get_agent_reputation(
         return HttpResponse::BadRequest().json(ApiResponse::<()>::error("Reputation Registry not deployed"));
     }
 
-    let registry = ReputationRegistry::new(config);
+    let registry = if let Some(ref wp) = state.wallet_provider {
+        ReputationRegistry::new_with_wallet_provider(config, wp.clone())
+    } else {
+        ReputationRegistry::new(config)
+    };
 
     match registry.get_summary(agent_id, &[], "", "").await {
         Ok(summary) => HttpResponse::Ok().json(ApiResponse::success(summary)),
@@ -289,7 +297,11 @@ async fn check_trust(
         }));
     }
 
-    let registry = ReputationRegistry::new(config);
+    let registry = if let Some(ref wp) = state.wallet_provider {
+        ReputationRegistry::new_with_wallet_provider(config, wp.clone())
+    } else {
+        ReputationRegistry::new(config)
+    };
 
     match registry.get_summary(agent_id, &[], "", "").await {
         Ok(summary) => {
@@ -336,7 +348,11 @@ async fn discover_agents(
         return HttpResponse::BadRequest().json(ApiResponse::<()>::error("Identity Registry not deployed"));
     }
 
-    let mut discovery = AgentDiscovery::new(config);
+    let mut discovery = if let Some(ref wp) = state.wallet_provider {
+        AgentDiscovery::new_with_wallet_provider(config, wp.clone())
+    } else {
+        AgentDiscovery::new(config)
+    };
     let offset = query.offset.unwrap_or(0);
     let limit = query.limit.unwrap_or(20).min(100);
 
@@ -371,7 +387,11 @@ async fn search_agents(
         return HttpResponse::BadRequest().json(ApiResponse::<()>::error("Identity Registry not deployed"));
     }
 
-    let mut discovery = AgentDiscovery::new(config);
+    let mut discovery = if let Some(ref wp) = state.wallet_provider {
+        AgentDiscovery::new_with_wallet_provider(config, wp.clone())
+    } else {
+        AgentDiscovery::new(config)
+    };
 
     let criteria = SearchCriteria {
         x402_required: query.x402_only.unwrap_or(false),
@@ -410,7 +430,11 @@ async fn get_agent_details(
         return HttpResponse::BadRequest().json(ApiResponse::<()>::error("Identity Registry not deployed"));
     }
 
-    let mut discovery = AgentDiscovery::new(config);
+    let mut discovery = if let Some(ref wp) = state.wallet_provider {
+        AgentDiscovery::new_with_wallet_provider(config, wp.clone())
+    } else {
+        AgentDiscovery::new(config)
+    };
 
     match discovery.discover_agent(agent_id).await {
         Ok(agent) => HttpResponse::Ok().json(ApiResponse::success(agent)),
