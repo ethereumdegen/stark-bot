@@ -50,8 +50,20 @@ pub fn journal_dir() -> String {
 }
 
 /// Get the soul directory from environment or default
+/// Checks both ./soul and ../soul if env var not set (handles running from stark-backend/)
 pub fn soul_dir() -> String {
-    env::var(env_vars::SOUL_DIR).unwrap_or_else(|_| defaults::SOUL_DIR.to_string())
+    if let Ok(dir) = env::var(env_vars::SOUL_DIR) {
+        return dir;
+    }
+    // Check if soul dir exists at default location or parent directory
+    // This handles running from repo root vs stark-backend directory
+    if Path::new("./soul").exists() {
+        "./soul".to_string()
+    } else if Path::new("../soul").exists() {
+        "../soul".to_string()
+    } else {
+        defaults::SOUL_DIR.to_string()
+    }
 }
 
 /// Get the burner wallet private key from environment (for tools)

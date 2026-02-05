@@ -93,15 +93,13 @@ export function GetStarted() {
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <a
-                href="https://cloud.digitalocean.com/apps/new?repo=https://github.com/ethereumdegen/stark-bot/tree/master"
+                href="https://starkbot.cloud"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 px-6 py-3 bg-[#0080FF] hover:bg-[#0069d9] text-white font-semibold rounded-lg transition-all duration-300"
               >
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12.04 0C5.408-.02.005 5.37.005 11.992h4.638c0-4.923 4.882-8.731 10.064-6.9a6.81 6.81 0 014.16 4.16c1.83 5.182-1.977 10.064-6.9 10.064v-3.601l-4.927 4.926 4.927 4.928v-3.607c6.618-.007 11.993-5.418 11.967-12.042C23.907 5.376 18.562.02 12.04 0z"/>
-                </svg>
-                Deploy to DigitalOcean
+                <Cloud className="w-5 h-5" />
+                Starkbot Cloud
               </a>
               <a
                 href="https://railway.com/deploy/tQTOx4?referralCode=CnqMxN&utm_medium=integration&utm_source=template&utm_campaign=generic"
