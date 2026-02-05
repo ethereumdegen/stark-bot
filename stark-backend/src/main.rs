@@ -509,7 +509,7 @@ async fn main() -> std::io::Result<()> {
     log::info!("Loading RPC provider configs from config directory");
     tools::rpc_config::load_rpc_providers(config_dir);
 
-    let config = Config::from_env();
+    let mut config = Config::from_env();
     let port = config.port;
 
     // Initialize workspace directory and copy SOUL.md
@@ -534,14 +534,12 @@ async fn main() -> std::io::Result<()> {
 
     // Auto-retrieve from keystore (restore state from cloud backup on fresh instance)
     // This runs before channel auto-start so restored channels can start
-    // NOTE: Skip in Flash mode - Flash has its own state management via Privy
+    // NOTE: Flash mode auto-retrieval happens later, after deriving the backup key from wallet signature
     let is_flash_mode = std::env::var("FLASH_KEYSTORE_URL").is_ok();
     if !is_flash_mode {
         if let Some(ref private_key) = config.burner_wallet_private_key {
             auto_retrieve_from_keystore(&db, private_key).await;
         }
-    } else {
-        log::info!("Flash mode detected - skipping keystore auto-retrieval (Flash manages state via Privy)");
     }
 
     // Initialize Tool Registry with built-in tools
@@ -603,6 +601,30 @@ async fn main() -> std::io::Result<()> {
         log::warn!("No wallet configured - set FLASH_KEYSTORE_URL (Flash/Privy mode) or BURNER_WALLET_BOT_PRIVATE_KEY (Standard mode)");
         None
     };
+
+    // Flash mode: derive a deterministic backup key from the Flash wallet signature
+    // This allows cloud backup (ECIES encryption, SIWE auth, x402 signing) to work
+    // even though the actual Privy private key is never exposed.
+    if is_flash_mode {
+        if let Some(ref wp) = wallet_provider {
+            match wp.sign_message(b"starkbot-backup-key-v1").await {
+                Ok(sig) => {
+                    let sig_bytes = sig.to_vec();
+                    let derived_key = ethers::utils::keccak256(&sig_bytes);
+                    config.burner_wallet_private_key = Some(hex::encode(derived_key));
+                    log::info!("Flash mode: derived backup encryption key from wallet signature");
+
+                    // Now run auto-retrieval with the derived key
+                    if let Some(ref private_key) = config.burner_wallet_private_key {
+                        auto_retrieve_from_keystore(&db, private_key).await;
+                    }
+                }
+                Err(e) => {
+                    log::error!("Flash mode: failed to derive backup key: {}. Cloud backup will be unavailable.", e);
+                }
+            }
+        }
+    }
 
     // Initialize Gateway with tool registry, wallet provider, and tx_queue for channels
     log::info!("Initializing Gateway");
