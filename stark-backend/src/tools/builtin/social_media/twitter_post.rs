@@ -2,7 +2,9 @@
 //!
 //! Posts tweets on behalf of a user using their OAuth 1.0a credentials.
 
-use super::twitter_oauth::{generate_oauth_header, TwitterCredentials};
+use super::twitter_oauth::{
+    check_subscription_tier, generate_oauth_header, TwitterCredentials, TWITTER_MAX_CHARS,
+};
 use crate::controllers::api_keys::ApiKeyId;
 use crate::tools::registry::Tool;
 use crate::tools::types::{
@@ -118,15 +120,9 @@ impl Tool for TwitterPostTool {
             Err(e) => return ToolResult::error(format!("Invalid parameters: {}", e)),
         };
 
-        // Validate tweet length
+        // Validate tweet text is not empty
         if params.text.is_empty() {
             return ToolResult::error("Tweet text cannot be empty");
-        }
-        if params.text.chars().count() > 25_000 {
-            return ToolResult::error(format!(
-                "Tweet exceeds maximum character limit (got {})",
-                params.text.chars().count()
-            ));
         }
 
         // Get all 4 OAuth credentials
@@ -167,6 +163,33 @@ impl Tool for TwitterPostTool {
                 }
             };
 
+        // Check subscription tier to enforce correct character limit
+        let credentials = TwitterCredentials::new(
+            consumer_key.clone(),
+            consumer_secret.clone(),
+            access_token.clone(),
+            access_token_secret.clone(),
+        );
+        let client = reqwest::Client::new();
+        let tier = check_subscription_tier(&client, &credentials).await;
+        let max_chars = tier.max_tweet_chars();
+        let char_count = params.text.chars().count();
+
+        if char_count > max_chars {
+            if max_chars == TWITTER_MAX_CHARS {
+                return ToolResult::error(format!(
+                    "Tweet is {} characters but this account is limited to {} (standard). \
+                     X Premium is required for longer tweets.",
+                    char_count, max_chars
+                ));
+            } else {
+                return ToolResult::error(format!(
+                    "Tweet exceeds maximum character limit ({} > {})",
+                    char_count, max_chars
+                ));
+            }
+        }
+
         // Build request body
         let mut body = json!({
             "text": params.text
@@ -186,16 +209,9 @@ impl Tool for TwitterPostTool {
         let url = "https://api.twitter.com/2/tweets";
 
         // Generate OAuth header using shared module
-        let credentials = TwitterCredentials::new(
-            consumer_key,
-            consumer_secret,
-            access_token,
-            access_token_secret,
-        );
         let auth_header = generate_oauth_header("POST", url, &credentials, None);
 
         // Make the request
-        let client = reqwest::Client::new();
         let response = match client
             .post(url)
             .header("Authorization", auth_header)

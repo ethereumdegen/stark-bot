@@ -10,7 +10,10 @@ use crate::db::Database;
 use crate::gateway::events::EventBroadcaster;
 use crate::gateway::protocol::GatewayEvent;
 use crate::models::{Channel, ChannelSettingKey};
-use crate::tools::builtin::social_media::{generate_oauth_header, percent_encode, TwitterCredentials};
+use crate::tools::builtin::social_media::{
+    check_subscription_tier, generate_oauth_header, percent_encode, TwitterCredentials,
+    XSubscriptionTier, TWITTER_MAX_CHARS, TWITTER_PREMIUM_MAX_CHARS,
+};
 use once_cell::sync::Lazy;
 use rand::Rng;
 use regex::Regex;
@@ -33,11 +36,6 @@ const DEFAULT_POLL_INTERVAL_SECS: u64 = 120;
 /// Twitter API v2 base URL
 const TWITTER_API_BASE: &str = "https://api.twitter.com/2";
 
-/// Maximum characters per tweet (standard)
-const TWITTER_MAX_CHARS: usize = 280;
-
-/// Maximum characters per tweet (X Premium / Pro)
-const TWITTER_PRO_MAX_CHARS: usize = 25_000;
 
 /// Configuration for the Twitter listener
 #[derive(Debug, Clone)]
@@ -45,7 +43,7 @@ pub struct TwitterConfig {
     pub bot_handle: String,
     pub bot_user_id: String,
     pub poll_interval_secs: u64,
-    pub is_pro: bool,
+    pub subscription_tier: XSubscriptionTier,
     pub reply_chance: u8,
     pub max_mentions_per_hour: u32,
     pub admin_user_id: Option<String>,
@@ -53,9 +51,9 @@ pub struct TwitterConfig {
 }
 
 impl TwitterConfig {
-    /// Get the max characters per tweet based on Pro status
+    /// Get the max characters per tweet based on subscription tier
     pub fn max_chars(&self) -> usize {
-        if self.is_pro { TWITTER_PRO_MAX_CHARS } else { TWITTER_MAX_CHARS }
+        self.subscription_tier.max_tweet_chars()
     }
 }
 
@@ -82,13 +80,6 @@ impl TwitterConfig {
             .and_then(|s| s.parse().ok())
             .unwrap_or(DEFAULT_POLL_INTERVAL_SECS)
             .max(MIN_POLL_INTERVAL_SECS);
-
-        let is_pro = db
-            .get_channel_setting(channel_id, ChannelSettingKey::TwitterPro.as_ref())
-            .ok()
-            .flatten()
-            .map(|s| s == "true")
-            .unwrap_or(false);
 
         let reply_chance: u8 = db
             .get_channel_setting(channel_id, ChannelSettingKey::TwitterReplyChance.as_ref())
@@ -126,7 +117,7 @@ impl TwitterConfig {
             bot_handle,
             bot_user_id,
             poll_interval_secs,
-            is_pro,
+            subscription_tier: XSubscriptionTier::None, // detected at startup via API
             reply_chance,
             max_mentions_per_hour,
             admin_user_id,
@@ -264,6 +255,8 @@ struct TwitterUser {
     id: String,
     username: String,
     name: String,
+    /// X Premium subscription type: None, Basic, Premium, PremiumPlus
+    subscription_type: Option<String>,
 }
 
 /// Twitter API v2 tweet post response
@@ -293,7 +286,7 @@ pub async fn start_twitter_listener(
     log::info!("Starting Twitter listener for channel: {}", channel_name);
 
     // Load configuration
-    let config = TwitterConfig::from_channel(&channel, &db)?;
+    let mut config = TwitterConfig::from_channel(&channel, &db)?;
 
     // SECURITY: Safe mode is always handled per-message via force_safe_mode.
     // If an admin X account is configured, admin tweets get standard mode while others get safe mode.
@@ -315,11 +308,10 @@ pub async fn start_twitter_listener(
     }
 
     log::info!(
-        "Twitter: Bot handle=@{}, user_id={}, poll_interval={}s, pro={}, reply_chance={}%, max_mentions/hr={}, admin_id={}",
+        "Twitter: Bot handle=@{}, user_id={}, poll_interval={}s, reply_chance={}%, max_mentions/hr={}, admin_id={}",
         config.bot_handle,
         config.bot_user_id,
         config.poll_interval_secs,
-        config.is_pro,
         config.reply_chance,
         if config.max_mentions_per_hour == 0 { "unlimited".to_string() } else { config.max_mentions_per_hour.to_string() },
         config.admin_user_id.as_deref().unwrap_or("none")
@@ -341,6 +333,14 @@ pub async fn start_twitter_listener(
             return Err(error);
         }
     }
+
+    // Auto-detect subscription tier (Premium allows long tweets)
+    config.subscription_tier = check_subscription_tier(&client, &config.credentials).await;
+    log::info!(
+        "Twitter: Subscription tier={:?}, max_chars={}",
+        config.subscription_tier,
+        config.max_chars()
+    );
 
     // Emit started event
     broadcaster.broadcast(GatewayEvent::channel_started(
@@ -756,7 +756,7 @@ async fn process_mention(
     }
 
     // Add source hint to help the agent understand the context
-    let char_hint = if config.is_pro {
+    let char_hint = if config.subscription_tier.allows_long_tweets() {
         "This is an X Premium account. Keep tweets succinct, under 500 characters when possible. Do NOT mention character limits in your response."
     } else {
         "Keep response under 280 chars or it will be threaded"
@@ -1051,8 +1051,8 @@ mod tests {
             assert!(chunk.chars().count() <= TWITTER_MAX_CHARS);
         }
 
-        // Pro mode - same long message should NOT split at 25k limit
-        let chunks_pro = split_for_twitter(&long, TWITTER_PRO_MAX_CHARS);
+        // Premium mode - same long message should NOT split at 25k limit
+        let chunks_pro = split_for_twitter(&long, TWITTER_PREMIUM_MAX_CHARS);
         assert_eq!(chunks_pro.len(), 1);
     }
 

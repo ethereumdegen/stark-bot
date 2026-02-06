@@ -13,5 +13,8 @@ pub use discord_lookup::DiscordLookupTool;
 pub use discord_read::DiscordReadTool;
 pub use discord_write::DiscordWriteTool;
 pub use github_user::GithubUserTool;
-pub use twitter_oauth::{generate_oauth_header, percent_encode, TwitterCredentials};
+pub use twitter_oauth::{
+    check_subscription_tier, generate_oauth_header, percent_encode, TwitterCredentials,
+    XSubscriptionTier, TWITTER_MAX_CHARS, TWITTER_PREMIUM_MAX_CHARS,
+};
 pub use twitter_post::TwitterPostTool;

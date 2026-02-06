@@ -145,6 +145,107 @@ pub fn generate_oauth_header(
     format!("OAuth {}", auth_string)
 }
 
+/// Maximum characters per tweet (standard / free accounts)
+pub const TWITTER_MAX_CHARS: usize = 280;
+
+/// Maximum characters per tweet (X Premium / Premium+ accounts)
+pub const TWITTER_PREMIUM_MAX_CHARS: usize = 25_000;
+
+/// X subscription tier as reported by the API
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum XSubscriptionTier {
+    /// No subscription (free account) — 280 char limit
+    None,
+    /// Basic subscription — 280 char limit (no long tweets)
+    Basic,
+    /// Premium subscription — 25,000 char limit
+    Premium,
+    /// Premium+ subscription — 25,000 char limit
+    PremiumPlus,
+}
+
+impl XSubscriptionTier {
+    pub fn max_tweet_chars(&self) -> usize {
+        match self {
+            Self::Premium | Self::PremiumPlus => TWITTER_PREMIUM_MAX_CHARS,
+            _ => TWITTER_MAX_CHARS,
+        }
+    }
+
+    pub fn allows_long_tweets(&self) -> bool {
+        matches!(self, Self::Premium | Self::PremiumPlus)
+    }
+
+    fn from_api_str(s: &str) -> Self {
+        match s {
+            "Premium" => Self::Premium,
+            "PremiumPlus" => Self::PremiumPlus,
+            "Basic" => Self::Basic,
+            _ => Self::None,
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct UsersMeResponse {
+    data: Option<UsersMeData>,
+}
+
+#[derive(serde::Deserialize)]
+struct UsersMeData {
+    subscription_type: Option<String>,
+}
+
+/// Check the authenticated user's X subscription tier via GET /2/users/me.
+/// Returns the tier on success, or falls back to `None` (basic/free) on any error.
+pub async fn check_subscription_tier(
+    client: &reqwest::Client,
+    credentials: &TwitterCredentials,
+) -> XSubscriptionTier {
+    let base_url = "https://api.twitter.com/2/users/me";
+    let query_params = [("user.fields", "subscription_type")];
+    let auth_header = generate_oauth_header("GET", base_url, credentials, Some(&query_params));
+
+    let result = client
+        .get(format!("{}?user.fields=subscription_type", base_url))
+        .header("Authorization", auth_header)
+        .send()
+        .await;
+
+    let response = match result {
+        Ok(r) => r,
+        Err(e) => {
+            log::warn!("Twitter: Failed to check subscription tier: {}", e);
+            return XSubscriptionTier::None;
+        }
+    };
+
+    if !response.status().is_success() {
+        log::warn!(
+            "Twitter: Subscription check returned status {}",
+            response.status()
+        );
+        return XSubscriptionTier::None;
+    }
+
+    let body = response.text().await.unwrap_or_default();
+    match serde_json::from_str::<UsersMeResponse>(&body) {
+        Ok(resp) => {
+            let tier_str = resp
+                .data
+                .and_then(|d| d.subscription_type)
+                .unwrap_or_default();
+            let tier = XSubscriptionTier::from_api_str(&tier_str);
+            log::info!("Twitter: Account subscription tier: {:?}", tier);
+            tier
+        }
+        Err(e) => {
+            log::warn!("Twitter: Failed to parse subscription response: {}", e);
+            XSubscriptionTier::None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

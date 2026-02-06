@@ -54,8 +54,6 @@ pub enum ChannelSettingKey {
     TwitterBotUserId,
     /// Twitter: Poll interval in seconds (min 60, default 120)
     TwitterPollIntervalSecs,
-    /// Twitter: Whether the account has X Premium (allows longer tweets up to 25,000 chars)
-    TwitterPro,
     /// Twitter: Chance (percentage) of replying to each mention
     TwitterReplyChance,
     /// Twitter: Maximum number of mentions to reply to per hour
@@ -79,7 +77,6 @@ impl ChannelSettingKey {
             Self::TwitterBotHandle => "Bot Handle",
             Self::TwitterBotUserId => "Bot User ID",
             Self::TwitterPollIntervalSecs => "Poll Interval (seconds)",
-            Self::TwitterPro => "X Premium (Pro)",
             Self::TwitterReplyChance => "Reply Chance",
             Self::TwitterMaxMentionsPerHour => "Max Replies Per Hour",
             Self::TwitterAdminXAccount => "Admin X User ID (Optional)",
@@ -128,11 +125,6 @@ impl ChannelSettingKey {
                 "How often to check for new mentions in seconds. Minimum is 60 seconds. \
                  Higher values reduce API usage but increase response latency."
             }
-            Self::TwitterPro => {
-                "Enable if this account has X Premium (formerly Twitter Blue). \
-                 Allows posting tweets up to 25,000 characters instead of the 280 character limit. \
-                 When disabled, long responses are split into threaded tweets."
-            }
             Self::TwitterReplyChance => {
                 "Percentage chance of replying to each mention. Use lower values to avoid \
                  appearing spammy. For example, 10% means roughly 1 in 10 mentions gets a reply."
@@ -169,7 +161,6 @@ impl ChannelSettingKey {
             Self::TwitterBotHandle => SettingInputType::Text,
             Self::TwitterBotUserId => SettingInputType::Text,
             Self::TwitterPollIntervalSecs => SettingInputType::Number,
-            Self::TwitterPro => SettingInputType::Toggle,
             Self::TwitterReplyChance => SettingInputType::Select,
             Self::TwitterMaxMentionsPerHour => SettingInputType::Number,
             Self::TwitterAdminXAccount => SettingInputType::Text,
@@ -189,7 +180,6 @@ impl ChannelSettingKey {
             Self::TwitterBotHandle => "starkbotai",
             Self::TwitterBotUserId => "1234567890123456789",
             Self::TwitterPollIntervalSecs => "120",
-            Self::TwitterPro => "",
             Self::TwitterReplyChance => "",
             Self::TwitterMaxMentionsPerHour => "0",
             Self::TwitterAdminXAccount => "1234567890123456789",
@@ -224,7 +214,6 @@ impl ChannelSettingKey {
             Self::TwitterBotHandle => "",
             Self::TwitterBotUserId => "",
             Self::TwitterPollIntervalSecs => "120",
-            Self::TwitterPro => "false",
             Self::TwitterReplyChance => "100",
             Self::TwitterMaxMentionsPerHour => "0",
             Self::TwitterAdminXAccount => "",
@@ -359,7 +348,6 @@ pub fn get_settings_for_channel_type(channel_type: ChannelType) -> Vec<ChannelSe
             ChannelSettingKey::TwitterBotHandle.into(),
             ChannelSettingKey::TwitterBotUserId.into(),
             ChannelSettingKey::TwitterPollIntervalSecs.into(),
-            ChannelSettingKey::TwitterPro.into(),
             ChannelSettingKey::TwitterReplyChance.into(),
             ChannelSettingKey::TwitterMaxMentionsPerHour.into(),
             ChannelSettingKey::TwitterAdminXAccount.into(),
