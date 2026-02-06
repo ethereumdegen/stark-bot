@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { MessageSquare, Hash, Plus, Play, Square, Trash2, Save, Pencil, Twitter } from 'lucide-react';
+import { MessageSquare, Hash, Plus, Play, Square, Trash2, Save, Pencil, Twitter, AlertTriangle } from 'lucide-react';
 import Card, { CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -16,6 +16,8 @@ import {
   ChannelInfo,
   ChannelSetting,
   ChannelSettingDefinition,
+  getApiKeys,
+  ApiKey,
 } from '@/lib/api';
 
 const CHANNEL_TYPES = [
@@ -59,6 +61,43 @@ const emptyForm: ChannelFormData = {
   settings: {},
 };
 
+const TWITTER_REQUIRED_KEYS = [
+  'TWITTER_CONSUMER_KEY',
+  'TWITTER_CONSUMER_SECRET',
+  'TWITTER_ACCESS_TOKEN',
+  'TWITTER_ACCESS_TOKEN_SECRET',
+];
+
+function TwitterKeyWarning({ apiKeys }: { apiKeys: ApiKey[] }) {
+  const installedNames = new Set(apiKeys.map(k => k.key_name));
+  const missing = TWITTER_REQUIRED_KEYS.filter(k => !installedNames.has(k));
+
+  if (missing.length === 0) return null;
+
+  return (
+    <div className="px-4 py-3 bg-amber-500/10 border border-amber-500/40 rounded-lg flex items-start gap-3">
+      <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+      <div className="text-sm">
+        <p className="text-amber-300 font-medium mb-1">
+          Twitter API keys not configured
+        </p>
+        <p className="text-slate-400 mb-2">
+          {missing.length === TWITTER_REQUIRED_KEYS.length
+            ? 'None of the required OAuth 1.0a keys are installed.'
+            : `Missing ${missing.length} of ${TWITTER_REQUIRED_KEYS.length} required keys.`}
+        </p>
+        <p className="text-slate-400">
+          Go to the{' '}
+          <a href="/api-keys" className="text-blue-400 underline hover:text-blue-300">
+            API Keys
+          </a>{' '}
+          page to add your Twitter Consumer Key, Consumer Secret, Access Token, and Access Token Secret before starting this channel.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function Channels() {
   const [channels, setChannels] = useState<ChannelInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -71,6 +110,7 @@ export default function Channels() {
   const [editSchema, setEditSchema] = useState<ChannelSettingDefinition[]>([]);
   const [editLoading, setEditLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
+  const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
 
   const fetchChannels = async () => {
     try {
@@ -86,6 +126,7 @@ export default function Channels() {
 
   useEffect(() => {
     fetchChannels();
+    getApiKeys().then(setApiKeys).catch(() => {});
   }, []);
 
   const handleCreate = async () => {
@@ -294,6 +335,9 @@ export default function Channels() {
                   ))}
                 </select>
               </div>
+              {newChannel.channel_type === 'twitter' && (
+                <TwitterKeyWarning apiKeys={apiKeys} />
+              )}
               <Input
                 label="Name"
                 value={newChannel.name}
@@ -586,6 +630,9 @@ export default function Channels() {
                   ) : (
                     // View mode - display channel info
                     <div className="space-y-3">
+                      {channel.channel_type === 'twitter' && (
+                        <TwitterKeyWarning apiKeys={apiKeys} />
+                      )}
                       {getChannelHints(channel.channel_type).map((hint, idx) => (
                         <div key={idx} className="px-3 py-2 bg-slate-700/50 border border-slate-600/50 rounded-lg">
                           <p className="text-xs text-slate-300 [&_a]:text-blue-400 [&_a]:underline [&_a]:hover:text-blue-300" dangerouslySetInnerHTML={{ __html: hint }} />
