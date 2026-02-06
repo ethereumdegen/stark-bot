@@ -255,6 +255,15 @@ impl ResolvedTxData {
             ));
         }
 
+        // SAFETY CHECK: Prevent sending ETH to the zero address (burns ETH)
+        if to.to_lowercase() == "0x0000000000000000000000000000000000000000" {
+            return Err(
+                "ERROR: The recipient is the zero address (0x0000...0000). \
+                Sending ETH to the zero address will BURN it permanently! \
+                Please verify the correct recipient wallet address.".to_string()
+            );
+        }
+
         // Read amount from 'amount_raw' register (must be set by to_raw_amount)
         let value = context.registers.get("amount_raw")
             .ok_or_else(|| {
@@ -613,6 +622,22 @@ mod tests {
         let result = ResolvedTxData::from_registers(&context);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("numeric string"));
+    }
+
+    #[test]
+    fn test_resolved_tx_data_zero_address_rejected() {
+        use crate::tools::RegisterStore;
+
+        let registers = RegisterStore::new();
+        registers.set("send_to", json!("0x0000000000000000000000000000000000000000"), "register_set");
+        registers.set("amount_raw", json!("100000000000000"), "to_raw_amount");
+
+        let context = crate::tools::ToolContext::new()
+            .with_registers(registers);
+
+        let result = ResolvedTxData::from_registers(&context);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("zero address"));
     }
 
     #[test]

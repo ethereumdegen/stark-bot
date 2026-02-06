@@ -689,6 +689,33 @@ impl Tool for Web3FunctionCallTool {
 
         // SAFETY CHECK: For transfer function, verify amount comes from register
         if function_name.to_lowercase() == "transfer" {
+            // SAFETY CHECK: Prevent sending tokens TO the token contract itself (burns tokens)
+            if call_params.len() >= 1 {
+                let recipient_str = match &call_params[0] {
+                    Value::String(s) => s.to_lowercase(),
+                    _ => call_params[0].to_string().trim_matches('"').to_lowercase(),
+                };
+                let token_contract_str = contract_addr.to_lowercase();
+
+                if recipient_str == token_contract_str {
+                    return ToolResult::error(
+                        "ERROR: The recipient address is the same as the token contract address. \
+                        Sending tokens to their own contract address will BURN them permanently! \
+                        Please verify the correct recipient wallet address."
+                    );
+                }
+
+                // SAFETY CHECK: Prevent sending tokens to the zero address (burns tokens)
+                let zero_addr = "0x0000000000000000000000000000000000000000";
+                if recipient_str == zero_addr {
+                    return ToolResult::error(
+                        "ERROR: The recipient is the zero address (0x0000...0000). \
+                        Sending tokens to the zero address will BURN them permanently! \
+                        Please verify the correct recipient wallet address."
+                    );
+                }
+            }
+
             match context.registers.get("transfer_amount") {
                 Some(transfer_amount_val) => {
                     // Get the transfer_amount as a string for comparison
@@ -863,6 +890,215 @@ impl Tool for Web3FunctionCallTool {
                 }
                 Err(e) => ToolResult::error(e),
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::RegisterStore;
+    use crate::tools::registry::Tool;
+    use serde_json::json;
+
+    /// Helper: create a Web3FunctionCallTool pointing at the repo's abis/ dir
+    fn make_tool() -> Web3FunctionCallTool {
+        // Tests run from the workspace root, so abis/ should be found by default.
+        // If not, override to the known absolute path.
+        let mut tool = Web3FunctionCallTool::new();
+        let repo_abis = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("abis");
+        if repo_abis.exists() {
+            tool.abis_dir = repo_abis;
+        }
+        tool
+    }
+
+    // ─── Transfer safety checks ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_transfer_to_token_contract_blocked() {
+        let tool = make_tool();
+        let token_addr = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"; // USDC on Base
+
+        let context = crate::tools::ToolContext::new();
+
+        let result = tool.execute(json!({
+            "abi": "erc20",
+            "contract": token_addr,
+            "function": "transfer",
+            "params": [token_addr, "1000000"],  // recipient == token contract
+            "network": "base"
+        }), &context).await;
+
+        assert!(!result.success, "Should have been blocked by safety check");
+        assert!(result.content.contains("same as the token contract address"),
+            "Expected token-contract error, got: {}", result.content);
+    }
+
+    #[tokio::test]
+    async fn test_transfer_to_zero_address_blocked() {
+        let tool = make_tool();
+        let token_addr = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+        let zero_addr = "0x0000000000000000000000000000000000000000";
+
+        let context = crate::tools::ToolContext::new();
+
+        let result = tool.execute(json!({
+            "abi": "erc20",
+            "contract": token_addr,
+            "function": "transfer",
+            "params": [zero_addr, "1000000"],
+            "network": "base"
+        }), &context).await;
+
+        assert!(!result.success, "Should have been blocked by safety check");
+        assert!(result.content.contains("zero address"),
+            "Expected zero-address error, got: {}", result.content);
+    }
+
+    #[tokio::test]
+    async fn test_balance_of_own_contract_blocked() {
+        let tool = make_tool();
+        let token_addr = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+
+        let context = crate::tools::ToolContext::new();
+
+        let result = tool.execute(json!({
+            "abi": "erc20",
+            "contract": token_addr,
+            "function": "balanceOf",
+            "params": [token_addr],
+            "call_only": true,
+            "network": "base"
+        }), &context).await;
+
+        assert!(!result.success, "Should have been blocked by safety check");
+        assert!(result.content.contains("contract's OWN address"),
+            "Expected balanceOf-self error, got: {}", result.content);
+    }
+
+    #[tokio::test]
+    async fn test_transfer_missing_amount_register_blocked() {
+        let tool = make_tool();
+        let token_addr = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+        let recipient = "0x1234567890abcdef1234567890abcdef12345678";
+
+        // No transfer_amount register set
+        let context = crate::tools::ToolContext::new();
+
+        let result = tool.execute(json!({
+            "abi": "erc20",
+            "contract": token_addr,
+            "function": "transfer",
+            "params": [recipient, "1000000"],
+            "network": "base"
+        }), &context).await;
+
+        assert!(!result.success, "Should require transfer_amount register");
+        assert!(result.content.contains("transfer_amount"),
+            "Expected transfer_amount error, got: {}", result.content);
+    }
+
+    #[tokio::test]
+    async fn test_transfer_valid_passes_safety_checks() {
+        let tool = make_tool();
+        let token_addr = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+        let recipient = "0x1234567890abcdef1234567890abcdef12345678";
+        let amount = "1000000";
+
+        // Set up transfer_amount register so the amount check passes
+        let registers = RegisterStore::new();
+        registers.set("transfer_amount", json!(amount), "to_raw_amount");
+        let context = crate::tools::ToolContext::new()
+            .with_registers(registers);
+
+        let result = tool.execute(json!({
+            "abi": "erc20",
+            "contract": token_addr,
+            "function": "transfer",
+            "params": [recipient, amount],
+            "network": "base"
+        }), &context).await;
+
+        // Should pass all safety checks and fail at wallet (no wallet configured in test)
+        assert!(!result.success);
+        assert!(result.content.contains("Wallet not configured"),
+            "Expected wallet error (safety checks passed), got: {}", result.content);
+    }
+
+    // ─── ABI loading / encoding ───────────────────────────────────────
+
+    #[test]
+    fn test_load_erc20_abi() {
+        let tool = make_tool();
+        let abi_file = tool.load_abi("erc20").expect("Should load erc20.json");
+        assert_eq!(abi_file.name, "ERC20");
+    }
+
+    #[test]
+    fn test_find_transfer_function() {
+        let tool = make_tool();
+        let abi_file = tool.load_abi("erc20").unwrap();
+        let abi = tool.parse_abi(&abi_file).unwrap();
+        let func = tool.find_function(&abi, "transfer").expect("Should find transfer");
+        assert_eq!(func.inputs.len(), 2);
+    }
+
+    #[test]
+    fn test_encode_transfer_call() {
+        let tool = make_tool();
+        let abi_file = tool.load_abi("erc20").unwrap();
+        let abi = tool.parse_abi(&abi_file).unwrap();
+        let func = tool.find_function(&abi, "transfer").unwrap();
+
+        let params = vec![
+            json!("0x1234567890abcdef1234567890abcdef12345678"),
+            json!("1000000"),
+        ];
+        let encoded = tool.encode_call(func, &params);
+        assert!(encoded.is_ok(), "Should encode transfer call: {:?}", encoded.err());
+        // transfer(address,uint256) selector = 0xa9059cbb
+        assert_eq!(&encoded.unwrap()[..4], &[0xa9, 0x05, 0x9c, 0xbb]);
+    }
+
+    #[test]
+    fn test_encode_call_wrong_param_count() {
+        let tool = make_tool();
+        let abi_file = tool.load_abi("erc20").unwrap();
+        let abi = tool.parse_abi(&abi_file).unwrap();
+        let func = tool.find_function(&abi, "transfer").unwrap();
+
+        // Only 1 param instead of 2
+        let params = vec![json!("0x1234567890abcdef1234567890abcdef12345678")];
+        let result = tool.encode_call(func, &params);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("expects 2 parameters"));
+    }
+
+    #[test]
+    fn test_value_to_token_address() {
+        let tool = make_tool();
+        let token = tool.value_to_token(
+            &json!("0x1234567890abcdef1234567890abcdef12345678"),
+            &ParamType::Address,
+        );
+        assert!(token.is_ok());
+    }
+
+    #[test]
+    fn test_value_to_token_invalid_address() {
+        let tool = make_tool();
+        let token = tool.value_to_token(&json!("not-an-address"), &ParamType::Address);
+        assert!(token.is_err());
+    }
+
+    #[test]
+    fn test_value_to_token_uint256() {
+        let tool = make_tool();
+        let token = tool.value_to_token(&json!("1000000"), &ParamType::Uint(256));
+        assert!(token.is_ok());
+        if let Ok(Token::Uint(v)) = token {
+            assert_eq!(v, U256::from(1_000_000u64));
         }
     }
 }

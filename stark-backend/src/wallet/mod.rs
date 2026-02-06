@@ -105,7 +105,8 @@ mod tests {
     #[test]
     fn test_is_flash_mode_default() {
         // When STARKBOT_MODE is not set, should be false
-        std::env::remove_var(STARKBOT_MODE_ENV);
+        // SAFETY: This test runs single-threaded so env mutation is safe
+        unsafe { std::env::remove_var(STARKBOT_MODE_ENV); }
         assert!(!is_flash_mode());
     }
 }
