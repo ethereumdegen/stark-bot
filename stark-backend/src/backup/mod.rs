@@ -2,6 +2,13 @@
 //!
 //! Provides structures and utilities for backing up and restoring user data
 //! to/from the keystore server.
+//!
+//! ## Schema resilience
+//!
+//! All structs use `#[serde(default)]` at the struct level so that:
+//! - **Missing fields** in old backups get sensible defaults (deserialization never fails)
+//! - **Unknown fields** from newer backups are silently ignored (serde default behavior)
+//! This means you can freely add/remove fields without breaking existing backups.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -14,6 +21,7 @@ pub const BACKUP_VERSION: u32 = 1;
 /// This is the encrypted payload stored on the keystore server.
 /// All data is serialized to JSON before encryption.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct BackupData {
     /// Backup format version for future migrations
     pub version: u32,
@@ -28,41 +36,36 @@ pub struct BackupData {
     /// Mind map connections
     pub mind_map_connections: Vec<MindConnectionEntry>,
     /// Cron jobs (scheduled tasks)
-    #[serde(default)]
     pub cron_jobs: Vec<CronJobEntry>,
     /// Heartbeat config (optional)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub heartbeat_config: Option<HeartbeatConfigEntry>,
     /// Memories (optional - can be large)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub memories: Option<Vec<MemoryEntry>>,
     /// Bot settings (optional)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub bot_settings: Option<BotSettingsEntry>,
     /// Channel settings (key-value configs per channel)
-    #[serde(default)]
     pub channel_settings: Vec<ChannelSettingEntry>,
     /// Channels (with bot tokens)
-    #[serde(default)]
     pub channels: Vec<ChannelEntry>,
     /// Soul document content (SOUL.md - agent's personality and truths)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub soul_document: Option<String>,
     /// Discord user registrations (discord_user_id → public_address mappings)
-    #[serde(default)]
     pub discord_registrations: Vec<DiscordRegistrationEntry>,
     /// Skills (custom agent skills)
-    #[serde(default)]
     pub skills: Vec<SkillEntry>,
 }
 
-impl BackupData {
-    /// Create a new backup with the current timestamp
-    pub fn new(wallet_address: String) -> Self {
+/// Manual Default because DateTime<Utc> doesn't derive Default
+impl Default for BackupData {
+    fn default() -> Self {
         Self {
-            version: BACKUP_VERSION,
+            version: 0,
             created_at: Utc::now(),
-            wallet_address,
+            wallet_address: String::new(),
             api_keys: Vec::new(),
             mind_map_nodes: Vec::new(),
             mind_map_connections: Vec::new(),
@@ -75,6 +78,18 @@ impl BackupData {
             soul_document: None,
             discord_registrations: Vec::new(),
             skills: Vec::new(),
+        }
+    }
+}
+
+impl BackupData {
+    /// Create a new backup with the current timestamp
+    pub fn new(wallet_address: String) -> Self {
+        Self {
+            version: BACKUP_VERSION,
+            created_at: Utc::now(),
+            wallet_address,
+            ..Default::default()
         }
     }
 
@@ -96,14 +111,16 @@ impl BackupData {
 }
 
 /// API key entry in backup
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ApiKeyEntry {
     pub key_name: String,
     pub key_value: String,
 }
 
 /// Mind map node entry in backup
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct MindNodeEntry {
     pub id: i64,
     pub body: String,
@@ -115,14 +132,16 @@ pub struct MindNodeEntry {
 }
 
 /// Mind map connection entry in backup
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct MindConnectionEntry {
     pub parent_id: i64,
     pub child_id: i64,
 }
 
 /// Cron job entry in backup
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CronJobEntry {
     pub name: String,
     pub description: Option<String>,
@@ -143,7 +162,8 @@ pub struct CronJobEntry {
 }
 
 /// Heartbeat config entry in backup
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct HeartbeatConfigEntry {
     pub channel_id: Option<i64>,
     pub interval_minutes: i32,
@@ -155,7 +175,8 @@ pub struct HeartbeatConfigEntry {
 }
 
 /// Memory entry in backup
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct MemoryEntry {
     pub memory_type: String,
     pub content: String,
@@ -167,7 +188,8 @@ pub struct MemoryEntry {
 }
 
 /// Bot settings entry in backup
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct BotSettingsEntry {
     pub bot_name: String,
     pub bot_email: String,
@@ -180,7 +202,8 @@ pub struct BotSettingsEntry {
 }
 
 /// Channel setting entry in backup
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ChannelSettingEntry {
     pub channel_id: i64,
     pub setting_key: String,
@@ -188,7 +211,8 @@ pub struct ChannelSettingEntry {
 }
 
 /// Channel entry in backup (the actual channel with tokens)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ChannelEntry {
     pub id: i64,
     pub channel_type: String,
@@ -199,7 +223,8 @@ pub struct ChannelEntry {
 }
 
 /// Discord user registration entry in backup
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DiscordRegistrationEntry {
     pub discord_user_id: String,
     pub discord_username: Option<String>,
@@ -208,36 +233,33 @@ pub struct DiscordRegistrationEntry {
 }
 
 /// Skill entry in backup
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SkillEntry {
     pub name: String,
     pub description: String,
     pub body: String,
     pub version: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub homepage: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<String>,
     pub enabled: bool,
-    #[serde(default)]
     pub requires_tools: Vec<String>,
-    #[serde(default)]
     pub requires_binaries: Vec<String>,
     /// Arguments serialized as JSON string
-    #[serde(default)]
     pub arguments: String,
-    #[serde(default)]
     pub tags: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub subagent_type: Option<String>,
-    #[serde(default)]
     pub scripts: Vec<SkillScriptEntry>,
 }
 
 /// Skill script entry in backup
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SkillScriptEntry {
     pub name: String,
     pub code: String,
