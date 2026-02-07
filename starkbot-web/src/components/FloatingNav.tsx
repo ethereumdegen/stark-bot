@@ -1,6 +1,7 @@
 import { Github, BookOpen, ArrowUp } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useState } from 'react'
+import { DarkModeToggle } from './DarkModeToggle'
 
 export function FloatingNav() {
   const [hoveredItem, setHoveredItem] = useState<string | null>(null)
@@ -35,6 +36,7 @@ export function FloatingNav() {
   return (
     <div className="fixed bottom-6 right-6 z-50">
       <div className="glass rounded-full px-2 py-2 flex items-center gap-1">
+        <DarkModeToggle />
         {items.map((item) => {
           const Icon = item.icon
           const isHovered = hoveredItem === item.id
