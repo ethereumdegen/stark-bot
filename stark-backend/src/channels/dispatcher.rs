@@ -2265,20 +2265,52 @@ impl MessageDispatcher {
                             }
                         }
 
-                        // say_to_user with finished_task=true terminates the loop (any mode)
-                        // In safe mode, say_to_user always terminates (no ongoing tasks)
-                        // But NOT if define_tasks just replaced the queue — new tasks need to run
+                        // say_to_user with finished_task=true completes the current task.
+                        // If more tasks remain, advance to the next one and keep looping.
+                        // Only terminate the loop when ALL tasks are done (or no task queue exists).
+                        // In safe mode, say_to_user always terminates (no ongoing tasks).
+                        // But NOT if define_tasks just replaced the queue — new tasks need to run.
                         if call.name == "say_to_user" && result.success && !define_tasks_replaced_queue {
                             let finished_task = result.metadata.as_ref()
                                 .and_then(|m| m.get("finished_task"))
                                 .and_then(|v| v.as_bool())
                                 .unwrap_or(false);
                             if finished_task || is_safe_mode {
-                                log::info!("[ORCHESTRATED_LOOP] say_to_user terminating loop (finished_task={}, safe_mode={})", finished_task, is_safe_mode);
-                                orchestrator_complete = true;
-                                // Don't set final_summary - Discord/Telegram already deliver
-                                // say_to_user messages via their event forwarders. Polling-based
-                                // channels (Twitter) capture the message from broadcast events.
+                                if !orchestrator.task_queue_is_empty() && !is_safe_mode {
+                                    // Complete current task and try to advance
+                                    if let Some(completed_task_id) = orchestrator.complete_current_task() {
+                                        log::info!("[ORCHESTRATED_LOOP] say_to_user completed task {}", completed_task_id);
+                                        self.broadcast_task_status_change(
+                                            original_message.channel_id,
+                                            session_id,
+                                            completed_task_id,
+                                            "completed",
+                                            &format!("Completed via say_to_user"),
+                                        );
+                                    }
+                                    match self.advance_to_next_task_or_complete(
+                                        original_message.channel_id,
+                                        session_id,
+                                        orchestrator,
+                                    ) {
+                                        TaskAdvanceResult::AllTasksComplete => {
+                                            log::info!("[ORCHESTRATED_LOOP] say_to_user: all tasks done, terminating loop");
+                                            orchestrator_complete = true;
+                                        }
+                                        TaskAdvanceResult::NextTaskStarted => {
+                                            log::info!("[ORCHESTRATED_LOOP] say_to_user: advanced to next task, continuing loop");
+                                            // Don't set orchestrator_complete — keep going
+                                        }
+                                        TaskAdvanceResult::InconsistentState => {
+                                            log::warn!("[ORCHESTRATED_LOOP] say_to_user: inconsistent task state, terminating");
+                                            orchestrator_complete = true;
+                                        }
+                                    }
+                                } else {
+                                    // No task queue or safe mode — terminate immediately
+                                    log::info!("[ORCHESTRATED_LOOP] say_to_user terminating loop (finished_task={}, safe_mode={})", finished_task, is_safe_mode);
+                                    orchestrator_complete = true;
+                                }
                             }
                         } else if call.name == "say_to_user" && define_tasks_replaced_queue {
                             log::info!(
@@ -2970,18 +3002,51 @@ impl MessageDispatcher {
                                     }
                                 }
 
-                                // say_to_user with finished_task=true terminates the loop (any mode)
-                                // In safe mode, say_to_user always terminates (no ongoing tasks)
+                                // say_to_user with finished_task=true completes the current task.
+                                // If more tasks remain, advance to the next one and keep looping.
+                                // Only terminate the loop when ALL tasks are done (or no task queue exists).
+                                // In safe mode, say_to_user always terminates (no ongoing tasks).
                                 if tool_call.tool_name == "say_to_user" && result.success {
                                     let finished_task = result.metadata.as_ref()
                                         .and_then(|m| m.get("finished_task"))
                                         .and_then(|v| v.as_bool())
                                         .unwrap_or(false);
                                     if finished_task || is_safe_mode {
-                                        log::info!("[TEXT_ORCHESTRATED] say_to_user terminating loop (finished_task={}, safe_mode={})", finished_task, is_safe_mode);
-                                        orchestrator_complete = true;
-                                        // Don't set final_response - Discord/Telegram already deliver
-                                        // say_to_user messages via their event forwarders.
+                                        if !orchestrator.task_queue_is_empty() && !is_safe_mode {
+                                            // Complete current task and try to advance
+                                            if let Some(completed_task_id) = orchestrator.complete_current_task() {
+                                                log::info!("[TEXT_ORCHESTRATED] say_to_user completed task {}", completed_task_id);
+                                                self.broadcast_task_status_change(
+                                                    original_message.channel_id,
+                                                    session_id,
+                                                    completed_task_id,
+                                                    "completed",
+                                                    &format!("Completed via say_to_user"),
+                                                );
+                                            }
+                                            match self.advance_to_next_task_or_complete(
+                                                original_message.channel_id,
+                                                session_id,
+                                                orchestrator,
+                                            ) {
+                                                TaskAdvanceResult::AllTasksComplete => {
+                                                    log::info!("[TEXT_ORCHESTRATED] say_to_user: all tasks done, terminating loop");
+                                                    orchestrator_complete = true;
+                                                }
+                                                TaskAdvanceResult::NextTaskStarted => {
+                                                    log::info!("[TEXT_ORCHESTRATED] say_to_user: advanced to next task, continuing loop");
+                                                    // Don't set orchestrator_complete — keep going
+                                                }
+                                                TaskAdvanceResult::InconsistentState => {
+                                                    log::warn!("[TEXT_ORCHESTRATED] say_to_user: inconsistent task state, terminating");
+                                                    orchestrator_complete = true;
+                                                }
+                                            }
+                                        } else {
+                                            // No task queue or safe mode — terminate immediately
+                                            log::info!("[TEXT_ORCHESTRATED] say_to_user terminating loop (finished_task={}, safe_mode={})", finished_task, is_safe_mode);
+                                            orchestrator_complete = true;
+                                        }
                                     }
                                 }
 

@@ -268,14 +268,17 @@ impl Database {
             )
             .ok();
 
-        let Some((_old_session_key, agent_id, scope, channel_type, channel_id, _platform_chat_id, reset_policy, idle_timeout, daily_hour)) = old_session else {
+        let Some((old_session_key, agent_id, scope, channel_type, channel_id, platform_chat_id, reset_policy, idle_timeout, daily_hour)) = old_session else {
             return Err(rusqlite::Error::QueryReturnedNoRows);
         };
 
-        // Mark old session as inactive
+        // Archive the old session: give it a unique key so get_or_create_chat_session
+        // won't find and reactivate it (which would cause a session_id mismatch with
+        // the frontend's cached dbSessionId).
+        let archived_key = format!("{}:archived-{}", old_session_key, now.timestamp_millis());
         conn.execute(
-            "UPDATE chat_sessions SET is_active = 0, updated_at = ?1 WHERE id = ?2",
-            rusqlite::params![&now_str, id],
+            "UPDATE chat_sessions SET is_active = 0, session_key = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![&archived_key, &now_str, id],
         )?;
 
         // Delete agent context for the old session
@@ -284,23 +287,18 @@ impl Database {
             rusqlite::params![id],
         )?;
 
-        // Generate new unique session key with timestamp
-        let timestamp = now.timestamp_millis();
-        let new_platform_chat_id = format!("reset-{}", timestamp);
-        let new_session_key = Self::generate_session_key(&channel_type, channel_id, &new_platform_chat_id);
-
-        // Create new session with same settings but new unique key
+        // Create new session with the original key so get_or_create_chat_session finds it
         conn.execute(
             "INSERT INTO chat_sessions (session_key, agent_id, scope, channel_type, channel_id, platform_chat_id,
              is_active, reset_policy, idle_timeout_minutes, daily_reset_hour, created_at, updated_at, last_activity_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?8, ?9, ?10, ?10, ?10)",
             rusqlite::params![
-                &new_session_key,
+                &old_session_key,
                 agent_id,
                 &scope,
                 &channel_type,
                 channel_id,
-                &new_platform_chat_id,
+                &platform_chat_id,
                 &reset_policy,
                 idle_timeout,
                 daily_hour,

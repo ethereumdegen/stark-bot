@@ -14,14 +14,15 @@ requires_tools: [token_lookup, to_raw_amount, decode_calldata, web3_preset_funct
 
 ## Step 1: Define the four tasks
 
-Call `define_tasks` with all 4 tasks in order:
+Call `define_tasks` with all 5 tasks in order:
 
 ```json
 {"tool": "define_tasks", "tasks": [
-  "SWAP TASK 1/4 — Prepare: select network, look up sell and buy tokens, check balances, check Permit2 allowance. Report what you found. See swap skill 'Task 1' instructions.",
-  "SWAP TASK 2/4 — Approve sell token for Permit2 (SKIP if allowance was sufficient in Task 1): call erc20_approve_permit2 preset, broadcast, wait for confirmation. See swap skill 'Task 2' instructions.",
-  "SWAP TASK 3/4 — Get swap quote: convert sell amount to raw_units with to_raw_amount, fetch quote with x402_fetch swap_quote preset, decode calldata with decode_calldata using cache_as 'swap'. See swap skill 'Task 3' instructions.",
-  "SWAP TASK 4/4 — Execute swap: IMMEDIATELY call swap_execute preset, then IMMEDIATELY broadcast  . Then call verify_tx_broadcast and ONLY report success if VERIFIED or CONFIRMED. See swap skill 'Task 4' instructions."
+  "SWAP TASK 1/5 — Prepare: select network, look up sell and buy tokens, check balances, check Permit2 allowance. Report what you found. See swap skill 'Task 1' instructions.",
+  "SWAP TASK 2/5 — Approve sell token for Permit2 (SKIP if allowance was sufficient in Task 1): call erc20_approve_permit2 preset, broadcast, wait for confirmation. See swap skill 'Task 2' instructions.",
+  "SWAP TASK 3/5 — Get swap quote: convert sell amount to raw_units with to_raw_amount, fetch quote with x402_fetch swap_quote preset, decode calldata with decode_calldata using cache_as 'swap'. See swap skill 'Task 3' instructions.",
+  "SWAP TASK 4/5 — Execute swap: IMMEDIATELY call swap_execute preset, then IMMEDIATELY broadcast  ",
+  "SWAP TASK 5/5 —  Call verify_tx_broadcast and ONLY report success if VERIFIED or CONFIRMED. See swap skill 'Task 5' instructions."
 ]}
 ```
 
