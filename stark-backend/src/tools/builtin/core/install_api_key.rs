@@ -1,3 +1,4 @@
+use crate::controllers::api_keys::ApiKeyId;
 use crate::tools::registry::Tool;
 use crate::tools::types::{
     PropertySchema, ToolContext, ToolDefinition, ToolGroup, ToolInputSchema, ToolResult,
@@ -92,6 +93,23 @@ fn validate_service_name(name: &str) -> Result<String, String> {
     Ok(name.to_ascii_uppercase())
 }
 
+/// Check if a name collides with a built-in ApiKeyId name or any of its env_var aliases.
+fn is_builtin_key(name: &str) -> bool {
+    for key_id in ApiKeyId::iter() {
+        if key_id.as_str().eq_ignore_ascii_case(name) {
+            return true;
+        }
+        if let Some(env_vars) = key_id.env_vars() {
+            for alias in env_vars {
+                if alias.eq_ignore_ascii_case(name) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 #[async_trait]
 impl Tool for InstallApiKeyTool {
     fn definition(&self) -> ToolDefinition {
@@ -124,6 +142,14 @@ impl Tool for InstallApiKeyTool {
 
         if params.api_key.is_empty() {
             return ToolResult::error("api_key cannot be empty");
+        }
+
+        // Block overriding built-in keys — those must be set via Settings > API Keys
+        if is_builtin_key(&normalized_name) {
+            return ToolResult::error(format!(
+                "'{}' is a built-in API key and cannot be installed via this tool. Ask the user to configure it in Settings > API Keys.",
+                normalized_name
+            ));
         }
 
         // Persist to database
@@ -269,5 +295,51 @@ mod tests {
             )
             .await;
         assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_builtin_key_blocked() {
+        let tool = InstallApiKeyTool::new();
+        let context = ToolContext::new();
+
+        // Direct built-in name
+        let result = tool
+            .execute(
+                json!({"service_name": "GITHUB_TOKEN", "api_key": "secret"}),
+                &context,
+            )
+            .await;
+        assert!(!result.success);
+        assert!(result.content.contains("built-in"));
+
+        // Env var alias of a built-in
+        let result = tool
+            .execute(
+                json!({"service_name": "GH_TOKEN", "api_key": "secret"}),
+                &context,
+            )
+            .await;
+        assert!(!result.success);
+        assert!(result.content.contains("built-in"));
+
+        // Case-insensitive
+        let result = tool
+            .execute(
+                json!({"service_name": "twitter_consumer_key", "api_key": "secret"}),
+                &context,
+            )
+            .await;
+        assert!(!result.success);
+        assert!(result.content.contains("built-in"));
+    }
+
+    #[test]
+    fn test_is_builtin_key() {
+        assert!(is_builtin_key("GITHUB_TOKEN"));
+        assert!(is_builtin_key("GH_TOKEN"));
+        assert!(is_builtin_key("TWITTER_API_KEY")); // alias of TWITTER_CONSUMER_KEY
+        assert!(is_builtin_key("MOLTX_API_KEY"));
+        assert!(!is_builtin_key("ALLIUM_API_KEY"));
+        assert!(!is_builtin_key("MY_CUSTOM_KEY"));
     }
 }
