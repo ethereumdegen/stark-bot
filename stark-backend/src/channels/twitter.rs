@@ -461,6 +461,8 @@ pub async fn start_twitter_listener(
                                 // Skip replies to bot's tweets unless they explicitly @mention the bot.
                                 // Twitter auto-prepends @bot_handle when replying, so we ignore those
                                 // unless the user typed @bot_handle themselves in the reply body.
+                                // This applies to everyone including admin — implicit replies should
+                                // not trigger the agentic loop.
                                 if is_implicit_reply_to_bot(&mention, &config, &bot_mention_regex) {
                                     log::info!(
                                         "Twitter: Skipping reply-to-bot {} (no explicit @{} in body)",
@@ -740,14 +742,36 @@ fn is_implicit_reply_to_bot(tweet: &Tweet, config: &TwitterConfig, bot_mention_r
         return false;
     }
 
-    // Strip all leading @mentions (the auto-prepended ones from Twitter)
+    // Count how many times @bot_handle appears in the original text.
+    // Twitter auto-prepends exactly one @bot_handle when replying. If the user also
+    // explicitly typed @bot_handle, there will be 2+ occurrences (or 1 if Twitter
+    // deduped them, but in that case the user clearly intended to mention the bot).
+    let mention_count = bot_mention_regex.find_iter(&tweet.text).count();
+
+    // If @bot_handle appears more than once, the user explicitly added one
+    if mention_count > 1 {
+        return false;
+    }
+
+    // Single @bot_handle: strip it (the auto-prepended one) and all other leading
+    // @mentions (e.g. @other_user in a multi-person thread). If the remaining text
+    // is empty or whitespace-only, it was just the auto-prepend with no real content
+    // directed at the bot — treat as implicit. But if there's actual text after
+    // stripping, the user wrote something in reply to the bot, so treat it as
+    // intentional even with only one @mention.
     let mut text = tweet.text.clone();
     while LEADING_MENTION_PATTERN.is_match(&text) {
         text = LEADING_MENTION_PATTERN.replace(&text, "").to_string();
     }
 
-    // If @bot_handle doesn't appear in the remaining text, it was only auto-prepended
-    !bot_mention_regex.is_match(&text)
+    // If there's real text remaining, the user intended to interact with the bot
+    let remaining = text.trim();
+    if !remaining.is_empty() {
+        return false;
+    }
+
+    // Truly implicit: reply to bot with nothing but @mentions
+    true
 }
 
 /// Check if a tweet is a retweet or quote tweet
@@ -1063,12 +1087,18 @@ async fn process_mention(
             error
         );
         None
-    } else if !result.response.is_empty() {
-        // Fallback to dispatch response (e.g. simple text replies without say_to_user)
-        log::info!("Twitter: No say_to_user captured, falling back to dispatch response");
-        Some(result.response)
     } else {
-        log::warn!("Twitter: No response from dispatch and no say_to_user events for @{}", author_username);
+        // Never fall back to result.response — it contains internal tool logs,
+        // task summaries, and raw AI text not intended for public tweets.
+        if !result.response.is_empty() {
+            log::warn!(
+                "Twitter: No say_to_user captured for @{}, suppressing result.response ({} chars)",
+                author_username,
+                result.response.len()
+            );
+        } else {
+            log::warn!("Twitter: No response from dispatch and no say_to_user events for @{}", author_username);
+        }
         None
     }
 }

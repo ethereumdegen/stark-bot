@@ -72,11 +72,11 @@ COPY abis /app/abis
 # Copy the skills directory (bundled skills loaded on boot)
 COPY skills /app/skills
 
-# Copy SOUL.md (bot personality/identity - copied to soul dir on startup)
-COPY SOUL.md /app/SOUL.md
+# Copy soul_template (default SOUL.md and GUIDELINES.md, copied to soul dir on startup)
+COPY soul_template /app/soul_template
 
-# Create directories for workspace, journal, and soul
-RUN mkdir -p /app/workspace /app/journal /app/soul
+# Create directories for workspace, journal, soul, and memory (under stark-backend)
+RUN mkdir -p /app/stark-backend/workspace /app/stark-backend/journal /app/stark-backend/soul /app/stark-backend/memory
 
 # Expose ports (HTTP + Gateway WebSocket)
 EXPOSE 8080

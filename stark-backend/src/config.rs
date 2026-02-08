@@ -28,42 +28,59 @@ pub mod env_vars {
 pub mod defaults {
     pub const PORT: u16 = 8080;
     pub const DATABASE_URL: &str = "./.db/stark.db";
-    pub const WORKSPACE_DIR: &str = "./workspace";
-    pub const SKILLS_DIR: &str = "./skills";
-    pub const JOURNAL_DIR: &str = "./journal";
-    pub const SOUL_DIR: &str = "./soul";
+    pub const WORKSPACE_DIR: &str = "workspace";
+    pub const SKILLS_DIR: &str = "skills";
+    pub const JOURNAL_DIR: &str = "journal";
+    pub const SOUL_DIR: &str = "soul";
+    pub const MEMORY_DIR: &str = "memory";
+}
+
+/// Returns the absolute path to the stark-backend directory.
+/// Uses CARGO_MANIFEST_DIR at compile time, so it always resolves
+/// to stark-backend/ regardless of the working directory at runtime.
+pub fn backend_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+/// Returns the absolute path to the monorepo root (parent of stark-backend/).
+pub fn repo_root() -> PathBuf {
+    backend_dir().parent().expect("backend_dir has no parent").to_path_buf()
+}
+
+/// Resolve a default sub-directory relative to the repo root.
+/// If the env var is set, use that as-is; otherwise join the default name onto repo_root().
+fn resolve_dir(env_var: &str, default_name: &str) -> String {
+    env::var(env_var).unwrap_or_else(|_| {
+        repo_root().join(default_name).to_string_lossy().to_string()
+    })
+}
+
+/// Resolve a default sub-directory relative to the backend directory.
+/// Use for dirs that live inside stark-backend/ (e.g. memory).
+fn resolve_backend_dir(env_var: &str, default_name: &str) -> String {
+    env::var(env_var).unwrap_or_else(|_| {
+        backend_dir().join(default_name).to_string_lossy().to_string()
+    })
 }
 
 /// Get the workspace directory from environment or default
 pub fn workspace_dir() -> String {
-    env::var(env_vars::WORKSPACE_DIR).unwrap_or_else(|_| defaults::WORKSPACE_DIR.to_string())
+    resolve_dir(env_vars::WORKSPACE_DIR, defaults::WORKSPACE_DIR)
 }
 
 /// Get the skills directory from environment or default
 pub fn skills_dir() -> String {
-    env::var(env_vars::SKILLS_DIR).unwrap_or_else(|_| defaults::SKILLS_DIR.to_string())
+    resolve_dir(env_vars::SKILLS_DIR, defaults::SKILLS_DIR)
 }
 
 /// Get the journal directory from environment or default
 pub fn journal_dir() -> String {
-    env::var(env_vars::JOURNAL_DIR).unwrap_or_else(|_| defaults::JOURNAL_DIR.to_string())
+    resolve_dir(env_vars::JOURNAL_DIR, defaults::JOURNAL_DIR)
 }
 
 /// Get the soul directory from environment or default
-/// Checks both ./soul and ../soul if env var not set (handles running from stark-backend/)
 pub fn soul_dir() -> String {
-    if let Ok(dir) = env::var(env_vars::SOUL_DIR) {
-        return dir;
-    }
-    // Check if soul dir exists at default location or parent directory
-    // This handles running from repo root vs stark-backend directory
-    if Path::new("./soul").exists() {
-        "./soul".to_string()
-    } else if Path::new("../soul").exists() {
-        "../soul".to_string()
-    } else {
-        defaults::SOUL_DIR.to_string()
-    }
+    resolve_backend_dir(env_vars::SOUL_DIR, defaults::SOUL_DIR)
 }
 
 /// Get the burner wallet private key from environment (for tools)
@@ -145,7 +162,7 @@ pub struct MemoryConfig {
 impl Default for MemoryConfig {
     fn default() -> Self {
         Self {
-            memory_dir: "./memory".to_string(),
+            memory_dir: resolve_backend_dir(env_vars::MEMORY_DIR, defaults::MEMORY_DIR),
             reindex_interval_secs: 300,
             enable_pre_compaction_flush: true,
             enable_cross_session_memory: true,
@@ -157,8 +174,7 @@ impl Default for MemoryConfig {
 impl MemoryConfig {
     pub fn from_env() -> Self {
         Self {
-            memory_dir: env::var(env_vars::MEMORY_DIR)
-                .unwrap_or_else(|_| "./memory".to_string()),
+            memory_dir: resolve_backend_dir(env_vars::MEMORY_DIR, defaults::MEMORY_DIR),
             reindex_interval_secs: env::var(env_vars::MEMORY_REINDEX_INTERVAL_SECS)
                 .unwrap_or_else(|_| "300".to_string())
                 .parse()
@@ -197,28 +213,21 @@ pub fn guidelines_document_path() -> PathBuf {
     PathBuf::from(soul_dir()).join("GUIDELINES.md")
 }
 
-/// Find the original SOUL.md in the repo root
-fn find_original_soul() -> Option<PathBuf> {
-    let candidates = [".", "..", "../..", "../../.."];
-    for candidate in candidates {
-        let path = PathBuf::from(candidate).join("SOUL.md");
-        if path.exists() {
-            return path.canonicalize().ok();
-        }
-    }
-    None
+/// Get the path to the soul_template directory at the repo root
+fn soul_template_dir() -> PathBuf {
+    repo_root().join("soul_template")
 }
 
-/// Find the original GUIDELINES.md in the repo root
+/// Find the template SOUL.md in soul_template/
+fn find_original_soul() -> Option<PathBuf> {
+    let path = soul_template_dir().join("SOUL.md");
+    if path.exists() { Some(path) } else { None }
+}
+
+/// Find the template GUIDELINES.md in soul_template/
 fn find_original_guidelines() -> Option<PathBuf> {
-    let candidates = [".", "..", "../..", "../../.."];
-    for candidate in candidates {
-        let path = PathBuf::from(candidate).join("GUIDELINES.md");
-        if path.exists() {
-            return path.canonicalize().ok();
-        }
-    }
-    None
+    let path = soul_template_dir().join("GUIDELINES.md");
+    if path.exists() { Some(path) } else { None }
 }
 
 /// Initialize the workspace, journal, and soul directories

@@ -31,16 +31,19 @@ Skills are pre-built, optimized workflows. **ALWAYS prefer using a skill over ma
 **User request:** "tip @jimmy 100 STARKBOT"
 **Tasks:**
 1. "Use skill: discord_tipping to tip @jimmy 100 STARKBOT"
-(The skill handles all steps: resolve user, lookup token, convert amount, transfer)
 
 **User request:** "Check my wallet balance and transfer 10 USDC to 0x123..."
 **Tasks:**
-1. "Check wallet balance for all tokens"
-2. "Transfer 10 USDC to address 0x123..."
+1. "Use skill: local_wallet to check wallet balances"
+2. "Use skill: transfer to send 10 USDC to 0x123..."
 
 **User request:** "Read the bot-commands channel on discord"
 **Tasks:**
 1. "Use skill: discord to read messages from #bot-commands channel"
+
+**User request:** "What's the price of ETH?"
+**Tasks:**
+1. "Use skill: token_price to look up the current price of ETH"
 
 ## User Request
 

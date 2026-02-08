@@ -1238,9 +1238,16 @@ impl MessageDispatcher {
     ) -> Option<ToolDefinition> {
         use crate::tools::{PropertySchema, ToolGroup, ToolInputSchema};
 
-        let skills = self.db.list_enabled_skills().ok()?;
+        let skills = match self.db.list_enabled_skills() {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("[SKILL] Failed to query enabled skills for use_skill tool: {}", e);
+                return None;
+            }
+        };
 
         if skills.is_empty() {
+            log::warn!("[SKILL] No enabled skills in DB — use_skill pseudo-tool will NOT be available");
             return None;
         }
 
@@ -1533,6 +1540,14 @@ impl MessageDispatcher {
                 }
             };
 
+            // Debug: log tools sent to AI on every iteration
+            log::info!(
+                "[ORCHESTRATED_LOOP] Iter {} → sending {} tools to AI: {:?}",
+                iterations,
+                current_tools.len(),
+                current_tools.iter().map(|t| &t.name).collect::<Vec<_>>()
+            );
+
             // Emit an iteration task for visibility (after first iteration)
             if iterations > 1 {
                 if let Some(ref exec_id) = self.execution_tracker.get_execution_id(original_message.channel_id) {
@@ -1758,6 +1773,14 @@ impl MessageDispatcher {
                 }
             }
 
+            // Log available tools for this iteration
+            log::debug!(
+                "[ORCHESTRATED_LOOP] Iteration {} tools ({}): [{}]",
+                iterations,
+                current_tools.len(),
+                current_tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>().join(", ")
+            );
+
             // Generate with native tool support and progress notifications
             let ai_response = match self.generate_with_progress(
                 &client,
@@ -1887,6 +1910,11 @@ impl MessageDispatcher {
                 }
 
                 if orchestrator_complete {
+                    // If say_to_user already delivered the response, return empty to avoid duplication
+                    if !last_say_to_user_content.is_empty() {
+                        log::info!("[ORCHESTRATED_LOOP] say_to_user already delivered response, suppressing final text output");
+                        return Ok(String::new());
+                    }
                     // Build response from non-empty parts to avoid duplicate output
                     let mut parts: Vec<&str> = Vec::new();
                     if !tool_call_log.is_empty() {
@@ -2590,7 +2618,13 @@ impl MessageDispatcher {
             // Return the question content - context is saved, will continue when user responds
             Ok(user_question_content)
         } else if orchestrator_complete {
-            Ok(final_summary)
+            // If say_to_user already delivered the response, return empty to avoid duplication
+            if !last_say_to_user_content.is_empty() {
+                log::info!("[ORCHESTRATED_LOOP] say_to_user already delivered response, suppressing final_summary");
+                Ok(String::new())
+            } else {
+                Ok(final_summary)
+            }
         } else if tool_call_log.is_empty() {
             Err(format!(
                 "Tool loop hit max iterations ({}) without completion",
@@ -2768,6 +2802,14 @@ impl MessageDispatcher {
                     );
                 }
             }
+
+            // Log available tools for this iteration
+            log::info!(
+                "[TEXT_ORCHESTRATED] Iter {} → sending {} tools to AI: {:?}",
+                iterations,
+                tools.len(),
+                tools.iter().map(|t| &t.name).collect::<Vec<_>>()
+            );
 
             let (ai_content, payment) = match client.generate_text_with_events(
                 conversation.clone(),
@@ -3453,6 +3495,12 @@ impl MessageDispatcher {
             return Ok(user_question_content);
         }
 
+        // If say_to_user already delivered the response, return empty to avoid duplication
+        if !last_say_to_user_content.is_empty() {
+            log::info!("[TEXT_ORCHESTRATED] say_to_user already delivered response, suppressing final_response");
+            return Ok(String::new());
+        }
+
         if final_response.is_empty() {
             // Empty response with work done - save summary
             if !tool_call_log.is_empty() {
@@ -3564,25 +3612,18 @@ impl MessageDispatcher {
 
     /// Load SOUL.md content if it exists
     fn load_soul() -> Option<String> {
-        // Primary location: soul directory from config
+        // Primary: soul directory from config (stark-backend/soul/SOUL.md)
         let soul_path = crate::config::soul_document_path();
         if let Ok(content) = std::fs::read_to_string(&soul_path) {
             log::debug!("[SOUL] Loaded from {:?}", soul_path);
             return Some(content);
         }
 
-        // Fallback: try repo root locations
-        let fallback_paths = [
-            "SOUL.md",
-            "./SOUL.md",
-            "/app/SOUL.md",
-        ];
-
-        for path in fallback_paths {
-            if let Ok(content) = std::fs::read_to_string(path) {
-                log::debug!("[SOUL] Loaded from fallback {}", path);
-                return Some(content);
-            }
+        // Fallback: soul_template directory (repo root)
+        let template_path = crate::config::repo_root().join("soul_template/SOUL.md");
+        if let Ok(content) = std::fs::read_to_string(&template_path) {
+            log::debug!("[SOUL] Loaded from template {:?}", template_path);
+            return Some(content);
         }
 
         log::debug!("[SOUL] No SOUL.md found, using default personality");
@@ -3591,26 +3632,18 @@ impl MessageDispatcher {
 
     /// Load GUIDELINES.md content if it exists
     fn load_guidelines() -> Option<String> {
-        // Primary location: soul directory from config
-        let soul_dir = crate::config::soul_dir();
-        let guidelines_path = std::path::PathBuf::from(&soul_dir).join("GUIDELINES.md");
+        // Primary: soul directory from config (stark-backend/soul/GUIDELINES.md)
+        let guidelines_path = crate::config::guidelines_document_path();
         if let Ok(content) = std::fs::read_to_string(&guidelines_path) {
             log::debug!("[GUIDELINES] Loaded from {:?}", guidelines_path);
             return Some(content);
         }
 
-        // Fallback: try repo root locations
-        let fallback_paths = [
-            "GUIDELINES.md",
-            "./GUIDELINES.md",
-            "/app/GUIDELINES.md",
-        ];
-
-        for path in fallback_paths {
-            if let Ok(content) = std::fs::read_to_string(path) {
-                log::debug!("[GUIDELINES] Loaded from fallback {}", path);
-                return Some(content);
-            }
+        // Fallback: soul_template directory (repo root)
+        let template_path = crate::config::repo_root().join("soul_template/GUIDELINES.md");
+        if let Ok(content) = std::fs::read_to_string(&template_path) {
+            log::debug!("[GUIDELINES] Loaded from template {:?}", template_path);
+            return Some(content);
         }
 
         log::debug!("[GUIDELINES] No GUIDELINES.md found");

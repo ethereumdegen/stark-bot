@@ -1,6 +1,6 @@
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::PathBuf;
 use tokio::fs;
 
 use crate::AppState;
@@ -43,45 +43,38 @@ fn validate_session_from_request(
 #[derive(Clone)]
 struct IntrinsicFile {
     name: &'static str,
-    path: &'static str, // Relative to repo root
     description: &'static str,
     writable: bool,
+}
+
+/// Resolve the absolute path for an intrinsic file by name
+fn intrinsic_path(name: &str) -> Option<PathBuf> {
+    match name {
+        "soul.md" => Some(crate::config::soul_document_path()),
+        "guidelines.md" => Some(crate::config::guidelines_document_path()),
+        "assistant.md" => Some(crate::config::backend_dir().join("src/ai/multi_agent/prompts/assistant.md")),
+        _ => None,
+    }
 }
 
 /// List of intrinsic files
 const INTRINSIC_FILES: &[IntrinsicFile] = &[
     IntrinsicFile {
         name: "soul.md",
-        path: "soul/SOUL.md",
         description: "Agent personality and identity",
         writable: true,
     },
     IntrinsicFile {
         name: "guidelines.md",
-        path: "soul/GUIDELINES.md",
         description: "Operational and business guidelines",
         writable: true,
     },
     IntrinsicFile {
         name: "assistant.md",
-        path: "stark-backend/src/ai/multi_agent/prompts/assistant.md",
         description: "System instructions (read-only)",
         writable: false,
     },
 ];
-
-/// Get the repo root directory
-fn repo_root() -> String {
-    // The server runs from the repo root or stark-backend directory
-    if Path::new("./soul/SOUL.md").exists() {
-        ".".to_string()
-    } else if Path::new("../soul/SOUL.md").exists() {
-        "..".to_string()
-    } else {
-        // Fall back to current directory
-        ".".to_string()
-    }
-}
 
 #[derive(Debug, Serialize)]
 struct IntrinsicFileInfo {
@@ -158,14 +151,24 @@ async fn read_intrinsic(
         }
     };
 
-    let root = repo_root();
-    let full_path = Path::new(&root).join(intrinsic.path);
+    let full_path = match intrinsic_path(intrinsic.name) {
+        Some(p) => p,
+        None => {
+            return HttpResponse::InternalServerError().json(ReadIntrinsicResponse {
+                success: false,
+                name: intrinsic.name.to_string(),
+                content: None,
+                writable: intrinsic.writable,
+                error: Some("Could not resolve file path".to_string()),
+            });
+        }
+    };
 
     // Read the file
     let content = match fs::read_to_string(&full_path).await {
         Ok(c) => c,
         Err(e) => {
-            log::error!("Failed to read intrinsic file {}: {}", intrinsic.path, e);
+            log::error!("Failed to read intrinsic file {}: {}", intrinsic.name, e);
             return HttpResponse::InternalServerError().json(ReadIntrinsicResponse {
                 success: false,
                 name: intrinsic.name.to_string(),
@@ -230,12 +233,19 @@ async fn write_intrinsic(
         });
     }
 
-    let root = repo_root();
-    let full_path = Path::new(&root).join(intrinsic.path);
+    let full_path = match intrinsic_path(intrinsic.name) {
+        Some(p) => p,
+        None => {
+            return HttpResponse::InternalServerError().json(WriteIntrinsicResponse {
+                success: false,
+                error: Some("Could not resolve file path".to_string()),
+            });
+        }
+    };
 
     // Write the file
     if let Err(e) = fs::write(&full_path, &body.content).await {
-        log::error!("Failed to write intrinsic file {}: {}", intrinsic.path, e);
+        log::error!("Failed to write intrinsic file {}: {}", intrinsic.name, e);
         return HttpResponse::InternalServerError().json(WriteIntrinsicResponse {
             success: false,
             error: Some(format!("Failed to write file: {}", e)),

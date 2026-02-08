@@ -3,8 +3,8 @@
 .env
 /.db
 /.tmp
-/workspace
-/journal
-/soul
-/memory
+workspace/
+journal/
+soul/
+memory/
 /test_output

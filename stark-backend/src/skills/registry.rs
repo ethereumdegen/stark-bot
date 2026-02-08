@@ -384,16 +384,16 @@ impl SkillRegistry {
 }
 
 /// Create a default skill registry with standard paths
+/// Uses config::skills_dir() so paths are stable regardless of CWD
 pub fn create_default_registry(db: Arc<Database>) -> SkillRegistry {
-    let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let skills_dir = PathBuf::from(crate::config::skills_dir());
+    let workspace_dir = PathBuf::from(crate::config::workspace_dir());
 
-    // The root /skills directory is the primary bundled path
-    // This loads skills directly from skills/*.md files
     SkillRegistry::with_paths(
         db,
-        Some(current_dir.join("skills")),
-        Some(current_dir.join("skills/managed")),
-        Some(current_dir.join("workspace/.skills")),
+        Some(skills_dir.clone()),
+        Some(skills_dir.join("managed")),
+        Some(workspace_dir.join(".skills")),
     )
 }
 

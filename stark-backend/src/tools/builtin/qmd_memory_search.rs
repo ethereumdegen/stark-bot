@@ -52,7 +52,7 @@ impl QmdMemorySearchTool {
                     properties,
                     required: vec!["query".to_string()],
                 },
-                group: ToolGroup::System,
+                group: ToolGroup::Memory,
             },
         }
     }
@@ -170,7 +170,7 @@ mod tests {
         let def = tool.definition();
 
         assert_eq!(def.name, "memory_search");
-        assert_eq!(def.group, ToolGroup::System);
+        assert_eq!(def.group, ToolGroup::Memory);
         assert!(def.input_schema.required.contains(&"query".to_string()));
     }
 }

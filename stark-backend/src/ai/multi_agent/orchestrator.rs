@@ -160,13 +160,33 @@ impl Orchestrator {
         if let Some(task) = self.context.task_queue.current_task() {
             let total = self.context.task_queue.total();
             let completed = self.context.task_queue.completed_count();
+
+            // Detect "Use skill: X" in task description and inject explicit use_skill instruction
+            let skill_instruction = if let Some(caps) = task.description
+                .find("Use skill: ")
+                .and_then(|start| {
+                    let rest = &task.description[start + 11..];
+                    // Extract skill name (up to whitespace or end)
+                    let skill_name = rest.split_whitespace().next();
+                    skill_name.map(|s| s.to_string())
+                })
+            {
+                format!(
+                    "\n\n**⚡ ACTION REQUIRED:** Call `use_skill(skill_name=\"{}\")` to load this skill's instructions, then follow them step by step.",
+                    caps
+                )
+            } else {
+                String::new()
+            };
+
             prompt.push_str(&format!(
-                "# >>> CURRENT TASK ({}/{}) <<<\n\n{}\n\n\
+                "# >>> CURRENT TASK ({}/{}) <<<\n\n{}{}\n\n\
                  **YOU MUST**: Complete ONLY this task. Do NOT skip ahead. \
                  When done, call `say_to_user` with `finished_task: true` or `task_fully_completed` with a summary.\n\n---\n\n",
                 completed + 1,
                 total,
-                task.description
+                task.description,
+                skill_instruction,
             ));
         }
 

@@ -75,7 +75,7 @@ impl QmdMemoryReadTool {
                     properties,
                     required: vec![],
                 },
-                group: ToolGroup::System,
+                group: ToolGroup::Memory,
             },
         }
     }
@@ -276,7 +276,7 @@ mod tests {
         let def = tool.definition();
 
         assert_eq!(def.name, "memory_read");
-        assert_eq!(def.group, ToolGroup::System);
+        assert_eq!(def.group, ToolGroup::Memory);
         // No required params - all optional
         assert!(def.input_schema.required.is_empty());
     }

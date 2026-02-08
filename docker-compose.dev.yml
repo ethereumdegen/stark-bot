@@ -19,14 +19,16 @@ services:
       - ./abis:/app/abis
       # Mount skills directory for bundled skills
       - ./skills:/app/skills
-      # Mount SOUL.md for bot personality (original, copied to soul dir on startup)
-      - ./SOUL.md:/app/SOUL.md
+      # Mount soul_template (default SOUL.md and GUIDELINES.md)
+      - ./soul_template:/app/soul_template
       # Mount workspace directory for agent files
-      - ./workspace:/app/workspace
+      - ./workspace:/app/stark-backend/workspace
       # Mount journal directory for agent notes
-      - ./journal:/app/journal
-      # Mount soul directory (SOUL.md copied here on startup)
-      - ./soul:/app/soul
+      - ./journal:/app/stark-backend/journal
+      # Mount soul directory (copied from soul_template on first startup)
+      - ./soul:/app/stark-backend/soul
+      # Mount memory directory for agent memories
+      - ./memory:/app/stark-backend/memory
       # Use named volume for target dir to avoid rebuilding deps every time
       - cargo-target:/app/target
       # Cache cargo registry for faster rebuilds

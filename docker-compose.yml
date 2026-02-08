@@ -11,9 +11,11 @@ services:
       # Persistent database storage
       - ./data:/app/.db
       # Persistent workspace for agent files
-      - ./workspace:/app/workspace
+      - ./workspace:/app/stark-backend/workspace
       # Persistent journal for agent notes
-      - ./journal:/app/journal
-      # Soul directory (SOUL.md copied here on startup)
-      - ./soul:/app/soul
+      - ./journal:/app/stark-backend/journal
+      # Soul directory (copied from soul_template on first startup)
+      - ./soul:/app/stark-backend/soul
+      # Persistent memory for agent memories
+      - ./memory:/app/stark-backend/memory
     restart: unless-stopped

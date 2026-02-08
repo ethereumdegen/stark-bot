@@ -11,6 +11,7 @@ use crate::db::Database;
 use crate::execution::ExecutionTracker;
 use crate::gateway::events::EventBroadcaster;
 use crate::gateway::protocol::GatewayEvent;
+use crate::skills::SkillRegistry;
 use crate::tools::{self, ToolRegistry};
 use serde_json::json;
 use std::sync::Arc;
@@ -60,6 +61,27 @@ impl TestHarness {
             .expect("create channel");
         let channel_id = channel.id;
 
+        // Load all skills from the skills/ directory into DB (matching production behavior).
+        // Without this, `use_skill` pseudo-tool is never generated because
+        // `list_enabled_skills()` returns empty on a fresh in-memory DB.
+        let skill_registry = Arc::new(SkillRegistry::new(db.clone()));
+        let skills_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join("skills");
+        if skills_dir.exists() {
+            if let Ok(entries) = std::fs::read_dir(&skills_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().map(|e| e == "md").unwrap_or(false) {
+                        if let Ok(content) = std::fs::read_to_string(&path) {
+                            let _ = skill_registry.create_skill_from_markdown_force(&content);
+                        }
+                    }
+                }
+            }
+        }
+
         // Event broadcaster + subscriber to capture events
         let broadcaster = Arc::new(EventBroadcaster::new());
         let (client_id, event_rx) = broadcaster.subscribe();
@@ -70,13 +92,82 @@ impl TestHarness {
         // Full tool registry (includes say_to_user, task_fully_completed, etc.)
         let tool_registry = Arc::new(tools::create_default_registry());
 
-        // Build dispatcher with mock AI client
+        // Build dispatcher with mock AI client (include skill_registry so use_skill works)
         let mock = MockAiClient::new(mock_responses.into_iter().map(Ok).collect());
-        let dispatcher = MessageDispatcher::new(
+        let dispatcher = MessageDispatcher::new_with_wallet_and_skills(
             db.clone(),
             broadcaster.clone(),
             tool_registry,
             execution_tracker,
+            None,
+            Some(skill_registry),
+        )
+        .with_mock_ai_client(mock);
+
+        TestHarness {
+            dispatcher,
+            _client_id: client_id,
+            event_rx,
+            channel_id,
+        }
+    }
+
+    /// Build a test harness with skills loaded from the skills/ directory.
+    ///
+    /// * `channel_type` — "web", "discord", etc.
+    /// * `safe_mode` — whether the channel has safe_mode enabled
+    /// * `skill_names` — list of skill markdown filenames to load (e.g. ["swap", "local_wallet"])
+    /// * `mock_responses` — pre-configured AI responses
+    fn new_with_skills(
+        channel_type: &str,
+        safe_mode: bool,
+        skill_names: &[&str],
+        mock_responses: Vec<AiResponse>,
+    ) -> Self {
+        let db = Arc::new(Database::new(":memory:").expect("in-memory db"));
+
+        db.save_agent_settings(
+            "http://mock.test/v1/chat/completions",
+            "kimi",
+            4096,
+            100_000,
+            None,
+        )
+        .expect("save agent settings");
+
+        let channel = db
+            .create_channel_with_safe_mode(channel_type, "test-channel", "fake-token", None, safe_mode)
+            .expect("create channel");
+        let channel_id = channel.id;
+
+        // Load skills from the skills/ directory into the DB
+        let skill_registry = Arc::new(SkillRegistry::new(db.clone()));
+        let skills_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join("skills");
+        for name in skill_names {
+            let path = skills_dir.join(format!("{}.md", name));
+            let content = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+            let skill = skill_registry.create_skill_from_markdown_force(&content)
+                .unwrap_or_else(|e| panic!("Failed to load skill '{}': {}", name, e));
+            eprintln!("  Loaded skill: {} v{}", skill.name, skill.version);
+        }
+
+        let broadcaster = Arc::new(EventBroadcaster::new());
+        let (client_id, event_rx) = broadcaster.subscribe();
+        let execution_tracker = Arc::new(ExecutionTracker::new(broadcaster.clone()));
+        let tool_registry = Arc::new(tools::create_default_registry());
+
+        let mock = MockAiClient::new(mock_responses.into_iter().map(Ok).collect());
+        let dispatcher = MessageDispatcher::new_with_wallet_and_skills(
+            db.clone(),
+            broadcaster.clone(),
+            tool_registry,
+            execution_tracker,
+            None, // no wallet provider
+            Some(skill_registry),
         )
         .with_mock_ai_client(mock);
 
@@ -493,8 +584,12 @@ async fn pattern_d_say_then_complete_discord_gateway() {
 // ============================================================================
 // Multi-task swap flow test with INPUT/OUTPUT trace capture.
 //
-// Simulates "swap 1 usdc to starkbot" through the 5-task pipeline.
-// The mock AI responses follow the define_tasks → task flow pattern.
+// Simulates "swap 0.02 eth to starkbot" through the full realistic pipeline:
+//   Planner → set_agent_subtype(finance) → use_skill(swap) → task execution
+//
+// Loads the actual swap skill from skills/swap.md so that `use_skill` appears
+// in the available tools list — matching real production behavior.
+//
 // Each iteration's INPUT (system prompt, conversation, tool history, tools)
 // and OUTPUT (AI response) are captured and written to test_output/.
 // ============================================================================
@@ -502,50 +597,59 @@ async fn pattern_d_say_then_complete_discord_gateway() {
 #[tokio::test]
 async fn swap_flow_with_trace() {
     let responses = vec![
-        // Iteration 1 (TaskPlanner mode): AI calls define_tasks
+        // Iteration 1 (TaskPlanner mode): AI calls define_tasks with 5 tasks
         AiResponse::with_tools(
             String::new(),
             vec![tool_call(
                 "define_tasks",
                 json!({
                     "tasks": [
-                        "TASK 1 — Prepare: select network, look up sell+buy tokens, check Permit2 allowance.",
-                        "TASK 2 — Approve Permit2 (SKIP if allowance sufficient).",
-                        "TASK 3 — Quote+Decode: call to_raw_amount, then x402_fetch, then decode_calldata with cache_as 'swap'.",
-                        "TASK 4 — Execute: call swap_execute then broadcast_web3_tx. Exactly 2 sequential calls.",
-                        "TASK 5 — Verify: call verify_tx_broadcast, report result."
+                        "TASK 1 — Prepare: select finance toolbox, load swap skill, select Base network, look up sell+buy tokens, check AllowanceHolder allowance.",
+                        "TASK 2 — Approve AllowanceHolder (SKIP if allowance sufficient).",
+                        "TASK 3 — Convert amount and fetch quote: call to_raw_amount, x402_fetch, decode_calldata with cache_as 'swap'.",
+                        "TASK 4 — Execute: call swap_execute then broadcast_web3_tx.",
+                        "TASK 5 — Verify: call verify_tx_broadcast, report result to user."
                     ]
                 }),
             )],
         ),
-        // Iteration 2 (Task 1 - Prepare): AI reports findings via say_to_user
+        // Iteration 2 (Task 1 - Prepare): AI selects finance toolbox + loads swap skill
+        // Both tools execute for real against the in-memory DB
+        AiResponse::with_tools(
+            String::new(),
+            vec![
+                tool_call("set_agent_subtype", json!({"subtype": "finance"})),
+                tool_call("use_skill", json!({"skill_name": "swap", "input": "swap 0.02 eth to starkbot"})),
+            ],
+        ),
+        // Iteration 3 (still Task 1): AI completes preparation and reports findings
         AiResponse::with_tools(
             String::new(),
             vec![tool_call(
                 "say_to_user",
                 json!({
-                    "message": "Found tokens:\n- SELL: USDC (0xA0b8...)\n- BUY: STARKBOT (0x1234...)\n\nPermit2 allowance: sufficient",
+                    "message": "Loaded swap skill. Preparation complete:\n- Network: Base\n- SELL: ETH (native)\n- BUY: STARKBOT (0x1234...)\n- AllowanceHolder allowance: N/A (native ETH)",
                     "finished_task": true
                 }),
             )],
         ),
-        // Iteration 3 (Task 2 - Approve): Skip since allowance is sufficient
+        // Iteration 4 (Task 2 - Approve): Skip since allowance is sufficient
         AiResponse::with_tools(
             String::new(),
             vec![tool_call(
                 "task_fully_completed",
-                json!({"summary": "Allowance already sufficient — skipping approval."}),
+                json!({"summary": "AllowanceHolder allowance already sufficient — skipping approval."}),
             )],
         ),
-        // Iteration 4 (Task 3 - Quote+Decode): AI completes quote and decode
+        // Iteration 5 (Task 3 - Quote+Decode): AI completes quote and decode
         AiResponse::with_tools(
             String::new(),
             vec![tool_call(
                 "task_fully_completed",
-                json!({"summary": "Quote fetched and decoded into swap registers. Ready to execute."}),
+                json!({"summary": "Converted 0.02 ETH to raw amount (20000000000000000). Quote fetched and decoded into swap registers."}),
             )],
         ),
-        // Iteration 5 (Task 4 - Execute): AI completes swap execution
+        // Iteration 6 (Task 4 - Execute): AI completes swap execution
         AiResponse::with_tools(
             String::new(),
             vec![tool_call(
@@ -553,21 +657,22 @@ async fn swap_flow_with_trace() {
                 json!({"summary": "Swap transaction broadcast. TX: 0xabc123..."}),
             )],
         ),
-        // Iteration 6 (Task 5 - Verify): AI reports final result
+        // Iteration 7 (Task 5 - Verify): AI reports final result to user
         AiResponse::with_tools(
             String::new(),
             vec![tool_call(
                 "say_to_user",
                 json!({
-                    "message": "✅ Swap verified!\n\nSwapped 1 USDC → 42,000 STARKBOT\nTX: https://basescan.org/tx/0xabc123",
+                    "message": "Swap complete!\n\nSwapped 0.02 ETH → 185,000 STARKBOT on Base\nTX: https://basescan.org/tx/0xabc123",
                     "finished_task": true
                 }),
             )],
         ),
     ];
 
-    let mut harness = TestHarness::new("web", false, false, responses);
-    let (result, events) = harness.dispatch("swap 1 usdc to starkbot", false).await;
+    // Use skill-aware harness so `use_skill` appears in the tools list
+    let mut harness = TestHarness::new_with_skills("web", false, &["swap"], responses);
+    let (result, events) = harness.dispatch("swap 0.02 eth to starkbot", false).await;
 
     // Write trace for auditing
     harness.write_trace("swap_flow");
@@ -578,8 +683,8 @@ async fn swap_flow_with_trace() {
     // Verify trace was captured
     let trace = harness.get_trace();
     assert!(
-        trace.len() >= 2,
-        "Expected at least 2 AI iterations (planner + tasks), got {}",
+        trace.len() >= 3,
+        "Expected at least 3 AI iterations (planner + subtype/skill + tasks), got {}",
         trace.len()
     );
 
@@ -589,10 +694,28 @@ async fn swap_flow_with_trace() {
         assert!(has_define_tasks, "First iteration should call define_tasks");
     }
 
+    // Verify iteration 2 called set_agent_subtype and use_skill
+    if let Some(ref resp) = trace[1].output_response {
+        let tool_names: Vec<&str> = resp.tool_calls.iter().map(|tc| tc.name.as_str()).collect();
+        assert!(
+            tool_names.contains(&"set_agent_subtype"),
+            "Iteration 2 should call set_agent_subtype, got: {:?}", tool_names
+        );
+        assert!(
+            tool_names.contains(&"use_skill"),
+            "Iteration 2 should call use_skill, got: {:?}", tool_names
+        );
+    }
+
+    // Verify use_skill is in the available tools for Task 1
+    assert!(
+        trace[1].input_tools.iter().any(|t| t == "use_skill"),
+        "Task 1 should have use_skill in available tools, got: {:?}",
+        trace[1].input_tools
+    );
+
     // Verify CURRENT TASK advances through the system prompt
-    // Helper to extract task number from system prompt
     let extract_task_num = |sys_prompt: &str| -> Option<(usize, usize)> {
-        // Look for "CURRENT TASK (X/Y)" pattern
         if let Some(pos) = sys_prompt.find("CURRENT TASK (") {
             let after = &sys_prompt[pos + "CURRENT TASK (".len()..];
             if let Some(slash) = after.find('/') {
@@ -638,17 +761,19 @@ async fn swap_flow_with_trace() {
 
     // Assert task advancement:
     // - Iteration 1: no task (planner mode)
-    // - Iteration 2: TASK 1/5
-    // - Iteration 3: TASK 2/5 (after say_to_user finished_task completed task 1)
-    // - Iteration 4: TASK 3/5
-    // - Iteration 5: TASK 4/5
-    // - Iteration 6: TASK 5/5
+    // - Iteration 2: TASK 1/5 (set_agent_subtype + use_skill — no finished_task)
+    // - Iteration 3: TASK 1/5 (say_to_user finished_task=true → completes task 1)
+    // - Iteration 4: TASK 2/5
+    // - Iteration 5: TASK 3/5
+    // - Iteration 6: TASK 4/5
+    // - Iteration 7: TASK 5/5
     assert_eq!(task_numbers[0], None, "Iteration 1 should have no task (planner mode)");
     assert_eq!(task_numbers[1], Some((1, 5)), "Iteration 2 should show TASK 1/5");
-    assert_eq!(task_numbers[2], Some((2, 5)), "Iteration 3 should show TASK 2/5 (task 1 completed)");
-    assert_eq!(task_numbers[3], Some((3, 5)), "Iteration 4 should show TASK 3/5 (task 2 completed)");
-    assert_eq!(task_numbers[4], Some((4, 5)), "Iteration 5 should show TASK 4/5 (task 3 completed)");
-    assert_eq!(task_numbers[5], Some((5, 5)), "Iteration 6 should show TASK 5/5 (task 4 completed)");
+    assert_eq!(task_numbers[2], Some((1, 5)), "Iteration 3 should still be TASK 1/5 (multi-step task)");
+    assert_eq!(task_numbers[3], Some((2, 5)), "Iteration 4 should show TASK 2/5 (task 1 completed)");
+    assert_eq!(task_numbers[4], Some((3, 5)), "Iteration 5 should show TASK 3/5 (task 2 completed)");
+    assert_eq!(task_numbers[5], Some((4, 5)), "Iteration 6 should show TASK 4/5 (task 3 completed)");
+    assert_eq!(task_numbers[6], Some((5, 5)), "Iteration 7 should show TASK 5/5 (task 4 completed)");
 }
 
 // ============================================================================

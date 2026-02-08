@@ -67,43 +67,78 @@ impl SetAgentSubtypeTool {
             }
             AgentSubtype::Finance => {
                 "💰 Finance toolbox activated.\n\n\
-                 Tools now available:\n\
-                 • select_web3_network - Select the active blockchain network (mainnet/base/polygon/etc.)\n\
-                 • web3_tx - Execute blockchain transactions\n\
-                 • web3_function_call - Read smart contract data (use presets like erc20_balance)\n\
-                 • token_lookup - Get token info and addresses\n\
-                 • x402_rpc - RPC calls (get_balance, gas_price, etc.)\n\
-                 • x402_fetch - Payment protocol fetch operations\n\
-                 • set_address - Set validated recipient addresses\n\
-                 • ask_user - Ask user for clarification (e.g., which network)\n\n\
-                 ⚠️ IMPORTANT: Call select_web3_network FIRST when:\n\
-                 • A skill instructs you to select a specific network\n\
-                 • The user mentions a specific chain (Base, Polygon, mainnet)\n\
-                 • Working with chain-specific tokens (e.g., Starkbot on Base, Polymarket on Polygon)\n\n\
-                 Note: wallet_address is an intrinsic register - always available.\n\n\
-                 Skills: swap, transfer, bankr, token_price, weth, local_wallet, polymarket_trading"
+                 ## Skills (use set_agent_subtype then pick a skill with use_skill)\n\
+                 Most tasks are handled by a skill. Match the user's request to one of these:\n\n\
+                 Trading & Swaps:\n\
+                 • swap — Swap ERC20 tokens on Base via 0x DEX aggregator\n\
+                 • polymarket_trading — Explore and trade on Polymarket prediction markets\n\
+                 • bankr — AI-powered trading agent (advanced orders, NFTs, yield)\n\n\
+                 Transfers & Bridging:\n\
+                 • transfer — Send ERC20 tokens or native ETH to an address\n\
+                 • bridge_usdc — Bridge USDC cross-chain (Base, Polygon, Ethereum, Arbitrum, Optimism)\n\
+                 • discord_tipping — Tip ERC20 tokens to Discord users\n\
+                 • broadcast_transactions — Broadcast queued transactions\n\n\
+                 DeFi & Yield:\n\
+                 • aave — Lend/borrow on Aave (supply, withdraw, check APY)\n\
+                 • pendle — Fixed-income yield trading on Pendle (PT/YT)\n\
+                 • weth — Wrap ETH→WETH or unwrap WETH→ETH\n\n\
+                 Prices & Research:\n\
+                 • token_price — Look up crypto/token prices and market data (CoinGecko)\n\
+                 • dexscreener — DEX pair data, liquidity, and on-chain price charts\n\
+                 • geckoterminal — On-chain charts, pool data, and trending tokens\n\n\
+                 Wallet & Payments:\n\
+                 • local_wallet — Check balances of the burner wallet across networks\n\
+                 • x402_payment — Make x402 micropayments with USDC\n\n\
+                 👉 Pick the matching skill and follow its instructions. Skills define the full \
+                 workflow including which tools to call and in what order.\n\n\
+                 ## Low-level tools (only when no skill fits)\n\
+                 select_web3_network, web3_tx, web3_function_call, token_lookup, \
+                 x402_rpc, x402_fetch, set_address, ask_user\n\n\
+                  "
                     .to_string()
             }
             AgentSubtype::CodeEngineer => {
                 "🛠️ CodeEngineer toolbox activated.\n\n\
-                 Tools now available:\n\
-                 • grep - Search file contents with regex\n\
-                 • glob - Find files by pattern\n\
-                 • edit_file - Precise string replacement\n\
-                 • write_file - Create/overwrite files\n\
-                 • delete_file - Remove files/directories\n\
-                 • rename_file - Move/rename files\n\
-                 • git - Git operations (status, diff, commit, branch)\n\
-                 • exec - Run shell commands\n\n\
-                 Skills: plan, commit, test, debug, code-review, github"
+                 ## Skills (use set_agent_subtype then pick a skill with use_skill)\n\
+                 Most tasks are handled by a skill. Match the user's request to one of these:\n\n\
+                 Development:\n\
+                 • plan — Create a structured implementation plan for a task\n\
+                 • debug — Analyze errors, trace through code, and suggest fixes\n\
+                 • code-review — Review code changes for bugs, style, and security\n\
+                 • create-project — Scaffold a new project from scratch\n\
+                 • create-skill — Author a new Starkbot skill file\n\n\
+                 Git & GitHub:\n\
+                 • commit — Create a well-formatted git commit with proper messaging\n\
+                 • github — PR creation, CI/CD monitoring, deployment operations\n\
+                 • github_discussions — Interact with GitHub Discussions (GraphQL API)\n\
+                 • full-dev-workflow — End-to-end dev workflow (branch, code, test, PR, deploy)\n\n\
+                 Testing:\n\
+                 • test — Run tests, detect framework, and analyze failures\n\n\
+                 Deployment & Infrastructure:\n\
+                 • vercel — Deploy and manage projects on Vercel\n\
+                 • cloudflare — Manage Cloudflare Workers, DNS, Pages, KV\n\
+                 • railway — Deploy and manage services on Railway\n\
+                 • deploy-github — Deploy via GitHub Actions CI/CD\n\n\
+                 👉 Pick the matching skill and follow its instructions.\n\n\
+                 ## Low-level tools (only when no skill fits)\n\
+                 grep, glob, edit_file, write_file, delete_file, rename_file, git, exec"
                     .to_string()
             }
             AgentSubtype::Secretary => {
                 "📱 Secretary toolbox activated.\n\n\
-                 Tools now available:\n\
-                 • agent_send - Send messages to other channels\n\
-                 • (Social tools for MoltX, scheduling coming soon)\n\n\
-                 Skills: moltx, moltbook, scheduling"
+                 ## Skills (use set_agent_subtype then pick a skill with use_skill)\n\
+                 Most tasks are handled by a skill. Match the user's request to one of these:\n\
+                 • moltx — Post, reply, like, follow, and build feeds on moltx.io (X for agents)\n\
+                 • moltbook — Post, comment, vote, and browse communities on Moltbook\n\
+                 • twitter — Post, reply, like, and follow on X/Twitter\n\
+                 • discord — Send messages and interact on Discord\n\
+                 • 4claw — Post and browse threads on 4claw imageboard for agents\n\
+                 • x402book — Publish content with micropayments on x402book\n\
+                 • journal — Write journal entries, notes, and documentation\n\
+                 • scheduling — Create scheduled/recurring tasks (cron jobs, reminders)\n\n\
+                 👉 Pick the matching skill and follow its instructions.\n\n\
+                 ## Low-level tools (only when no skill fits)\n\
+                 agent_send, memory_search, memory_read"
                     .to_string()
             }
         }

@@ -333,6 +333,7 @@ impl AgentSubtype {
                     AgentSubtype::Secretary => {
                         groups.push(ToolGroup::Messaging); // agent_send
                         groups.push(ToolGroup::Social);    // moltx, scheduling tools
+                        groups.push(ToolGroup::Memory);    // memory_search, memory_read
                     }
                     AgentSubtype::None => unreachable!(), // Handled above
                 }
@@ -357,9 +358,21 @@ impl AgentSubtype {
 
                 // Add subtype-specific tags
                 match self {
-                    AgentSubtype::Finance => tags.extend(["crypto", "defi", "transfer", "swap", "finance", "wallet", "token"]),
-                    AgentSubtype::CodeEngineer => tags.extend(["development", "git", "testing", "debugging", "review", "code", "github", "devops", "deployment", "infrastructure"]),
-                    AgentSubtype::Secretary => tags.extend(["social", "marketing", "messaging", "moltx", "scheduling", "communication", "social-media"]),
+                    AgentSubtype::Finance => tags.extend([
+                        "crypto", "defi", "transfer", "swap", "finance", "wallet", "token",
+                        "bridge", "lending", "yield", "dex", "payments", "x402", "transaction",
+                        "polymarket", "prediction-markets", "trading", "price", "discord", "tipping",
+                    ]),
+                    AgentSubtype::CodeEngineer => tags.extend([
+                        "development", "git", "testing", "debugging", "review", "code", "github",
+                        "devops", "deployment", "infrastructure", "workflow", "discussions", "ci-cd",
+                        "skills", "project", "scaffold",
+                    ]),
+                    AgentSubtype::Secretary => tags.extend([
+                        "social", "marketing", "messaging", "moltx", "scheduling", "communication",
+                        "social-media", "secretary", "journal", "discord", "twitter", "4claw",
+                        "x402", "cron", "moltbook", "publishing", "content",
+                    ]),
                     AgentSubtype::None => unreachable!(),
                 }
 
