@@ -29,6 +29,7 @@ mod eip8004;
 mod hooks;
 mod tool_validators;
 mod tx_queue;
+mod web3;
 mod keystore_client;
 mod identity_client;
 

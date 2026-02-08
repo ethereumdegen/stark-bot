@@ -2387,13 +2387,23 @@ impl MessageDispatcher {
                                 }
 
                                 // Check if there are more tasks to process
-                                if let TaskAdvanceResult::AllTasksComplete = self.advance_to_next_task_or_complete(
+                                match self.advance_to_next_task_or_complete(
                                     original_message.channel_id,
                                     session_id,
                                     orchestrator,
                                 ) {
-                                    orchestrator_complete = true;
-                                    final_summary = summary.clone();
+                                    TaskAdvanceResult::AllTasksComplete => {
+                                        orchestrator_complete = true;
+                                        final_summary = summary.clone();
+                                    }
+                                    TaskAdvanceResult::InconsistentState => {
+                                        log::warn!("[ORCHESTRATED_LOOP] task_fully_completed: inconsistent task state, terminating");
+                                        orchestrator_complete = true;
+                                        final_summary = summary.clone();
+                                    }
+                                    TaskAdvanceResult::NextTaskStarted => {
+                                        // Continue loop for next task
+                                    }
                                 }
                             }
                         }

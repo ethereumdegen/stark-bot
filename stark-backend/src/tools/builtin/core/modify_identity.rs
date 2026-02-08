@@ -187,7 +187,7 @@ impl Tool for ModifyIdentityTool {
         self.definition.clone()
     }
 
-    async fn execute(&self, params: Value, _context: &ToolContext) -> ToolResult {
+    async fn execute(&self, params: Value, context: &ToolContext) -> ToolResult {
         let params: ModifyIdentityParams = match serde_json::from_value(params) {
             Ok(p) => p,
             Err(e) => return ToolResult::error(format!("Invalid parameters: {}", e)),
@@ -206,6 +206,14 @@ impl Tool for ModifyIdentityTool {
             }
 
             "create" => {
+                // Refuse to overwrite an existing identity file
+                let path = identity_path();
+                if path.exists() {
+                    return ToolResult::error(
+                        "IDENTITY.json already exists. Use 'update_field' to modify it, or delete the file manually before creating a new one."
+                    );
+                }
+
                 let name = match params.name {
                     Some(n) => n,
                     None => return ToolResult::error("'name' is required for create action"),
@@ -360,18 +368,27 @@ impl Tool for ModifyIdentityTool {
                 // Use the identity client to upload
                 use crate::identity_client::IDENTITY_CLIENT;
 
-                // Get private key from environment
-                let private_key = match std::env::var("PRIVATE_KEY") {
-                    Ok(pk) => pk,
-                    Err(_) => return ToolResult::error("No PRIVATE_KEY configured. Cannot upload identity."),
+                // Use wallet provider (Privy/Flash) for SIWE authentication
+                let wallet_provider = match &context.wallet_provider {
+                    Some(wp) => wp,
+                    None => return ToolResult::error(
+                        "No wallet connected. Connect your wallet first to upload your identity."
+                    ),
                 };
+                let upload_result = IDENTITY_CLIENT
+                    .upload_identity_with_provider(wallet_provider, &json_content)
+                    .await;
 
-                match IDENTITY_CLIENT.upload_identity(&private_key, &json_content).await {
+                match upload_result {
                     Ok(resp) => {
                         if resp.success {
                             let url = resp.url.unwrap_or_else(|| "unknown".to_string());
                             log::info!("Uploaded IDENTITY.json to {}", url);
-                            ToolResult::success(format!("Identity uploaded successfully!\nHosted at: {}", url))
+
+                            // Set the agent_uri register so the identity_register preset can use it
+                            context.set_register("agent_uri", json!(&url), "modify_identity");
+
+                            ToolResult::success(format!("Identity uploaded successfully!\nHosted at: {}\n\nThe agent_uri register has been set — you can now call identity_register.", url))
                                 .with_metadata(json!({
                                     "action": "upload",
                                     "url": url,
@@ -379,10 +396,10 @@ impl Tool for ModifyIdentityTool {
                                 }))
                         } else {
                             let error = resp.error.unwrap_or_else(|| "Unknown error".to_string());
-                            ToolResult::error(format!("Upload failed: {}", error))
+                            ToolResult::error(format!("Upload failed: {}. STOP — do not proceed with on-chain registration until the upload succeeds.", error))
                         }
                     }
-                    Err(e) => ToolResult::error(format!("Upload failed: {}", e)),
+                    Err(e) => ToolResult::error(format!("Upload failed: {}. STOP — do not proceed with on-chain registration until the upload succeeds.", e)),
                 }
             }
 

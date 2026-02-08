@@ -251,7 +251,7 @@ impl IdentityClient {
 
         let resp = self
             .http_client
-            .post(format!("{}/api/upload_identity", base_url))
+            .post(format!("{}/api/store_identity", base_url))
             .header("Authorization", format!("Bearer {}", token))
             .json(&UploadIdentityRequest {
                 identity_json: identity_json.to_string(),
@@ -267,7 +267,7 @@ impl IdentityClient {
 
             let retry_resp = self
                 .http_client
-                .post(format!("{}/api/upload_identity", base_url))
+                .post(format!("{}/api/store_identity", base_url))
                 .header("Authorization", format!("Bearer {}", new_token))
                 .json(&UploadIdentityRequest {
                     identity_json: identity_json.to_string(),
@@ -375,7 +375,7 @@ impl IdentityClient {
 
         let retry_resp = self
             .http_client
-            .post(format!("{}/api/upload_identity", base_url))
+            .post(format!("{}/api/store_identity", base_url))
             .header("Authorization", format!("Bearer {}", token))
             .header("X-PAYMENT", payment_header)
             .json(&UploadIdentityRequest {
@@ -510,7 +510,7 @@ impl IdentityClient {
 
         let resp = self
             .http_client
-            .post(format!("{}/api/upload_identity", base_url))
+            .post(format!("{}/api/store_identity", base_url))
             .header("Authorization", format!("Bearer {}", token))
             .json(&UploadIdentityRequest {
                 identity_json: identity_json.to_string(),
@@ -525,7 +525,7 @@ impl IdentityClient {
 
             let retry_resp = self
                 .http_client
-                .post(format!("{}/api/upload_identity", base_url))
+                .post(format!("{}/api/store_identity", base_url))
                 .header("Authorization", format!("Bearer {}", new_token))
                 .json(&UploadIdentityRequest {
                     identity_json: identity_json.to_string(),
@@ -630,7 +630,7 @@ impl IdentityClient {
 
         let retry_resp = self
             .http_client
-            .post(format!("{}/api/upload_identity", base_url))
+            .post(format!("{}/api/store_identity", base_url))
             .header("Authorization", format!("Bearer {}", token))
             .header("X-PAYMENT", payment_header)
             .json(&UploadIdentityRequest {

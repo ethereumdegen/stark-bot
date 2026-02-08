@@ -4,7 +4,7 @@
 //! the LLM from hallucinating contract addresses, ABIs, or calldata.
 //! All parameters are resolved from registers set by earlier tool calls.
 
-use super::web3_function_call::{default_abis_dir, execute_resolved_call, resolve_network};
+use crate::web3::{default_abis_dir, execute_resolved_call, resolve_network};
 use crate::tools::presets::{get_web3_preset, list_web3_presets};
 use crate::tools::registry::Tool;
 use crate::tools::types::{

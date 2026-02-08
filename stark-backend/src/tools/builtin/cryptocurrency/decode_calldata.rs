@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use super::web3_function_call::default_abis_dir;
+use crate::web3::default_abis_dir;
 
 /// Decode calldata tool
 pub struct DecodeCalldataTool {

@@ -1,0 +1,19 @@
+{
+  "name": "Uniswap V4 Position Manager",
+  "description": "Uniswap V4 PositionManager for LP operations (mint, increase, decrease, collect) on Base",
+  "address": {
+    "base": "0x7c5f5a4bbd8fd63184577525326123b519429bdc"
+  },
+  "abi": [
+    {
+      "name": "modifyLiquidities",
+      "type": "function",
+      "stateMutability": "payable",
+      "inputs": [
+        {"name": "unlockData", "type": "bytes"},
+        {"name": "deadline", "type": "uint256"}
+      ],
+      "outputs": []
+    }
+  ]
+}

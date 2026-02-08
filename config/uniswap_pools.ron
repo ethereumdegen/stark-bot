@@ -1,0 +1,17 @@
+// Uniswap V4 pool configurations
+// Token0/token1 order is determined by address sort (lower address = token0)
+// WETH (0x4200...) < STARKBOT (0x587C...) so WETH is token0
+
+{
+    "starkbot_weth": (
+        pool_id: "0x0d64a8e0d28626511cc23fc75b81c2f03e222b14f9b944b60eecc3f4ddabeddc",
+        token0: "WETH",
+        token0_address: "0x4200000000000000000000000000000000000006",
+        token1: "STARKBOT",
+        token1_address: "0x587Cd533F418825521f3A1daa7CCd1E7339A1B07",
+        fee: 10000,
+        tick_spacing: 200,
+        hooks: "0x0000000000000000000000000000000000000000",
+        description: "STARKBOT/WETH 1% pool on Uniswap V4",
+    ),
+}

@@ -9,6 +9,7 @@ import { GridBackground } from '../components/GridBackground'
 import { FloatingNav } from '../components/FloatingNav'
 import { Stars } from '../components/Stars'
 import { Token } from '../components/Token'
+import { LicenseTeaser } from '../components/LicenseTeaser'
 
 export default function Home() {
   useEffect(() => {
@@ -40,6 +41,7 @@ export default function Home() {
         <Token />
         <GetStarted />
         <CTA />
+        <LicenseTeaser />
         <Footer />
         <FloatingNav />
       </div>

@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumIter, EnumString, IntoEnumIterator};
 
 use crate::backup::{
-    AgentSettingsEntry, ApiKeyEntry, BackupData, BotSettingsEntry, ChannelEntry,
-    ChannelSettingEntry, CronJobEntry, DiscordRegistrationEntry, HeartbeatConfigEntry,
-    MindConnectionEntry, MindNodeEntry, SkillEntry, SkillScriptEntry,
+    AgentIdentityEntry, AgentSettingsEntry, ApiKeyEntry, BackupData, BotSettingsEntry,
+    ChannelEntry, ChannelSettingEntry, CronJobEntry, DiscordRegistrationEntry,
+    HeartbeatConfigEntry, MindConnectionEntry, MindNodeEntry, SkillEntry, SkillScriptEntry,
 };
 use crate::db::tables::mind_nodes::{CreateMindNodeRequest, UpdateMindNodeRequest};
 use crate::keystore_client::KEYSTORE_CLIENT;
@@ -870,6 +870,38 @@ async fn backup_to_cloud(state: web::Data<AppState>, req: HttpRequest) -> impl R
         }
     }
 
+    // Get on-chain agent identity registration (NFT token ID, tx hash, etc.)
+    {
+        let conn = state.db.conn();
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT agent_id, agent_registry, chain_id, registration_uri, registration_hash, \
+             wallet_address, owner_address, name, description, is_active, tx_hash \
+             FROM agent_identity LIMIT 1",
+        ) {
+            if let Ok(Some(entry)) = stmt.query_row([], |row| {
+                Ok(Some(AgentIdentityEntry {
+                    agent_id: row.get(0)?,
+                    agent_registry: row.get(1)?,
+                    chain_id: row.get(2)?,
+                    registration_uri: row.get(3)?,
+                    registration_hash: row.get(4)?,
+                    wallet_address: row.get(5)?,
+                    owner_address: row.get(6)?,
+                    name: row.get(7)?,
+                    description: row.get(8)?,
+                    is_active: row.get::<_, i32>(9)? == 1,
+                    tx_hash: row.get(10)?,
+                }))
+            }) {
+                log::info!(
+                    "Including agent identity (agent_id={}) in backup",
+                    entry.agent_id
+                );
+                backup.agent_identity = Some(entry);
+            }
+        }
+    }
+
     // Get discord registrations
     match crate::discord_hooks::db::list_registered_profiles(&state.db) {
         Ok(profiles) => {
@@ -949,7 +981,7 @@ async fn backup_to_cloud(state: web::Data<AppState>, req: HttpRequest) -> impl R
     }
 
     // Check if there's anything to backup
-    if backup.api_keys.is_empty() && backup.mind_map_nodes.is_empty() && backup.cron_jobs.is_empty() && backup.bot_settings.is_none() && backup.heartbeat_config.is_none() && backup.channel_settings.is_empty() && backup.channels.is_empty() && backup.soul_document.is_none() && backup.identity_document.is_none() && backup.discord_registrations.is_empty() && backup.skills.is_empty() && backup.agent_settings.is_empty() {
+    if backup.api_keys.is_empty() && backup.mind_map_nodes.is_empty() && backup.cron_jobs.is_empty() && backup.bot_settings.is_none() && backup.heartbeat_config.is_none() && backup.channel_settings.is_empty() && backup.channels.is_empty() && backup.soul_document.is_none() && backup.identity_document.is_none() && backup.discord_registrations.is_empty() && backup.skills.is_empty() && backup.agent_settings.is_empty() && backup.agent_identity.is_none() {
         return HttpResponse::BadRequest().json(BackupResponse {
             success: false,
             key_count: None,
@@ -1630,6 +1662,46 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
                     log::warn!("[Keystore] Failed to restore identity document: {}", e);
                 }
             }
+        }
+    }
+
+    // Restore on-chain agent identity registration if present and no local row exists
+    if let Some(ref ai) = backup_data.agent_identity {
+        let conn = state.db.conn();
+        let existing: i64 = conn
+            .query_row("SELECT COUNT(*) FROM agent_identity", [], |r| r.get(0))
+            .unwrap_or(0);
+        if existing == 0 {
+            match conn.execute(
+                "INSERT INTO agent_identity (agent_id, agent_registry, chain_id, registration_uri, \
+                 registration_hash, wallet_address, owner_address, name, description, is_active, tx_hash) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                rusqlite::params![
+                    ai.agent_id,
+                    ai.agent_registry,
+                    ai.chain_id,
+                    ai.registration_uri,
+                    ai.registration_hash,
+                    ai.wallet_address,
+                    ai.owner_address,
+                    ai.name,
+                    ai.description,
+                    if ai.is_active { 1 } else { 0 },
+                    ai.tx_hash,
+                ],
+            ) {
+                Ok(_) => {
+                    log::info!(
+                        "[Keystore] Restored agent identity (agent_id={}) from backup",
+                        ai.agent_id
+                    );
+                }
+                Err(e) => {
+                    log::warn!("[Keystore] Failed to restore agent identity: {}", e);
+                }
+            }
+        } else {
+            log::info!("[Keystore] Agent identity already exists locally, skipping restore from backup");
         }
     }
 

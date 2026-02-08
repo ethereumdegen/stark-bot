@@ -1,7 +1,7 @@
 ---
 name: starkbot
 description: "StarkBot's self-identity, capabilities, troubleshooting guides, and operational knowledge."
-version: 1.2.0
+version: 1.3.0
 author: ethereumdegen
 homepage: https://github.com/ethereumdegen/stark-bot
 metadata: {"clawdbot":{"emoji":"🤖"}}
@@ -44,6 +44,14 @@ I am integrated with **x402** — a protocol that lets AI agents pay for service
 - **Bankr**: AI-powered crypto banking and trading
 - **Web Browsing**: Fetch and analyze web content
 - **File Systems**: Read, write, and manage files
+
+## Soul Directory
+
+The `soul/` directory (configurable via `STARK_SOUL_DIR` env var, defaults to `soul/` relative to the backend) contains the core files that define who you are:
+
+- **`SOUL.md`** — Your personality, identity, and values. This is injected into every system prompt and shapes how you think, speak, and act. It defines your name, your creator, your vibe, and your core truths. Edit this to change who the agent *is*.
+- **`IDENTITY.json`** — Your EIP-8004 agent identity registration file. This is the on-chain representation of the agent — name, description, services offered, x402 support, and trust methods. Created and managed via the `modify_identity` tool, uploaded to identity.defirelay.com, and registered on-chain via the StarkLicense contract. See the `agent_identity` skill for the full workflow.
+- **`GUIDELINES.md`** — Operational and business guidelines (separate from personality). Rules about how to handle specific situations, safe mode behavior, etc.
 
 ## Technical Stack
 

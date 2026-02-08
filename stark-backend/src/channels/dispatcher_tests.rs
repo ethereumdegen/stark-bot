@@ -1064,3 +1064,204 @@ async fn swap_flow_realistic() {
         task_advance_tools, tool_calls_seen
     );
 }
+
+// ============================================================================
+// Uniswap V4 LP deposit flow test with INPUT/OUTPUT trace capture.
+//
+// Simulates "deposit 1000 starkbot into the uniswap LP pool" through the
+// full pipeline:
+//   Planner → set_agent_subtype(finance) → use_skill(uniswap_lp) → task execution
+//
+// Loads the actual uniswap_lp skill from skills/uniswap_lp.md so that
+// `use_skill` appears in the available tools list.
+//
+// 7 iterations:
+//   1. Planner: define_tasks (5 LP tasks)
+//   2. Task 1: set_agent_subtype + use_skill
+//   3. Task 1 (cont): say_to_user(finished_task=true) — report findings
+//   4. Task 2: task_fully_completed — skip approval
+//   5. Task 3: task_fully_completed — API tx built
+//   6. Task 4: task_fully_completed — decoded + broadcast
+//   7. Task 5: say_to_user(finished_task=true) — verify + report
+// ============================================================================
+
+#[tokio::test]
+async fn lp_deposit_flow_with_trace() {
+    let responses = vec![
+        // Iteration 1 (TaskPlanner mode): AI calls define_tasks with 5 LP tasks
+        AiResponse::with_tools(
+            String::new(),
+            vec![tool_call(
+                "define_tasks",
+                json!({
+                    "tasks": [
+                        "TASK 1 — Prepare: select Base, look up WETH + STARKBOT, check balances, read pool state (slot0 + liquidity). See LP skill 'Task 1'.",
+                        "TASK 2 — Approve: approve both tokens for Permit2 (skip if sufficient). See LP skill 'Task 2'.",
+                        "TASK 3 — Build tx: POST to Uniswap API /lp/create with pool params, cache response. See LP skill 'Task 3'.",
+                        "TASK 4 — Execute: decode_calldata → uni_v4_modify_liquidities preset → broadcast. See LP skill 'Task 4'.",
+                        "TASK 5 — Verify: verify_tx_broadcast, report position. See LP skill 'Task 5'."
+                    ]
+                }),
+            )],
+        ),
+        // Iteration 2 (Task 1 - Prepare): AI selects finance toolbox + loads LP skill
+        AiResponse::with_tools(
+            String::new(),
+            vec![
+                tool_call("set_agent_subtype", json!({"subtype": "finance"})),
+                tool_call("use_skill", json!({"skill_name": "uniswap_lp", "input": "deposit 1000 starkbot into the uniswap LP pool"})),
+            ],
+        ),
+        // Iteration 3 (still Task 1): AI completes preparation and reports findings
+        AiResponse::with_tools(
+            String::new(),
+            vec![tool_call(
+                "say_to_user",
+                json!({
+                    "message": "Loaded LP skill. Preparation complete:\n- Network: Base\n- Token0: WETH (0x4200...0006)\n- Token1: STARKBOT (0x587C...1B07)\n- Pool: STARKBOT/WETH 1% (V4)\n- Current tick: -230400\n- Suggested full range: tickLower=-887200, tickUpper=887200\n\nReady to proceed with deposit.",
+                    "finished_task": true
+                }),
+            )],
+        ),
+        // Iteration 4 (Task 2 - Approve): Skip since both tokens already approved for Permit2
+        AiResponse::with_tools(
+            String::new(),
+            vec![tool_call(
+                "task_fully_completed",
+                json!({"summary": "Both WETH and STARKBOT already approved for Permit2 — skipping."}),
+            )],
+        ),
+        // Iteration 5 (Task 3 - Build tx): API call succeeded, tx cached
+        AiResponse::with_tools(
+            String::new(),
+            vec![tool_call(
+                "task_fully_completed",
+                json!({"summary": "LP create transaction built via Uniswap API and cached in uni_lp_tx register. Full range position with 1000 STARKBOT."}),
+            )],
+        ),
+        // Iteration 6 (Task 4 - Execute): Decoded + broadcast
+        AiResponse::with_tools(
+            String::new(),
+            vec![tool_call(
+                "task_fully_completed",
+                json!({"summary": "LP transaction decoded and broadcast. TX: 0xdef456..."}),
+            )],
+        ),
+        // Iteration 7 (Task 5 - Verify): Final result
+        AiResponse::with_tools(
+            String::new(),
+            vec![tool_call(
+                "say_to_user",
+                json!({
+                    "message": "LP position created!\n\nDeposited 1000 STARKBOT + proportional WETH into STARKBOT/WETH 1% pool on Uniswap V4\nRange: Full range (-887200 to 887200)\nTX: https://basescan.org/tx/0xdef456",
+                    "finished_task": true
+                }),
+            )],
+        ),
+    ];
+
+    // Use skill-aware harness so `use_skill` appears in the tools list
+    let mut harness = TestHarness::new_with_skills("web", false, &["uniswap_lp"], responses);
+    let (result, events) = harness.dispatch("deposit 1000 starkbot into the uniswap LP pool", false).await;
+
+    // Write trace for auditing
+    harness.write_trace("lp_deposit_flow");
+
+    // Verify dispatch succeeded
+    assert!(result.error.is_none(), "dispatch should succeed: {:?}", result.error);
+
+    // Verify trace was captured
+    let trace = harness.get_trace();
+    assert!(
+        trace.len() >= 3,
+        "Expected at least 3 AI iterations (planner + subtype/skill + tasks), got {}",
+        trace.len()
+    );
+
+    // Verify iteration 1 had define_tasks in the output
+    if let Some(ref resp) = trace[0].output_response {
+        let has_define_tasks = resp.tool_calls.iter().any(|tc| tc.name == "define_tasks");
+        assert!(has_define_tasks, "First iteration should call define_tasks");
+    }
+
+    // Verify iteration 2 called set_agent_subtype and use_skill
+    if let Some(ref resp) = trace[1].output_response {
+        let tool_names: Vec<&str> = resp.tool_calls.iter().map(|tc| tc.name.as_str()).collect();
+        assert!(
+            tool_names.contains(&"set_agent_subtype"),
+            "Iteration 2 should call set_agent_subtype, got: {:?}", tool_names
+        );
+        assert!(
+            tool_names.contains(&"use_skill"),
+            "Iteration 2 should call use_skill, got: {:?}", tool_names
+        );
+    }
+
+    // Verify use_skill is in the available tools for Task 1
+    assert!(
+        trace[1].input_tools.iter().any(|t| t == "use_skill"),
+        "Task 1 should have use_skill in available tools, got: {:?}",
+        trace[1].input_tools
+    );
+
+    // Verify CURRENT TASK advances through the system prompt
+    let extract_task_num = |sys_prompt: &str| -> Option<(usize, usize)> {
+        if let Some(pos) = sys_prompt.find("CURRENT TASK (") {
+            let after = &sys_prompt[pos + "CURRENT TASK (".len()..];
+            if let Some(slash) = after.find('/') {
+                let current: usize = after[..slash].parse().ok()?;
+                let rest = &after[slash + 1..];
+                if let Some(paren) = rest.find(')') {
+                    let total: usize = rest[..paren].parse().ok()?;
+                    return Some((current, total));
+                }
+            }
+        }
+        None
+    };
+
+    // Build a summary of task numbers per iteration
+    let mut task_numbers: Vec<Option<(usize, usize)>> = Vec::new();
+    for entry in &trace {
+        let sys_prompt = entry.input_messages.first()
+            .map(|m| m.content.as_str())
+            .unwrap_or("");
+        task_numbers.push(extract_task_num(sys_prompt));
+    }
+
+    // Print summary for test output
+    eprintln!("\n=== LP DEPOSIT FLOW TEST SUMMARY ===");
+    eprintln!("Total AI iterations: {}", trace.len());
+    for (i, entry) in trace.iter().enumerate() {
+        let tool_names: Vec<&str> = entry.output_response.as_ref()
+            .map(|r| r.tool_calls.iter().map(|tc| tc.name.as_str()).collect())
+            .unwrap_or_default();
+        let task_info = task_numbers[i]
+            .map(|(c, t)| format!("TASK {}/{}", c, t))
+            .unwrap_or_else(|| "no task".to_string());
+        eprintln!(
+            "  Iteration {}: {} | tools={:?} | tool_history={}",
+            entry.iteration,
+            task_info,
+            tool_names,
+            entry.input_tool_history.len(),
+        );
+    }
+    eprintln!("====================================\n");
+
+    // Assert task advancement:
+    // - Iteration 1: no task (planner mode)
+    // - Iteration 2: TASK 1/5 (set_agent_subtype + use_skill)
+    // - Iteration 3: TASK 1/5 (say_to_user finished_task=true → completes task 1)
+    // - Iteration 4: TASK 2/5
+    // - Iteration 5: TASK 3/5
+    // - Iteration 6: TASK 4/5
+    // - Iteration 7: TASK 5/5
+    assert_eq!(task_numbers[0], None, "Iteration 1 should have no task (planner mode)");
+    assert_eq!(task_numbers[1], Some((1, 5)), "Iteration 2 should show TASK 1/5");
+    assert_eq!(task_numbers[2], Some((1, 5)), "Iteration 3 should still be TASK 1/5 (multi-step task)");
+    assert_eq!(task_numbers[3], Some((2, 5)), "Iteration 4 should show TASK 2/5 (task 1 completed)");
+    assert_eq!(task_numbers[4], Some((3, 5)), "Iteration 5 should show TASK 3/5 (task 2 completed)");
+    assert_eq!(task_numbers[5], Some((4, 5)), "Iteration 6 should show TASK 4/5 (task 3 completed)");
+    assert_eq!(task_numbers[6], Some((5, 5)), "Iteration 7 should show TASK 5/5 (task 4 completed)");
+}

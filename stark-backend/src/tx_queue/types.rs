@@ -73,6 +73,8 @@ pub struct QueuedTransaction {
     pub channel_id: Option<i64>,
     /// Explorer URL (set after tx_hash is known)
     pub explorer_url: Option<String>,
+    /// Preset name that created this tx (e.g. "identity_register"), for post-processing hooks
+    pub preset: Option<String>,
 }
 
 impl QueuedTransaction {
@@ -111,7 +113,14 @@ impl QueuedTransaction {
             broadcast_at: None,
             channel_id,
             explorer_url: None,
+            preset: None,
         }
+    }
+
+    /// Set the preset name that created this transaction
+    pub fn with_preset(mut self, preset: Option<&str>) -> Self {
+        self.preset = preset.map(|s| s.to_string());
+        self
     }
 
     /// Get the explorer URL for this transaction's network

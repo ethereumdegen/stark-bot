@@ -1,7 +1,7 @@
 ---
 name: agent_identity
 description: "Create, manage, and publish your EIP-8004 agent identity registration file"
-version: 1.1.0
+version: 1.2.2
 author: starkbot
 homepage: https://eips.ethereum.org/EIPS/eip-8004
 tags: [crypto, identity, eip8004, registration, agent, discovery, nft]
@@ -101,6 +101,8 @@ action: upload
 ```
 
 The server returns a hosted URL where your identity file can be accessed by other agents and registries. **Save this URL** — you'll need it for on-chain registration.
+
+> **IMPORTANT:** If the upload fails for ANY reason (connection error, server down, payment failure), you MUST stop and report the error to the user. Do NOT proceed with on-chain registration without a successful upload — the registration requires a valid hosted URL.
 
 ## 6. On-Chain Registration (Base)
 

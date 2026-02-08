@@ -10,7 +10,8 @@ use crate::tools::types::{
     PropertySchema, ToolContext, ToolDefinition, ToolGroup, ToolInputSchema, ToolResult,
 };
 use crate::tx_queue::QueuedTxStatus;
-use crate::x402::X402EvmRpc;
+use crate::x402::{TxLog, X402EvmRpc};
+use ethers::types::{H256, U256};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -348,6 +349,20 @@ impl Tool for BroadcastWeb3TxTool {
             log::info!("[broadcast_web3_tx] Emitted tx.confirmed event for {} (status={})", tx_hash_str, status);
         }
 
+        // Post-processing: if this was an identity_register tx and it confirmed,
+        // decode the Registered event and save agent_id to the database automatically.
+        let mut identity_agent_id: Option<u64> = None;
+        if status == "confirmed" {
+            let is_identity_register = queued_tx.preset.as_deref()
+                .map(|p| p.starts_with("identity_register"))
+                .unwrap_or(false);
+            if is_identity_register {
+                identity_agent_id = self.handle_identity_post_register(
+                    &receipt.logs, &queued_tx, &tx_hash_str, context,
+                );
+            }
+        }
+
         // Build response
         let status_indicator = if status == "confirmed" { "CONFIRMED" } else { "REVERTED" };
 
@@ -355,6 +370,14 @@ impl Tool for BroadcastWeb3TxTool {
         msg.push_str(&format!("TRANSACTION {}\n\n", status_indicator));
         msg.push_str(&format!("Hash: {}\n", tx_hash_str));
         msg.push_str(&format!("Explorer: {}\n\n", explorer_url));
+
+        // Append identity registration info if applicable
+        if let Some(agent_id) = identity_agent_id {
+            msg.push_str(&format!(
+                "\n--- Identity Registration ---\nAgent ID (NFT): {}\nRegistration saved to database.\n\n",
+                agent_id
+            ));
+        }
 
         msg.push_str("--- Details ---\n");
         msg.push_str(&format!("UUID: {}\n", uuid));
@@ -389,8 +412,107 @@ impl Tool for BroadcastWeb3TxTool {
             "value": queued_tx.value,
             "gas_limit": queued_tx.gas_limit,
             "gas_used": receipt.gas_used.map(|g| g.to_string()),
+            "identity_agent_id": identity_agent_id,
             "block_number": receipt.block_number.map(|b| b.as_u64()),
             "effective_gas_price": receipt.effective_gas_price.map(|p| p.to_string())
         }))
+    }
+}
+
+// ─── Identity registration post-processing ────────────────────────────────────
+
+/// Registered(uint256 indexed agentId, string agentURI, address indexed owner)
+const REGISTERED_EVENT_TOPIC: &str =
+    "0xca52e62c367d81bb2e328eb795f7c7ba24afb478408a26c0e201d155c449bc4a";
+
+impl BroadcastWeb3TxTool {
+    /// Decode Registered event from identity_register tx and save agent_id to DB.
+    /// Returns the agent_id if successful.
+    fn handle_identity_post_register(
+        &self,
+        logs: &[TxLog],
+        queued_tx: &crate::tx_queue::QueuedTransaction,
+        tx_hash_str: &str,
+        context: &ToolContext,
+    ) -> Option<u64> {
+        let event_topic: H256 = REGISTERED_EVENT_TOPIC.parse().ok()?;
+
+        // Find the Registered event in logs
+        let mut agent_id: Option<u64> = None;
+        let mut agent_uri = String::new();
+        let mut owner = String::new();
+
+        for log in logs {
+            if log.topics.len() < 3 || log.topics[0] != event_topic {
+                continue;
+            }
+            let id = U256::from_big_endian(log.topics[1].as_bytes()).as_u64();
+            owner = format!("0x{}", hex::encode(&log.topics[2].as_bytes()[12..]));
+            // Decode agentURI from data (ABI-encoded string)
+            if log.data.len() >= 64 {
+                let offset = U256::from_big_endian(&log.data[0..32]).as_usize();
+                if offset + 32 <= log.data.len() {
+                    let length = U256::from_big_endian(&log.data[offset..offset + 32]).as_usize();
+                    let start = offset + 32;
+                    if start + length <= log.data.len() {
+                        agent_uri = String::from_utf8(log.data[start..start + length].to_vec())
+                            .unwrap_or_default();
+                    }
+                }
+            }
+            agent_id = Some(id);
+            break;
+        }
+
+        let agent_id = agent_id?;
+
+        log::info!(
+            "[broadcast_web3_tx] Identity registration detected: agent_id={}, owner={}, uri={}",
+            agent_id, owner, agent_uri
+        );
+
+        // Persist to agent_identity table
+        if let Some(db) = &context.database {
+            let config = crate::eip8004::config::Eip8004Config::from_env();
+            let agent_registry = config.agent_registry_string();
+            let conn = db.conn();
+
+            // Upsert: clear existing rows first (one identity per agent)
+            let _ = conn.execute("DELETE FROM agent_identity", []);
+
+            let name = context.registers.get("agent_name")
+                .and_then(|v| v.as_str().map(|s| s.to_string()));
+            let description = context.registers.get("agent_description")
+                .and_then(|v| v.as_str().map(|s| s.to_string()));
+
+            match conn.execute(
+                "INSERT INTO agent_identity (agent_id, agent_registry, chain_id, registration_uri, \
+                 wallet_address, owner_address, name, description, is_active, tx_hash) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9)",
+                rusqlite::params![
+                    agent_id as i64,
+                    agent_registry,
+                    config.chain_id as i64,
+                    agent_uri,
+                    owner,
+                    owner,
+                    name,
+                    description,
+                    tx_hash_str,
+                ],
+            ) {
+                Ok(_) => {
+                    log::info!(
+                        "[broadcast_web3_tx] Saved identity registration: agent_id={} to agent_identity table",
+                        agent_id
+                    );
+                }
+                Err(e) => {
+                    log::error!("[broadcast_web3_tx] Failed to save identity registration: {}", e);
+                }
+            }
+        }
+
+        Some(agent_id)
     }
 }

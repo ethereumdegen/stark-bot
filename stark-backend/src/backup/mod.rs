@@ -62,6 +62,9 @@ pub struct BackupData {
     pub skills: Vec<SkillEntry>,
     /// AI model / agent settings (endpoint, archetype, tokens, etc.)
     pub agent_settings: Vec<AgentSettingsEntry>,
+    /// On-chain agent identity registration (NFT token ID, tx hash, registry, etc.)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_identity: Option<AgentIdentityEntry>,
 }
 
 /// Manual Default because DateTime<Utc> doesn't derive Default
@@ -85,6 +88,7 @@ impl Default for BackupData {
             discord_registrations: Vec::new(),
             skills: Vec::new(),
             agent_settings: Vec::new(),
+            agent_identity: None,
         }
     }
 }
@@ -116,6 +120,7 @@ impl BackupData {
             + self.discord_registrations.len()
             + self.skills.len()
             + self.agent_settings.len()
+            + if self.agent_identity.is_some() { 1 } else { 0 }
     }
 }
 
@@ -287,6 +292,23 @@ pub struct AgentSettingsEntry {
     /// Secret key is included so the user doesn't have to re-enter API keys after restore.
     /// The entire backup payload is already encrypted with ECIES — this is not stored in plaintext.
     pub secret_key: Option<String>,
+}
+
+/// On-chain agent identity registration entry in backup
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentIdentityEntry {
+    pub agent_id: i64,
+    pub agent_registry: String,
+    pub chain_id: i64,
+    pub registration_uri: Option<String>,
+    pub registration_hash: Option<String>,
+    pub wallet_address: String,
+    pub owner_address: Option<String>,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub is_active: bool,
+    pub tx_hash: Option<String>,
 }
 
 /// Options for what to include in a backup
