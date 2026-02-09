@@ -1,7 +1,7 @@
 ---
 name: swap
 description: "Swap ERC20 tokens on Base using 0x DEX aggregator via quoter.defirelay.com"
-version: 9.0.1
+version: 9.0.3
 author: starkbot
 homepage: https://0x.org
 metadata: {"requires_auth": false, "clawdbot":{"emoji":"🔄"}}
@@ -31,7 +31,7 @@ Call `define_tasks` with all 7 tasks in order:
   "TASK 4 — Fetch quote: call x402_fetch with preset swap_quote. See swap skill 'Task 4'.",
   "TASK 5 — Decode quote: call decode_calldata with calldata_register='swap_quote' and cache_as='swap'. This sets swap_contract. See swap skill 'Task 5'.",
   "TASK 6 — Execute swap: call swap_execute preset THEN broadcast_web3_tx. Do NOT call decode_calldata here. See swap skill 'Task 6'.",
-  "TASK 7 — Verify: call verify_tx_broadcast, report result. See swap skill 'Task 7'."
+  "TASK 7 — Verify the swap result and report to the user. See swap skill 'Task 7'."
 ]}
 ```
 
@@ -72,13 +72,7 @@ Call `define_tasks` with all 7 tasks in order:
 {"tool": "web3_preset_function_call", "preset": "erc20_allowance_swap", "network": "<network>", "call_only": true}
 ```
 
-### 1e. Report findings and complete
-
-Tell the user what you found (token addresses, balances, whether approval is needed) using `say_to_user` with `finished_task: true`:
-
-```json
-{"tool": "say_to_user", "message": "Found tokens: SELL=0x... BUY=0x...\nAllowance: sufficient/insufficient", "finished_task": true}
-```
+ 
 
 **Do NOT proceed to approval or quoting in this task. Just report findings.**
 
@@ -112,33 +106,23 @@ After the approval is confirmed:
 
 ## Task 3: Convert sell amount to raw units
 
-**One tool call:**
+**One tool call (auto-completes on success):**
 
 ```json
 {"tool": "to_raw_amount", "amount": "<human_amount>", "decimals_register": "sell_token_decimals", "cache_as": "sell_amount"}
-```
-
-After it succeeds:
-```json
-{"tool": "task_fully_completed", "summary": "Converted sell amount to raw units."}
 ```
 
 ---
 
 ## Task 4: Fetch swap quote
 
-**One tool call:**
+**One tool call (auto-completes on success):**
 
 ```json
 {"tool": "x402_fetch", "preset": "swap_quote", "cache_as": "swap_quote", "network": "<network>"}
 ```
 
 If this fails after retries, STOP and tell the user.
-
-After it succeeds:
-```json
-{"tool": "task_fully_completed", "summary": "Swap quote fetched."}
-```
 
 ---
 
@@ -149,15 +133,10 @@ After it succeeds:
 This step reads the `swap_quote` register and extracts: `swap_contract`, `swap_param_0`–`swap_param_4`, `swap_value`.
 Task 6 depends on these registers being set.
 
-**One tool call:**
+**One tool call (auto-completes on success):**
 
 ```json
 {"tool": "decode_calldata", "abi": "0x_settler", "calldata_register": "swap_quote", "cache_as": "swap"}
-```
-
-**Only after decode_calldata succeeds**, complete the task:
-```json
-{"tool": "task_fully_completed", "summary": "Quote decoded. swap_contract and swap params registers set."}
 ```
 
 ---
@@ -183,10 +162,7 @@ Wait for the result. Extract the `uuid` from the response.
 {"tool": "broadcast_web3_tx", "uuid": "<uuid_from_6a>"}
 ```
 
-After broadcast succeeds:
-```json
-{"tool": "task_fully_completed", "summary": "Swap broadcast. Verifying next."}
-```
+The task auto-completes when `broadcast_web3_tx` succeeds.
 
 ---
 

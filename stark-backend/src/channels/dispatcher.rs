@@ -50,6 +50,38 @@ enum TaskAdvanceResult {
     InconsistentState,
 }
 
+/// Mutable state within one batch of tool calls (one AI response).
+/// Native path: spans multiple tool calls. Text path: spans one.
+struct BatchState {
+    define_tasks_replaced_queue: bool,
+    auto_completed_task: bool,
+}
+
+impl BatchState {
+    fn new() -> Self {
+        Self {
+            define_tasks_replaced_queue: false,
+            auto_completed_task: false,
+        }
+    }
+}
+
+/// Result from processing a single tool call through the shared pipeline.
+struct ToolCallProcessed {
+    /// The tool result content string
+    result_content: String,
+    /// Whether the tool execution succeeded
+    success: bool,
+    /// Whether the orchestrator signaled completion
+    orchestrator_complete: bool,
+    /// Summary from orchestrator completion or task_fully_completed
+    final_summary: Option<String>,
+    /// Whether a tool requires user response (e.g., ask_user)
+    waiting_for_user_response: bool,
+    /// Content to return when waiting for user response
+    user_question_content: Option<String>,
+}
+
 /// Dispatcher routes messages to the AI and returns responses
 pub struct MessageDispatcher {
     db: Arc<Database>,
@@ -1461,6 +1493,733 @@ impl MessageDispatcher {
         }
     }
 
+    /// Shared per-tool-call processing used by both native and text tool paths.
+    ///
+    /// Processes a single tool call: logging, orchestrator dispatch, skill handling,
+    /// subtype checks, validators, execution, metadata processing (define_tasks,
+    /// task_fully_completed, say_to_user, auto-complete), hooks, and DB persistence.
+    ///
+    /// Returns `ToolCallProcessed` with the result content and loop-control flags.
+    #[allow(clippy::too_many_arguments)]
+    async fn process_tool_call_result(
+        &self,
+        tool_name: &str,
+        tool_arguments: &Value,
+        tool_config: &ToolConfig,
+        tool_context: &ToolContext,
+        original_message: &NormalizedMessage,
+        session_id: i64,
+        is_safe_mode: bool,
+        // Mutable shared state
+        tools: &mut Vec<ToolDefinition>,
+        batch_state: &mut BatchState,
+        last_say_to_user_content: &mut String,
+        memory_suppressed: &mut bool,
+        tool_call_log: &mut Vec<String>,
+        orchestrator: &mut Orchestrator,
+        // The current tools visible to the AI this iteration (for subtype check)
+        current_tools: &[ToolDefinition],
+    ) -> ToolCallProcessed {
+        let args_pretty = serde_json::to_string_pretty(tool_arguments)
+            .unwrap_or_else(|_| tool_arguments.to_string());
+
+        log::info!(
+            "[TOOL_CALL] Agent calling tool '{}' with args:\n{}",
+            tool_name,
+            args_pretty
+        );
+
+        tool_call_log.push(format!(
+            "🔧 **Tool Call:** `{}`\n```json\n{}\n```",
+            tool_name,
+            args_pretty
+        ));
+
+        if crate::tools::types::is_memory_excluded_tool(tool_name) {
+            *memory_suppressed = true;
+        }
+
+        self.broadcaster.broadcast(GatewayEvent::agent_tool_call(
+            original_message.channel_id,
+            Some(&original_message.chat_id),
+            tool_name,
+            tool_arguments,
+        ));
+
+        // Save tool call to session
+        let tool_call_content = format!(
+            "🔧 **Tool Call:** `{}`\n```json\n{}\n```",
+            tool_name,
+            args_pretty
+        );
+        if let Err(e) = self.db.add_session_message(
+            session_id,
+            DbMessageRole::ToolCall,
+            &tool_call_content,
+            None,
+            Some(tool_name),
+            None,
+            None,
+        ) {
+            log::error!("Failed to save tool call to session: {}", e);
+        }
+
+        // If define_tasks just replaced the queue, skip all remaining tool calls.
+        if batch_state.define_tasks_replaced_queue {
+            log::info!(
+                "[ORCHESTRATED_LOOP] Skipping tool '{}' — define_tasks replaced the queue this batch",
+                tool_name
+            );
+            return ToolCallProcessed {
+                result_content: "⚠️ Task queue was just replaced by define_tasks. This tool call was not executed. \
+                     The next iteration will start with the correct task context.".to_string(),
+                success: false,
+                orchestrator_complete: false,
+                final_summary: None,
+                waiting_for_user_response: false,
+                user_question_content: None,
+            };
+        }
+
+        // Check if this is an orchestrator tool
+        let orchestrator_result = orchestrator.process_tool_result(tool_name, tool_arguments);
+
+        let mut processed = ToolCallProcessed {
+            result_content: String::new(),
+            success: true,
+            orchestrator_complete: false,
+            final_summary: None,
+            waiting_for_user_response: false,
+            user_question_content: None,
+        };
+
+        match orchestrator_result {
+            OrchestratorResult::Complete(summary) => {
+                log::info!("[ORCHESTRATOR] Execution complete: {}", summary);
+                processed.orchestrator_complete = true;
+                processed.final_summary = Some(summary.clone());
+                processed.result_content = format!("Execution complete: {}", summary);
+                // Broadcast task list update after orchestrator tool processing
+                self.broadcast_tasks_update(original_message.channel_id, session_id, orchestrator);
+                return processed;
+            }
+            OrchestratorResult::ToolResult(result) => {
+                processed.result_content = result;
+                self.broadcast_tasks_update(original_message.channel_id, session_id, orchestrator);
+                return processed;
+            }
+            OrchestratorResult::Error(err) => {
+                processed.result_content = err;
+                processed.success = false;
+                self.broadcast_tasks_update(original_message.channel_id, session_id, orchestrator);
+                return processed;
+            }
+            OrchestratorResult::Continue => {
+                // Not an orchestrator tool, execute normally below
+            }
+        }
+
+        // Broadcast that tool is starting execution
+        self.broadcaster.broadcast(GatewayEvent::tool_execution(
+            original_message.channel_id,
+            tool_name,
+            tool_arguments,
+        ));
+
+        let result = if tool_name == "use_skill" {
+            // Execute skill and set active skill on orchestrator
+            let skill_result = self.execute_skill_tool(tool_arguments, Some(session_id)).await;
+
+            // Also set active skill directly on orchestrator (in-memory)
+            if skill_result.success {
+                if let Some(skill_name_val) = tool_arguments.get("skill_name").and_then(|v| v.as_str()) {
+                    if let Ok(Some(skill)) = self.db.get_enabled_skill_by_name(skill_name_val) {
+                        let skills_dir = crate::config::skills_dir();
+                        let skill_base_dir = format!("{}/{}", skills_dir, skill.name);
+                        let instructions = skill.body.replace("{baseDir}", &skill_base_dir);
+
+                        let requires_tools = skill.requires_tools.clone();
+                        log::info!(
+                            "[SKILL] Activating skill '{}' with requires_tools: {:?}",
+                            skill.name,
+                            requires_tools
+                        );
+
+                        // Auto-set subtype if skill specifies one (before tool refresh)
+                        self.apply_skill_subtype(&skill, orchestrator, original_message.channel_id);
+
+                        orchestrator.context_mut().active_skill = Some(crate::ai::multi_agent::types::ActiveSkill {
+                            name: skill.name,
+                            instructions,
+                            activated_at: chrono::Utc::now().to_rfc3339(),
+                            tool_calls_made: 0,
+                            requires_tools: requires_tools.clone(),
+                        });
+
+                        // Force-include required tools in the toolset
+                        if !requires_tools.is_empty() {
+                            let subtype = orchestrator.current_subtype();
+                            *tools = self.tool_registry
+                                .get_tool_definitions_for_subtype_with_required(
+                                    tool_config,
+                                    subtype,
+                                    &requires_tools,
+                                );
+                            if let Some(skill_tool) = self.create_skill_tool_definition_for_subtype(subtype) {
+                                tools.push(skill_tool);
+                            }
+                            tools.extend(orchestrator.get_mode_tools());
+                            if !requires_tools.iter().any(|t| t == "define_tasks") {
+                                tools.retain(|t| t.name != "define_tasks");
+                            }
+                            log::info!(
+                                "[SKILL] Refreshed toolset with {} tools (including {} required by skill)",
+                                tools.len(),
+                                requires_tools.len()
+                            );
+                        }
+                    }
+                }
+            }
+            skill_result
+        } else {
+            // Check if subtype is None - allow System tools but block non-System tools
+            let current_subtype = orchestrator.current_subtype();
+            let is_system_tool = current_tools.iter().any(|t| t.name == tool_name && t.group == crate::tools::types::ToolGroup::System);
+            if !current_subtype.is_selected() && !is_system_tool {
+                log::warn!(
+                    "[SUBTYPE] Blocked tool '{}' - no subtype selected. Must call set_agent_subtype first.",
+                    tool_name
+                );
+                crate::tools::ToolResult::error(format!(
+                    "❌ No toolbox selected! You MUST call `set_agent_subtype` FIRST before using '{}'.\n\n\
+                    Choose based on the user's request:\n\
+                    • set_agent_subtype(subtype=\"finance\") - for crypto/DeFi/tipping operations\n\
+                    • set_agent_subtype(subtype=\"code_engineer\") - for code/git operations\n\
+                    • set_agent_subtype(subtype=\"secretary\") - for social/messaging",
+                    tool_name
+                ))
+            } else {
+                // Run tool validators before execution
+                if let Some(ref validator_registry) = self.validator_registry {
+                    let validation_ctx = crate::tool_validators::ValidationContext::new(
+                        tool_name.to_string(),
+                        tool_arguments.clone(),
+                        Arc::new(tool_context.clone()),
+                    );
+                    let validation_result = validator_registry.validate(&validation_ctx).await;
+                    if let Some(error_msg) = validation_result.to_error_message() {
+                        crate::tools::ToolResult::error(error_msg)
+                    } else {
+                        let tool_result = self.tool_registry
+                            .execute(tool_name, tool_arguments.clone(), tool_context, Some(tool_config))
+                            .await;
+                        if tool_result.success {
+                            orchestrator.record_tool_call(tool_name);
+                        }
+                        tool_result
+                    }
+                } else {
+                    let tool_result = self.tool_registry
+                        .execute(tool_name, tool_arguments.clone(), tool_context, Some(tool_config))
+                        .await;
+                    if tool_result.success {
+                        orchestrator.record_tool_call(tool_name);
+                    }
+                    tool_result
+                }
+            }
+        };
+
+        // Handle subtype change: update orchestrator and refresh tools
+        if tool_name == "set_agent_subtype" && result.success {
+            if let Some(subtype_str) = tool_arguments.get("subtype").and_then(|v| v.as_str()) {
+                if let Some(new_subtype) = AgentSubtype::from_str(subtype_str) {
+                    orchestrator.set_subtype(new_subtype);
+                    log::info!(
+                        "[SUBTYPE] Changed to {} mode",
+                        new_subtype.label()
+                    );
+
+                    // Refresh tools for new subtype
+                    *tools = self
+                        .tool_registry
+                        .get_tool_definitions_for_subtype(tool_config, new_subtype);
+                    if let Some(skill_tool) =
+                        self.create_skill_tool_definition_for_subtype(new_subtype)
+                    {
+                        tools.push(skill_tool);
+                    }
+                    tools.extend(orchestrator.get_mode_tools());
+                    {
+                        let skill_requires_dt = orchestrator.context().active_skill
+                            .as_ref()
+                            .map(|s| s.requires_tools.iter().any(|t| t == "define_tasks"))
+                            .unwrap_or(false);
+                        if !skill_requires_dt {
+                            tools.retain(|t| t.name != "define_tasks");
+                        }
+                    }
+
+                    // Broadcast toolset update
+                    self.broadcast_toolset_update(
+                        original_message.channel_id,
+                        &orchestrator.current_mode().to_string(),
+                        new_subtype.as_str(),
+                        tools,
+                    );
+                }
+            }
+        }
+
+        // Handle retry backoff
+        let result = if let Some(retry_secs) = result.retry_after_secs {
+            self.broadcaster.broadcast(GatewayEvent::tool_waiting(
+                original_message.channel_id,
+                tool_name,
+                retry_secs,
+            ));
+            tokio::time::sleep(std::time::Duration::from_secs(retry_secs)).await;
+            crate::tools::ToolResult::error(format!(
+                "{}\n\n🔄 Paused for {} seconds. Please retry.",
+                result.error.unwrap_or_else(|| "Unknown error".to_string()),
+                retry_secs
+            ))
+        } else {
+            result
+        };
+
+        // Check metadata for various control signals
+        if let Some(metadata) = &result.metadata {
+            if metadata.get("requires_user_response").and_then(|v| v.as_bool()).unwrap_or(false) {
+                processed.waiting_for_user_response = true;
+                processed.user_question_content = Some(result.content.clone());
+                log::info!("[ORCHESTRATED_LOOP] Tool requires user response, will break after processing");
+            }
+            // Check if add_task was called
+            if metadata.get("add_task").and_then(|v| v.as_bool()).unwrap_or(false) {
+                if let Some(desc) = metadata.get("task_description").and_then(|v| v.as_str()) {
+                    let position = metadata.get("task_position")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("front");
+                    let new_ids = match position {
+                        "back" => orchestrator.append_task(desc.to_string()),
+                        _ => orchestrator.insert_task_front(desc.to_string()),
+                    };
+                    log::info!(
+                        "[ORCHESTRATED_LOOP] add_task: inserted task(s) {:?} at {} — '{}'",
+                        new_ids, position, desc
+                    );
+                    // If task_fully_completed was already processed this turn
+                    // (AI called it before add_task), the session was marked complete
+                    // with no pending tasks. Now that we've added a task, undo that.
+                    if processed.orchestrator_complete && !orchestrator.all_tasks_complete() {
+                        processed.orchestrator_complete = false;
+                        processed.final_summary = None;
+                        log::info!(
+                            "[ORCHESTRATED_LOOP] add_task: resetting orchestrator_complete — new pending tasks exist"
+                        );
+                        self.advance_to_next_task_or_complete(
+                            original_message.channel_id,
+                            session_id,
+                            orchestrator,
+                        );
+                    }
+                    self.broadcast_task_queue_update(
+                        original_message.channel_id,
+                        session_id,
+                        orchestrator,
+                    );
+                }
+            }
+            // Check if define_tasks was called
+            if metadata.get("define_tasks").and_then(|v| v.as_bool()).unwrap_or(false) {
+                if let Some(tasks) = metadata.get("tasks").and_then(|v| v.as_array()) {
+                    let task_descriptions: Vec<String> = tasks
+                        .iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect();
+                    if !task_descriptions.is_empty() {
+                        log::info!(
+                            "[ORCHESTRATED_LOOP] define_tasks: replacing queue with {} tasks",
+                            task_descriptions.len()
+                        );
+                        let available_tool_names: Vec<String> = tools.iter().map(|t| t.name.clone()).collect();
+                        let ctx = orchestrator.context_mut();
+                        ctx.task_queue =
+                            crate::ai::multi_agent::types::TaskQueue::from_descriptions_with_tool_matching(task_descriptions, &available_tool_names);
+                        ctx.planner_completed = true;
+                        ctx.mode = AgentMode::Assistant;
+                        self.advance_to_next_task_or_complete(
+                            original_message.channel_id,
+                            session_id,
+                            orchestrator,
+                        );
+                        self.broadcast_task_queue_update(
+                            original_message.channel_id,
+                            session_id,
+                            orchestrator,
+                        );
+                        // Prevent any task_fully_completed in this same batch from
+                        // accidentally completing the newly-started first task
+                        batch_state.define_tasks_replaced_queue = true;
+                    }
+                }
+            }
+            // Check if task_fully_completed was called
+            // Skip if define_tasks just replaced the queue or auto-complete already advanced
+            if (batch_state.define_tasks_replaced_queue || batch_state.auto_completed_task)
+                && metadata.get("task_fully_completed").and_then(|v| v.as_bool()).unwrap_or(false)
+            {
+                log::info!(
+                    "[ORCHESTRATED_LOOP] Ignoring task_fully_completed — \
+                     task already advanced (define_tasks={}, auto_complete={})",
+                    batch_state.define_tasks_replaced_queue, batch_state.auto_completed_task
+                );
+            } else if metadata.get("task_fully_completed").and_then(|v| v.as_bool()).unwrap_or(false) {
+                let summary = metadata.get("summary")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&result.content)
+                    .to_string();
+
+                log::info!("[ORCHESTRATED_LOOP] task_fully_completed called");
+
+                // Capture summary for session memory if say_to_user wasn't called
+                if last_say_to_user_content.is_empty() {
+                    *last_say_to_user_content = summary.clone();
+                }
+
+                // Mark current task as completed and broadcast
+                if let Some(completed_task_id) = orchestrator.complete_current_task() {
+                    log::info!("[ORCHESTRATED_LOOP] Task {} completed", completed_task_id);
+                    self.broadcast_task_status_change(
+                        original_message.channel_id,
+                        session_id,
+                        completed_task_id,
+                        "completed",
+                        &summary,
+                    );
+                }
+
+                match self.advance_to_next_task_or_complete(
+                    original_message.channel_id,
+                    session_id,
+                    orchestrator,
+                ) {
+                    TaskAdvanceResult::AllTasksComplete => {
+                        processed.orchestrator_complete = true;
+                        processed.final_summary = Some(summary.clone());
+                    }
+                    TaskAdvanceResult::InconsistentState => {
+                        log::warn!("[ORCHESTRATED_LOOP] task_fully_completed: inconsistent task state, terminating");
+                        processed.orchestrator_complete = true;
+                        processed.final_summary = Some(summary.clone());
+                    }
+                    TaskAdvanceResult::NextTaskStarted => {
+                        // Continue loop for next task
+                    }
+                }
+            }
+        }
+
+        // Capture say_to_user content for session memory
+        if tool_name == "say_to_user" && result.success {
+            *last_say_to_user_content = result.content.clone();
+        }
+
+        // say_to_user with finished_task=true completes the current task.
+        // In safe mode, say_to_user always terminates (no ongoing tasks).
+        // When define_tasks replaced the queue or auto_completed_task in this batch,
+        // skip task advancement for non-safe-mode, but still terminate in safe mode.
+        if tool_name == "say_to_user" && result.success {
+            let finished_task = result.metadata.as_ref()
+                .and_then(|m| m.get("finished_task"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            if is_safe_mode {
+                // Safe mode: always terminate — no multi-task flows
+                log::info!("[ORCHESTRATED_LOOP] say_to_user terminating loop (safe_mode=true, finished_task={}, define_tasks_in_batch={})", finished_task, batch_state.define_tasks_replaced_queue);
+                processed.orchestrator_complete = true;
+            } else if finished_task && !batch_state.define_tasks_replaced_queue && !batch_state.auto_completed_task {
+                if !orchestrator.task_queue_is_empty() {
+                    // Complete current task and try to advance
+                    if let Some(completed_task_id) = orchestrator.complete_current_task() {
+                        log::info!("[ORCHESTRATED_LOOP] say_to_user completed task {}", completed_task_id);
+                        self.broadcast_task_status_change(
+                            original_message.channel_id,
+                            session_id,
+                            completed_task_id,
+                            "completed",
+                            &format!("Completed via say_to_user"),
+                        );
+                    }
+                    match self.advance_to_next_task_or_complete(
+                        original_message.channel_id,
+                        session_id,
+                        orchestrator,
+                    ) {
+                        TaskAdvanceResult::AllTasksComplete => {
+                            log::info!("[ORCHESTRATED_LOOP] say_to_user: all tasks done, terminating loop");
+                            processed.orchestrator_complete = true;
+                        }
+                        TaskAdvanceResult::NextTaskStarted => {
+                            log::info!("[ORCHESTRATED_LOOP] say_to_user: advanced to next task, continuing loop");
+                        }
+                        TaskAdvanceResult::InconsistentState => {
+                            log::warn!("[ORCHESTRATED_LOOP] say_to_user: inconsistent task state, terminating");
+                            processed.orchestrator_complete = true;
+                        }
+                    }
+                } else {
+                    // No task queue — terminate immediately
+                    log::info!("[ORCHESTRATED_LOOP] say_to_user terminating loop (finished_task={}, no task queue)", finished_task);
+                    processed.orchestrator_complete = true;
+                }
+            } else if batch_state.define_tasks_replaced_queue || batch_state.auto_completed_task {
+                log::info!(
+                    "[ORCHESTRATED_LOOP] Ignoring say_to_user finished_task — \
+                     task already advanced (define_tasks={}, auto_complete={})",
+                    batch_state.define_tasks_replaced_queue, batch_state.auto_completed_task
+                );
+            }
+        }
+
+        // AUTO-COMPLETE: Check if this successful tool matches current task's trigger
+        if result.success && !batch_state.define_tasks_replaced_queue && !processed.orchestrator_complete {
+            if let Some(current_task) = orchestrator.task_queue().current_task() {
+                if let Some(ref trigger_tool) = current_task.auto_complete_tool {
+                    if trigger_tool == tool_name {
+                        let task_desc = current_task.description.clone();
+                        log::info!(
+                            "[AUTO_COMPLETE] Tool '{}' succeeded — auto-completing task: {}",
+                            tool_name, task_desc
+                        );
+                        if let Some(completed_task_id) = orchestrator.complete_current_task() {
+                            self.broadcast_task_status_change(
+                                original_message.channel_id,
+                                session_id,
+                                completed_task_id,
+                                "completed",
+                                &format!("Auto-completed via {}", tool_name),
+                            );
+                        }
+                        match self.advance_to_next_task_or_complete(
+                            original_message.channel_id,
+                            session_id,
+                            orchestrator,
+                        ) {
+                            TaskAdvanceResult::AllTasksComplete => {
+                                log::info!("[AUTO_COMPLETE] All tasks done, terminating loop");
+                                processed.orchestrator_complete = true;
+                                processed.final_summary = Some(result.content.clone());
+                            }
+                            TaskAdvanceResult::NextTaskStarted => {
+                                log::info!("[AUTO_COMPLETE] Advanced to next task, continuing loop");
+                            }
+                            TaskAdvanceResult::InconsistentState => {
+                                log::warn!("[AUTO_COMPLETE] Inconsistent task state, terminating");
+                                processed.orchestrator_complete = true;
+                            }
+                        }
+                        self.broadcast_task_queue_update(
+                            original_message.channel_id,
+                            session_id,
+                            orchestrator,
+                        );
+                        batch_state.auto_completed_task = true;
+                    }
+                }
+            }
+        }
+
+        // Extract duration_ms from metadata if available
+        let duration_ms = result.metadata.as_ref()
+            .and_then(|m| m.get("duration_ms"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+
+        self.broadcaster.broadcast(GatewayEvent::tool_result(
+            original_message.channel_id,
+            Some(&original_message.chat_id),
+            tool_name,
+            result.success,
+            duration_ms,
+            &result.content,
+            is_safe_mode,
+        ));
+
+        // Execute AfterToolCall hooks
+        if let Some(hook_manager) = &self.hook_manager {
+            use crate::hooks::{HookContext, HookEvent, HookResult};
+            let mut hook_context = HookContext::new(HookEvent::AfterToolCall)
+                .with_channel(original_message.channel_id, Some(session_id))
+                .with_tool(tool_name.to_string(), tool_arguments.clone())
+                .with_tool_result(serde_json::json!({
+                    "success": result.success,
+                    "content": result.content,
+                }));
+            let hook_result = hook_manager.execute(HookEvent::AfterToolCall, &mut hook_context).await;
+            if let HookResult::Error(e) = hook_result {
+                log::warn!("Hook execution failed for tool '{}': {}", tool_name, e);
+            }
+        }
+
+        // Save tool result to session
+        let tool_result_content = format!(
+            "**{}:** {}\n{}",
+            if result.success { "Result" } else { "Error" },
+            tool_name,
+            result.content
+        );
+        if let Err(e) = self.db.add_session_message(
+            session_id,
+            DbMessageRole::ToolResult,
+            &tool_result_content,
+            None,
+            Some(tool_name),
+            None,
+            None,
+        ) {
+            log::error!("Failed to save tool result to session: {}", e);
+        }
+
+        // Broadcast task list update after any orchestrator tool processing
+        self.broadcast_tasks_update(original_message.channel_id, session_id, orchestrator);
+
+        processed.result_content = result.content;
+        processed.success = result.success;
+        processed
+    }
+
+    /// Shared post-loop finalization used by both native and text tool paths.
+    ///
+    /// Handles: clearing active skill, saving orchestrator context, updating
+    /// completion status, broadcasting session complete, saving session memory,
+    /// saving cancellation/max-iteration summaries, building final return value.
+    #[allow(clippy::too_many_arguments)]
+    fn finalize_tool_loop(
+        &self,
+        original_message: &NormalizedMessage,
+        session_id: i64,
+        is_safe_mode: bool,
+        orchestrator: &mut Orchestrator,
+        orchestrator_complete: bool,
+        was_cancelled: bool,
+        waiting_for_user_response: bool,
+        memory_suppressed: bool,
+        last_say_to_user_content: &str,
+        tool_call_log: &[String],
+        final_summary: &str,
+        user_question_content: &str,
+        max_tool_iterations: usize,
+    ) -> Result<String, String> {
+        // Clear active skill when the orchestrator loop completes
+        if orchestrator_complete || was_cancelled {
+            if orchestrator.context().active_skill.is_some() {
+                log::info!("[ORCHESTRATED_LOOP] Clearing active skill on session completion");
+                orchestrator.context_mut().active_skill = None;
+            }
+        }
+
+        // Save orchestrator context for next turn
+        if let Err(e) = self.db.save_agent_context(session_id, orchestrator.context()) {
+            log::warn!("[MULTI_AGENT] Failed to save context for session {}: {}", session_id, e);
+        }
+
+        // Update completion status
+        if was_cancelled {
+            log::info!("[ORCHESTRATED_LOOP] Marking session {} as Cancelled", session_id);
+            if let Err(e) = self.db.update_session_completion_status(session_id, CompletionStatus::Cancelled) {
+                log::error!("[ORCHESTRATED_LOOP] Failed to update session completion status: {}", e);
+            }
+            self.broadcast_session_complete(original_message.channel_id, session_id);
+        } else if orchestrator_complete && !waiting_for_user_response {
+            log::info!("[ORCHESTRATED_LOOP] Marking session {} as Complete", session_id);
+            if let Err(e) = self.db.update_session_completion_status(session_id, CompletionStatus::Complete) {
+                log::error!("[ORCHESTRATED_LOOP] Failed to update session completion status: {}", e);
+            }
+            self.broadcast_session_complete(original_message.channel_id, session_id);
+            if memory_suppressed {
+                log::info!("[ORCHESTRATED_LOOP] Skipping session memory — memory-excluded tool was called");
+            } else {
+                self.save_session_completion_memory(
+                    &original_message.text,
+                    last_say_to_user_content,
+                    is_safe_mode,
+                );
+            }
+        }
+
+        // Save cancellation summary
+        if was_cancelled && !tool_call_log.is_empty() {
+            let summary = format!(
+                "[Session stopped by user. Work completed before stop:]\n{}",
+                tool_call_log.join("\n")
+            );
+            log::info!("[ORCHESTRATED_LOOP] Saving cancellation summary with {} tool calls", tool_call_log.len());
+            if let Err(e) = self.db.add_session_message(
+                session_id,
+                DbMessageRole::Assistant,
+                &summary,
+                None,
+                None,
+                None,
+                None,
+            ) {
+                log::error!("Failed to save cancellation summary: {}", e);
+            }
+        }
+
+        // Build final return
+        if waiting_for_user_response {
+            // Save the tool call log to the orchestrator context
+            if !tool_call_log.is_empty() {
+                let context_summary = format!(
+                    "Before asking the user, I already completed these actions:\n{}",
+                    tool_call_log.join("\n")
+                );
+                orchestrator.context_mut().waiting_for_user_context = Some(context_summary);
+                if let Err(e) = self.db.save_agent_context(session_id, orchestrator.context()) {
+                    log::warn!("[MULTI_AGENT] Failed to save context with user_context: {}", e);
+                }
+            }
+            Ok(user_question_content.to_string())
+        } else if orchestrator_complete {
+            if !last_say_to_user_content.is_empty() {
+                log::info!("[ORCHESTRATED_LOOP] say_to_user already delivered response, suppressing final_summary");
+                Ok(String::new())
+            } else {
+                Ok(final_summary.to_string())
+            }
+        } else if tool_call_log.is_empty() {
+            Err(format!(
+                "Tool loop hit max iterations ({}) without completion",
+                max_tool_iterations
+            ))
+        } else {
+            // Max iterations with work done
+            let summary = format!(
+                "[Session hit max iterations. Work completed before limit:]\n{}",
+                tool_call_log.join("\n")
+            );
+            log::info!("[ORCHESTRATED_LOOP] Saving max-iterations summary with {} tool calls", tool_call_log.len());
+            let _ = self.db.add_session_message(
+                session_id,
+                DbMessageRole::Assistant,
+                &summary,
+                None,
+                None,
+                None,
+                None,
+            );
+            Err(format!(
+                "Tool loop hit max iterations ({}). Work has been saved.",
+                max_tool_iterations
+            ))
+        }
+    }
+
     /// Generate response using native API tool calling with multi-agent orchestration
     async fn generate_with_native_tools_orchestrated(
         &self,
@@ -1958,7 +2717,12 @@ impl MessageDispatcher {
                     let response = parts.join("\n\n");
                     return Ok(response);
                 } else {
-                    // No tool calls but not complete - return content as-is
+                    // No tool calls but not complete
+                    // Safety net: if say_to_user already delivered via events, suppress final text
+                    if !last_say_to_user_content.is_empty() {
+                        log::info!("[ORCHESTRATED_LOOP] say_to_user already delivered response (not orchestrator_complete), suppressing final text output");
+                        return Ok(String::new());
+                    }
                     if tool_call_log.is_empty() {
                         return Ok(ai_response.content);
                     } else {
@@ -2039,528 +2803,45 @@ impl MessageDispatcher {
                 break;
             }
 
-            // Track if define_tasks replaced the queue in this batch of tool calls.
-            // If so, any task_fully_completed in the same batch should be ignored —
-            // it was meant for the pre-replacement task, not the new Task 1.
-            let mut define_tasks_replaced_queue = false;
+            let mut batch_state = BatchState::new();
 
             for call in &ai_response.tool_calls {
-                let args_pretty = serde_json::to_string_pretty(&call.arguments)
-                    .unwrap_or_else(|_| call.arguments.to_string());
-
-                log::info!(
-                    "[TOOL_CALL] Agent calling tool '{}' with args:\n{}",
-                    call.name,
-                    args_pretty
-                );
-
-                tool_call_log.push(format!(
-                    "🔧 **Tool Call:** `{}`\n```json\n{}\n```",
-                    call.name,
-                    args_pretty
-                ));
-
-                if crate::tools::types::is_memory_excluded_tool(&call.name) {
-                    memory_suppressed = true;
-                }
-
-                self.broadcaster.broadcast(GatewayEvent::agent_tool_call(
-                    original_message.channel_id,
-                    Some(&original_message.chat_id),
+                let processed = self.process_tool_call_result(
                     &call.name,
                     &call.arguments,
-                ));
-
-                // Save tool call to session
-                let tool_call_content = format!(
-                    "🔧 **Tool Call:** `{}`\n```json\n{}\n```",
-                    call.name,
-                    args_pretty
-                );
-                if let Err(e) = self.db.add_session_message(
+                    tool_config,
+                    tool_context,
+                    original_message,
                     session_id,
-                    DbMessageRole::ToolCall,
-                    &tool_call_content,
-                    None,
-                    Some(&call.name),
-                    None,
-                    None,
-                ) {
-                    log::error!("Failed to save tool call to session: {}", e);
-                }
+                    is_safe_mode,
+                    &mut tools,
+                    &mut batch_state,
+                    &mut last_say_to_user_content,
+                    &mut memory_suppressed,
+                    &mut tool_call_log,
+                    orchestrator,
+                    &current_tools,
+                ).await;
 
-                // If define_tasks just replaced the queue, skip all remaining tool calls.
-                // The LLM planned these before the queue existed — the next iteration
-                // will have the proper task context and re-plan correctly.
-                if define_tasks_replaced_queue {
-                    log::info!(
-                        "[ORCHESTRATED_LOOP] Skipping tool '{}' — define_tasks replaced the queue this batch",
-                        call.name
-                    );
-                    tool_responses.push(ToolResponse::error(
-                        call.id.clone(),
-                        "⚠️ Task queue was just replaced by define_tasks. This tool call was not executed. \
-                         The next iteration will start with the correct task context.".to_string(),
-                    ));
-                    continue;
-                }
-
-                // Check if this is an orchestrator tool
-                let orchestrator_result = orchestrator.process_tool_result(&call.name, &call.arguments);
-
-                match orchestrator_result {
-                    OrchestratorResult::Complete(summary) => {
-                        log::info!("[ORCHESTRATOR] Execution complete: {}", summary);
-                        orchestrator_complete = true;
+                // Update loop-level flags from the processed result
+                if processed.orchestrator_complete {
+                    orchestrator_complete = true;
+                    if let Some(ref summary) = processed.final_summary {
                         final_summary = summary.clone();
-                        tool_responses.push(ToolResponse::success(
-                            call.id.clone(),
-                            format!("Execution complete: {}", summary),
-                        ));
                     }
-                    OrchestratorResult::ToolResult(result) => {
-                        tool_responses.push(ToolResponse::success(call.id.clone(), result));
-                    }
-                    OrchestratorResult::Error(err) => {
-                        tool_responses.push(ToolResponse::error(call.id.clone(), err));
-                    }
-                    OrchestratorResult::Continue => {
-                        // Not an orchestrator tool, execute normally
-                        // Broadcast that tool is starting execution
-                        self.broadcaster.broadcast(GatewayEvent::tool_execution(
-                            original_message.channel_id,
-                            &call.name,
-                            &call.arguments,
-                        ));
-
-                        let result = if call.name == "use_skill" {
-                            // Execute skill and set active skill on orchestrator
-                            let skill_result = self.execute_skill_tool(&call.arguments, Some(session_id)).await;
-
-                            // Also set active skill directly on orchestrator (in-memory)
-                            if skill_result.success {
-                                if let Some(skill_name) = call.arguments.get("skill_name").and_then(|v| v.as_str()) {
-                                    if let Ok(Some(skill)) = self.db.get_enabled_skill_by_name(skill_name) {
-                                        let skills_dir = crate::config::skills_dir();
-                                        let skill_base_dir = format!("{}/{}", skills_dir, skill.name);
-                                        let instructions = skill.body.replace("{baseDir}", &skill_base_dir);
-
-                                        let requires_tools = skill.requires_tools.clone();
-                                        log::info!(
-                                            "[SKILL] Activating skill '{}' with requires_tools: {:?}",
-                                            skill.name,
-                                            requires_tools
-                                        );
-
-                                        // Auto-set subtype if skill specifies one (before tool refresh)
-                                        self.apply_skill_subtype(&skill, orchestrator, original_message.channel_id);
-
-                                        orchestrator.context_mut().active_skill = Some(crate::ai::multi_agent::types::ActiveSkill {
-                                            name: skill.name,
-                                            instructions,
-                                            activated_at: chrono::Utc::now().to_rfc3339(),
-                                            tool_calls_made: 0,
-                                            requires_tools: requires_tools.clone(),
-                                        });
-
-                                        // Force-include required tools in the toolset (strip define_tasks unless skill requires it)
-                                        if !requires_tools.is_empty() {
-                                            let subtype = orchestrator.current_subtype();
-                                            tools = self.tool_registry
-                                                .get_tool_definitions_for_subtype_with_required(
-                                                    tool_config,
-                                                    subtype,
-                                                    &requires_tools,
-                                                );
-                                            if let Some(skill_tool) = self.create_skill_tool_definition_for_subtype(subtype) {
-                                                tools.push(skill_tool);
-                                            }
-                                            tools.extend(orchestrator.get_mode_tools());
-                                            if !requires_tools.iter().any(|t| t == "define_tasks") {
-                                                tools.retain(|t| t.name != "define_tasks");
-                                            }
-                                            log::info!(
-                                                "[SKILL] Refreshed toolset with {} tools (including {} required by skill)",
-                                                tools.len(),
-                                                requires_tools.len()
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                            skill_result
-                        } else {
-                            // Check if subtype is None - allow System tools (say_to_user, task_fully_completed, etc.)
-                            // but block non-System tools until set_agent_subtype is called
-                            let current_subtype = orchestrator.current_subtype();
-                            let is_system_tool = current_tools.iter().any(|t| t.name == call.name && t.group == crate::tools::types::ToolGroup::System);
-                            if !current_subtype.is_selected() && !is_system_tool {
-                                log::warn!(
-                                    "[SUBTYPE] Blocked tool '{}' - no subtype selected. Must call set_agent_subtype first.",
-                                    call.name
-                                );
-                                crate::tools::ToolResult::error(format!(
-                                    "❌ No toolbox selected! You MUST call `set_agent_subtype` FIRST before using '{}'.\n\n\
-                                    Choose based on the user's request:\n\
-                                    • set_agent_subtype(subtype=\"finance\") - for crypto/DeFi/tipping operations\n\
-                                    • set_agent_subtype(subtype=\"code_engineer\") - for code/git operations\n\
-                                    • set_agent_subtype(subtype=\"secretary\") - for social/messaging",
-                                    call.name
-                                ))
-                            } else {
-                                // Run tool validators before execution
-                                if let Some(ref validator_registry) = self.validator_registry {
-                                    let validation_ctx = crate::tool_validators::ValidationContext::new(
-                                        call.name.clone(),
-                                        call.arguments.clone(),
-                                        Arc::new(tool_context.clone()),
-                                    );
-                                    let validation_result = validator_registry.validate(&validation_ctx).await;
-                                    if let Some(error_msg) = validation_result.to_error_message() {
-                                        crate::tools::ToolResult::error(error_msg)
-                                    } else {
-                                        // Execute regular tool and record the call for skill tracking
-                                        let tool_result = self.tool_registry
-                                            .execute(&call.name, call.arguments.clone(), tool_context, Some(tool_config))
-                                            .await;
-
-                                        // Record this tool call for active skill tracking
-                                        if tool_result.success {
-                                            orchestrator.record_tool_call(&call.name);
-                                        }
-
-                                        tool_result
-                                    }
-                                } else {
-                                    // Execute regular tool and record the call for skill tracking
-                                    let tool_result = self.tool_registry
-                                        .execute(&call.name, call.arguments.clone(), tool_context, Some(tool_config))
-                                        .await;
-
-                                    // Record this tool call for active skill tracking
-                                    if tool_result.success {
-                                        orchestrator.record_tool_call(&call.name);
-                                    }
-
-                                    tool_result
-                                }
-                            }
-                        };
-
-                        // Handle subtype change: update orchestrator and refresh tools
-                        if call.name == "set_agent_subtype" && result.success {
-                            if let Some(subtype_str) = call.arguments.get("subtype").and_then(|v| v.as_str()) {
-                                if let Some(new_subtype) = AgentSubtype::from_str(subtype_str) {
-                                    orchestrator.set_subtype(new_subtype);
-                                    log::info!(
-                                        "[SUBTYPE] Changed to {} mode",
-                                        new_subtype.label()
-                                    );
-
-                                    // Refresh tools for new subtype (strip define_tasks unless skill requires it)
-                                    tools = self
-                                        .tool_registry
-                                        .get_tool_definitions_for_subtype(tool_config, new_subtype);
-                                    if let Some(skill_tool) =
-                                        self.create_skill_tool_definition_for_subtype(new_subtype)
-                                    {
-                                        tools.push(skill_tool);
-                                    }
-                                    tools.extend(orchestrator.get_mode_tools());
-                                    {
-                                        let skill_requires_dt = orchestrator.context().active_skill
-                                            .as_ref()
-                                            .map(|s| s.requires_tools.iter().any(|t| t == "define_tasks"))
-                                            .unwrap_or(false);
-                                        if !skill_requires_dt {
-                                            tools.retain(|t| t.name != "define_tasks");
-                                        }
-                                    }
-
-                                    // Broadcast toolset update
-                                    self.broadcast_toolset_update(
-                                        original_message.channel_id,
-                                        &orchestrator.current_mode().to_string(),
-                                        new_subtype.as_str(),
-                                        &tools,
-                                    );
-                                }
-                            }
-                        }
-
-                        // Handle retry backoff
-                        let result = if let Some(retry_secs) = result.retry_after_secs {
-                            self.broadcaster.broadcast(GatewayEvent::tool_waiting(
-                                original_message.channel_id,
-                                &call.name,
-                                retry_secs,
-                            ));
-                            tokio::time::sleep(std::time::Duration::from_secs(retry_secs)).await;
-                            crate::tools::ToolResult::error(format!(
-                                "{}\n\n🔄 Paused for {} seconds. Please retry.",
-                                result.error.unwrap_or_else(|| "Unknown error".to_string()),
-                                retry_secs
-                            ))
-                        } else {
-                            result
-                        };
-
-                        // Check if this tool requires user response (e.g., ask_user)
-                        // If so, we should break the loop after processing to wait for user input
-                        if let Some(metadata) = &result.metadata {
-                            if metadata.get("requires_user_response").and_then(|v| v.as_bool()).unwrap_or(false) {
-                                waiting_for_user_response = true;
-                                user_question_content = result.content.clone();
-                                log::info!("[ORCHESTRATED_LOOP] Tool requires user response, will break after processing");
-                            }
-                            // Check if add_task was called - agent wants to insert a new task
-                            if metadata.get("add_task").and_then(|v| v.as_bool()).unwrap_or(false) {
-                                if let Some(desc) = metadata.get("task_description").and_then(|v| v.as_str()) {
-                                    let position = metadata.get("task_position")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("front");
-                                    let new_ids = match position {
-                                        "back" => orchestrator.append_task(desc.to_string()),
-                                        _ => orchestrator.insert_task_front(desc.to_string()),
-                                    };
-                                    log::info!(
-                                        "[ORCHESTRATED_LOOP] add_task: inserted task(s) {:?} at {} — '{}'",
-                                        new_ids, position, desc
-                                    );
-                                    // If task_fully_completed was already processed this turn
-                                    // (AI called it before add_task), the session was marked complete
-                                    // with no pending tasks. Now that we've added a task, undo that
-                                    // and advance to the new task.
-                                    if orchestrator_complete && !orchestrator.all_tasks_complete() {
-                                        orchestrator_complete = false;
-                                        final_summary.clear();
-                                        log::info!(
-                                            "[ORCHESTRATED_LOOP] add_task: resetting orchestrator_complete — new pending tasks exist"
-                                        );
-                                        self.advance_to_next_task_or_complete(
-                                            original_message.channel_id,
-                                            session_id,
-                                            orchestrator,
-                                        );
-                                    }
-                                    self.broadcast_task_queue_update(
-                                        original_message.channel_id,
-                                        session_id,
-                                        orchestrator,
-                                    );
-                                }
-                            }
-                            // Check if define_tasks was called - agent wants to replace the task queue
-                            if metadata.get("define_tasks").and_then(|v| v.as_bool()).unwrap_or(false) {
-                                if let Some(tasks) = metadata.get("tasks").and_then(|v| v.as_array()) {
-                                    let task_descriptions: Vec<String> = tasks
-                                        .iter()
-                                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                        .collect();
-                                    if !task_descriptions.is_empty() {
-                                        log::info!(
-                                            "[ORCHESTRATED_LOOP] define_tasks: replacing queue with {} tasks",
-                                            task_descriptions.len()
-                                        );
-                                        let ctx = orchestrator.context_mut();
-                                        ctx.task_queue =
-                                            crate::ai::multi_agent::types::TaskQueue::from_descriptions(task_descriptions);
-                                        ctx.planner_completed = true;
-                                        ctx.mode = AgentMode::Assistant;
-                                        // Pop the first task and start it
-                                        self.advance_to_next_task_or_complete(
-                                            original_message.channel_id,
-                                            session_id,
-                                            orchestrator,
-                                        );
-                                        self.broadcast_task_queue_update(
-                                            original_message.channel_id,
-                                            session_id,
-                                            orchestrator,
-                                        );
-                                        // Prevent any task_fully_completed in this same batch from
-                                        // accidentally completing the newly-started first task
-                                        define_tasks_replaced_queue = true;
-                                    }
-                                }
-                            }
-                            // Check if task_fully_completed was called - agent signals current task is done
-                            // Skip if define_tasks just replaced the queue in this same batch — the
-                            // task_fully_completed was meant for the pre-replacement task, not the new Task 1
-                            if define_tasks_replaced_queue
-                                && metadata.get("task_fully_completed").and_then(|v| v.as_bool()).unwrap_or(false)
-                            {
-                                log::info!(
-                                    "[ORCHESTRATED_LOOP] Ignoring task_fully_completed — \
-                                     define_tasks replaced the queue in this same batch"
-                                );
-                            } else if metadata.get("task_fully_completed").and_then(|v| v.as_bool()).unwrap_or(false) {
-                                let summary = metadata.get("summary")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or(&result.content)
-                                    .to_string();
-
-                                log::info!("[ORCHESTRATED_LOOP] task_fully_completed called");
-
-                                // Capture summary for session memory if say_to_user wasn't called
-                                if last_say_to_user_content.is_empty() {
-                                    last_say_to_user_content = summary.clone();
-                                }
-
-                                // Mark current task as completed and broadcast (if task queue exists)
-                                if let Some(completed_task_id) = orchestrator.complete_current_task() {
-                                    log::info!("[ORCHESTRATED_LOOP] Task {} completed", completed_task_id);
-                                    self.broadcast_task_status_change(
-                                        original_message.channel_id,
-                                        session_id,
-                                        completed_task_id,
-                                        "completed",
-                                        &summary,
-                                    );
-                                }
-
-                                // Check if there are more tasks to process
-                                match self.advance_to_next_task_or_complete(
-                                    original_message.channel_id,
-                                    session_id,
-                                    orchestrator,
-                                ) {
-                                    TaskAdvanceResult::AllTasksComplete => {
-                                        orchestrator_complete = true;
-                                        final_summary = summary.clone();
-                                    }
-                                    TaskAdvanceResult::InconsistentState => {
-                                        log::warn!("[ORCHESTRATED_LOOP] task_fully_completed: inconsistent task state, terminating");
-                                        orchestrator_complete = true;
-                                        final_summary = summary.clone();
-                                    }
-                                    TaskAdvanceResult::NextTaskStarted => {
-                                        // Continue loop for next task
-                                    }
-                                }
-                            }
-                        }
-
-                        // Capture say_to_user content for session memory
-                        if call.name == "say_to_user" && result.success {
-                            last_say_to_user_content = result.content.clone();
-                        }
-
-                        // say_to_user with finished_task=true completes the current task.
-                        // If more tasks remain, advance to the next one and keep looping.
-                        // Only terminate the loop when ALL tasks are done (or no task queue exists).
-                        // In safe mode, say_to_user always terminates (no ongoing tasks).
-                        // But NOT if define_tasks just replaced the queue — new tasks need to run.
-                        if call.name == "say_to_user" && result.success && !define_tasks_replaced_queue {
-                            let finished_task = result.metadata.as_ref()
-                                .and_then(|m| m.get("finished_task"))
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-                            if finished_task || is_safe_mode {
-                                if !orchestrator.task_queue_is_empty() && !is_safe_mode {
-                                    // Complete current task and try to advance
-                                    if let Some(completed_task_id) = orchestrator.complete_current_task() {
-                                        log::info!("[ORCHESTRATED_LOOP] say_to_user completed task {}", completed_task_id);
-                                        self.broadcast_task_status_change(
-                                            original_message.channel_id,
-                                            session_id,
-                                            completed_task_id,
-                                            "completed",
-                                            &format!("Completed via say_to_user"),
-                                        );
-                                    }
-                                    match self.advance_to_next_task_or_complete(
-                                        original_message.channel_id,
-                                        session_id,
-                                        orchestrator,
-                                    ) {
-                                        TaskAdvanceResult::AllTasksComplete => {
-                                            log::info!("[ORCHESTRATED_LOOP] say_to_user: all tasks done, terminating loop");
-                                            orchestrator_complete = true;
-                                        }
-                                        TaskAdvanceResult::NextTaskStarted => {
-                                            log::info!("[ORCHESTRATED_LOOP] say_to_user: advanced to next task, continuing loop");
-                                            // Don't set orchestrator_complete — keep going
-                                        }
-                                        TaskAdvanceResult::InconsistentState => {
-                                            log::warn!("[ORCHESTRATED_LOOP] say_to_user: inconsistent task state, terminating");
-                                            orchestrator_complete = true;
-                                        }
-                                    }
-                                } else {
-                                    // No task queue or safe mode — terminate immediately
-                                    log::info!("[ORCHESTRATED_LOOP] say_to_user terminating loop (finished_task={}, safe_mode={})", finished_task, is_safe_mode);
-                                    orchestrator_complete = true;
-                                }
-                            }
-                        } else if call.name == "say_to_user" && define_tasks_replaced_queue {
-                            log::info!(
-                                "[ORCHESTRATED_LOOP] Ignoring say_to_user finished_task — \
-                                 define_tasks replaced the queue in this same batch"
-                            );
-                        }
-
-                        // Extract duration_ms from metadata if available
-                        let duration_ms = result.metadata.as_ref()
-                            .and_then(|m| m.get("duration_ms"))
-                            .and_then(|v| v.as_i64())
-                            .unwrap_or(0);
-
-                        self.broadcaster.broadcast(GatewayEvent::tool_result(
-                            original_message.channel_id,
-                            Some(&original_message.chat_id),
-                            &call.name,
-                            result.success,
-                            duration_ms,
-                            &result.content,
-                            is_safe_mode,
-                        ));
-
-                        // Execute AfterToolCall hooks (for auto-memory, etc.)
-                        if let Some(hook_manager) = &self.hook_manager {
-                            use crate::hooks::{HookContext, HookEvent, HookResult};
-                            let mut hook_context = HookContext::new(HookEvent::AfterToolCall)
-                                .with_channel(original_message.channel_id, Some(session_id))
-                                .with_tool(call.name.clone(), call.arguments.clone())
-                                .with_tool_result(serde_json::json!({
-                                    "success": result.success,
-                                    "content": result.content,
-                                }));
-                            let hook_result = hook_manager.execute(HookEvent::AfterToolCall, &mut hook_context).await;
-                            if let HookResult::Error(e) = hook_result {
-                                log::warn!("Hook execution failed for tool '{}': {}", call.name, e);
-                            }
-                        }
-
-                        // Save tool result to session
-                        let tool_result_content = format!(
-                            "**{}:** {}\n{}",
-                            if result.success { "Result" } else { "Error" },
-                            call.name,
-                            result.content
-                        );
-                        if let Err(e) = self.db.add_session_message(
-                            session_id,
-                            DbMessageRole::ToolResult,
-                            &tool_result_content,
-                            None,
-                            Some(&call.name),
-                            None,
-                            None,
-                        ) {
-                            log::error!("Failed to save tool result to session: {}", e);
-                        }
-
-                        tool_responses.push(if result.success {
-                            ToolResponse::success(call.id.clone(), result.content)
-                        } else {
-                            ToolResponse::error(call.id.clone(), result.content)
-                        });
+                }
+                if processed.waiting_for_user_response {
+                    waiting_for_user_response = true;
+                    if let Some(ref content) = processed.user_question_content {
+                        user_question_content = content.clone();
                     }
                 }
 
-                // Broadcast task list update after any orchestrator tool processing
-                self.broadcast_tasks_update(original_message.channel_id, session_id, orchestrator);
+                tool_responses.push(if processed.success {
+                    ToolResponse::success(call.id.clone(), processed.result_content)
+                } else {
+                    ToolResponse::error(call.id.clone(), processed.result_content)
+                });
             }
 
             // Add to tool history (keep only last N entries to prevent context bloat)
@@ -2590,119 +2871,21 @@ impl MessageDispatcher {
             previous_iteration_had_say_to_user = current_iteration_has_say_to_user;
         }
 
-        // Clear active skill when the orchestrator loop completes (not when paused for user response)
-        // so skill-enabled tools are reset for the next session
-        if orchestrator_complete || was_cancelled {
-            if orchestrator.context().active_skill.is_some() {
-                log::info!("[ORCHESTRATED_LOOP] Clearing active skill on session completion");
-                orchestrator.context_mut().active_skill = None;
-            }
-        }
-
-        // Save orchestrator context for next turn
-        if let Err(e) = self.db.save_agent_context(session_id, orchestrator.context()) {
-            log::warn!("[MULTI_AGENT] Failed to save context for session {}: {}", session_id, e);
-        }
-
-        // Update completion status based on how the loop ended
-        // This is critical for safe mode chats that don't use tasks - they would otherwise stay 'active' forever
-        if was_cancelled {
-            log::info!("[ORCHESTRATED_LOOP] Marking session {} as Cancelled", session_id);
-            if let Err(e) = self.db.update_session_completion_status(session_id, CompletionStatus::Cancelled) {
-                log::error!("[ORCHESTRATED_LOOP] Failed to update session completion status: {}", e);
-            }
-            self.broadcast_session_complete(original_message.channel_id, session_id);
-        } else if orchestrator_complete && !waiting_for_user_response {
-            // Session completed successfully (via say_to_user with finished_task, task_fully_completed, etc.)
-            log::info!("[ORCHESTRATED_LOOP] Marking session {} as Complete", session_id);
-            if let Err(e) = self.db.update_session_completion_status(session_id, CompletionStatus::Complete) {
-                log::error!("[ORCHESTRATED_LOOP] Failed to update session completion status: {}", e);
-            }
-            self.broadcast_session_complete(original_message.channel_id, session_id);
-            if memory_suppressed {
-                log::info!("[ORCHESTRATED_LOOP] Skipping session memory — memory-excluded tool was called");
-            } else {
-                self.save_session_completion_memory(
-                    &original_message.text,
-                    &last_say_to_user_content,
-                    is_safe_mode,
-                );
-            }
-        }
-        // Note: If waiting_for_user_response, session stays Active (correct behavior)
-        // Note: If max iterations hit without completion, session stays Active for potential retry
-
-        // If cancelled with work done, save a summary so context is preserved on resume
-        if was_cancelled && !tool_call_log.is_empty() {
-            let summary = format!(
-                "[Session stopped by user. Work completed before stop:]\n{}",
-                tool_call_log.join("\n")
-            );
-            log::info!("[ORCHESTRATED_LOOP] Saving cancellation summary with {} tool calls", tool_call_log.len());
-            if let Err(e) = self.db.add_session_message(
-                session_id,
-                DbMessageRole::Assistant,
-                &summary,
-                None,
-                None,
-                None,
-                None,
-            ) {
-                log::error!("Failed to save cancellation summary: {}", e);
-            }
-        }
-
-        // Return final response
-        if waiting_for_user_response {
-            // Save the tool call log to the orchestrator context so the AI knows what it already did
-            // This will be included in the system prompt on the next turn
-            if !tool_call_log.is_empty() {
-                let context_summary = format!(
-                    "Before asking the user, I already completed these actions:\n{}",
-                    tool_call_log.join("\n")
-                );
-                orchestrator.context_mut().waiting_for_user_context = Some(context_summary);
-                // Re-save context with the waiting_for_user_context
-                if let Err(e) = self.db.save_agent_context(session_id, orchestrator.context()) {
-                    log::warn!("[MULTI_AGENT] Failed to save context with user_context: {}", e);
-                }
-            }
-            // Return the question content - context is saved, will continue when user responds
-            Ok(user_question_content)
-        } else if orchestrator_complete {
-            // If say_to_user already delivered the response, return empty to avoid duplication
-            if !last_say_to_user_content.is_empty() {
-                log::info!("[ORCHESTRATED_LOOP] say_to_user already delivered response, suppressing final_summary");
-                Ok(String::new())
-            } else {
-                Ok(final_summary)
-            }
-        } else if tool_call_log.is_empty() {
-            Err(format!(
-                "Tool loop hit max iterations ({}) without completion",
-                max_tool_iterations
-            ))
-        } else {
-            // Max iterations with work done - save summary so context is preserved
-            let summary = format!(
-                "[Session hit max iterations. Work completed before limit:]\n{}",
-                tool_call_log.join("\n")
-            );
-            log::info!("[ORCHESTRATED_LOOP] Saving max-iterations summary with {} tool calls", tool_call_log.len());
-            let _ = self.db.add_session_message(
-                session_id,
-                DbMessageRole::Assistant,
-                &summary,
-                None,
-                None,
-                None,
-                None,
-            );
-            Err(format!(
-                "Tool loop hit max iterations ({}). Work has been saved.",
-                max_tool_iterations
-            ))
-        }
+        self.finalize_tool_loop(
+            original_message,
+            session_id,
+            is_safe_mode,
+            orchestrator,
+            orchestrator_complete,
+            was_cancelled,
+            waiting_for_user_response,
+            memory_suppressed,
+            &last_say_to_user_content,
+            &tool_call_log,
+            &final_summary,
+            &user_question_content,
+            max_tool_iterations,
+        )
     }
 
     /// Generate response using text-based tool calling with multi-agent orchestration
@@ -2964,419 +3147,41 @@ impl MessageDispatcher {
                             break;
                         }
 
-                        let args_pretty = serde_json::to_string_pretty(&tool_call.tool_params)
-                            .unwrap_or_else(|_| tool_call.tool_params.to_string());
-
-                        tool_call_log.push(format!(
-                            "🔧 **Tool Call:** `{}`\n```json\n{}\n```",
-                            tool_call.tool_name,
-                            args_pretty
-                        ));
-
-                        if crate::tools::types::is_memory_excluded_tool(&tool_call.tool_name) {
-                            memory_suppressed = true;
-                        }
-
-                        self.broadcaster.broadcast(GatewayEvent::agent_tool_call(
-                            original_message.channel_id,
-                            Some(&original_message.chat_id),
+                        // Text path: one tool call per batch
+                        let mut batch_state = BatchState::new();
+                        let current_tools_snapshot = tools.clone();
+                        let processed = self.process_tool_call_result(
                             &tool_call.tool_name,
                             &tool_call.tool_params,
-                        ));
-
-                        // Save tool call to session
-                        let tool_call_content = format!(
-                            "🔧 **Tool Call:** `{}`\n```json\n{}\n```",
-                            tool_call.tool_name,
-                            args_pretty
-                        );
-                        if let Err(e) = self.db.add_session_message(
+                            tool_config,
+                            tool_context,
+                            original_message,
                             session_id,
-                            DbMessageRole::ToolCall,
-                            &tool_call_content,
-                            None,
-                            Some(&tool_call.tool_name),
-                            None,
-                            None,
-                        ) {
-                            log::error!("Failed to save tool call to session: {}", e);
+                            is_safe_mode,
+                            &mut tools,
+                            &mut batch_state,
+                            &mut last_say_to_user_content,
+                            &mut memory_suppressed,
+                            &mut tool_call_log,
+                            orchestrator,
+                            &current_tools_snapshot,
+                        ).await;
+
+                        // Update loop-level flags
+                        if processed.orchestrator_complete {
+                            orchestrator_complete = true;
+                            if let Some(ref summary) = processed.final_summary {
+                                final_response = summary.clone();
+                            }
+                        }
+                        if processed.waiting_for_user_response {
+                            waiting_for_user_response = true;
+                            if let Some(ref content) = processed.user_question_content {
+                                user_question_content = content.clone();
+                            }
                         }
 
-                        // Check if orchestrator tool
-                        let orchestrator_result = orchestrator.process_tool_result(
-                            &tool_call.tool_name,
-                            &tool_call.tool_params,
-                        );
-
-                        let tool_result_content = match orchestrator_result {
-                            OrchestratorResult::Complete(summary) => {
-                                orchestrator_complete = true;
-                                final_response = summary.clone();
-                                format!("Execution complete: {}", summary)
-                            }
-                            OrchestratorResult::ToolResult(result) => result,
-                            OrchestratorResult::Error(err) => format!("Error: {}", err),
-                            OrchestratorResult::Continue => {
-                                // Execute regular tool
-                                let result = if tool_call.tool_name == "use_skill" {
-                                    // Execute skill and set active skill on orchestrator
-                                    let skill_result = self.execute_skill_tool(&tool_call.tool_params, Some(session_id)).await;
-
-                                    // Also set active skill directly on orchestrator (in-memory)
-                                    if skill_result.success {
-                                        if let Some(skill_name) = tool_call.tool_params.get("skill_name").and_then(|v| v.as_str()) {
-                                            if let Ok(Some(skill)) = self.db.get_enabled_skill_by_name(skill_name) {
-                                                let skills_dir = crate::config::skills_dir();
-                                                let skill_base_dir = format!("{}/{}", skills_dir, skill.name);
-                                                let instructions = skill.body.replace("{baseDir}", &skill_base_dir);
-
-                                                let requires_tools = skill.requires_tools.clone();
-                                                log::info!(
-                                                    "[SKILL] Activating skill '{}' with requires_tools: {:?}",
-                                                    skill.name,
-                                                    requires_tools
-                                                );
-
-                                                // Auto-set subtype if skill specifies one (before tool refresh)
-                                                self.apply_skill_subtype(&skill, orchestrator, original_message.channel_id);
-
-                                                orchestrator.context_mut().active_skill = Some(crate::ai::multi_agent::types::ActiveSkill {
-                                                    name: skill.name,
-                                                    instructions,
-                                                    activated_at: chrono::Utc::now().to_rfc3339(),
-                                                    tool_calls_made: 0,
-                                                    requires_tools: requires_tools.clone(),
-                                                });
-
-                                                // Force-include required tools (strip define_tasks unless skill requires it)
-                                                if !requires_tools.is_empty() {
-                                                    let subtype = orchestrator.current_subtype();
-                                                    tools = self.tool_registry
-                                                        .get_tool_definitions_for_subtype_with_required(
-                                                            tool_config,
-                                                            subtype,
-                                                            &requires_tools,
-                                                        );
-                                                    if let Some(skill_tool) = self.create_skill_tool_definition_for_subtype(subtype) {
-                                                        tools.push(skill_tool);
-                                                    }
-                                                    tools.extend(orchestrator.get_mode_tools());
-                                                    if !requires_tools.iter().any(|t| t == "define_tasks") {
-                                                        tools.retain(|t| t.name != "define_tasks");
-                                                    }
-                                                    log::info!(
-                                                        "[SKILL] Refreshed toolset with {} tools (including {} required by skill)",
-                                                        tools.len(),
-                                                        requires_tools.len()
-                                                    );
-                                                }
-                                            }
-                                        }
-                                    }
-                                    skill_result
-                                } else {
-                                    // Check if subtype is None - allow System tools (say_to_user, task_fully_completed, etc.)
-                                    // but block non-System tools until set_agent_subtype is called
-                                    let current_subtype = orchestrator.current_subtype();
-                                    let is_system_tool = tools.iter().any(|t| t.name == tool_call.tool_name && t.group == crate::tools::types::ToolGroup::System);
-                                    if !current_subtype.is_selected() && !is_system_tool {
-                                        log::warn!(
-                                            "[SUBTYPE] Blocked tool '{}' - no subtype selected. Must call set_agent_subtype first.",
-                                            tool_call.tool_name
-                                        );
-                                        crate::tools::ToolResult::error(format!(
-                                            "❌ No toolbox selected! You MUST call `set_agent_subtype` FIRST before using '{}'.\n\n\
-                                            Choose based on the user's request:\n\
-                                            • set_agent_subtype(subtype=\"finance\") - for crypto/DeFi/tipping operations\n\
-                                            • set_agent_subtype(subtype=\"code_engineer\") - for code/git operations\n\
-                                            • set_agent_subtype(subtype=\"secretary\") - for social/messaging",
-                                            tool_call.tool_name
-                                        ))
-                                    } else {
-                                        // Run tool validators before execution
-                                        if let Some(ref validator_registry) = self.validator_registry {
-                                            let validation_ctx = crate::tool_validators::ValidationContext::new(
-                                                tool_call.tool_name.clone(),
-                                                tool_call.tool_params.clone(),
-                                                Arc::new(tool_context.clone()),
-                                            );
-                                            let validation_result = validator_registry.validate(&validation_ctx).await;
-                                            if let Some(error_msg) = validation_result.to_error_message() {
-                                                crate::tools::ToolResult::error(error_msg)
-                                            } else {
-                                                // Execute regular tool and record the call for skill tracking
-                                                let tool_result = self.tool_registry.execute(
-                                                    &tool_call.tool_name,
-                                                    tool_call.tool_params.clone(),
-                                                    tool_context,
-                                                    Some(tool_config),
-                                                ).await;
-
-                                                // Record this tool call for active skill tracking
-                                                if tool_result.success {
-                                                    orchestrator.record_tool_call(&tool_call.tool_name);
-                                                }
-
-                                                tool_result
-                                            }
-                                        } else {
-                                            // Execute regular tool and record the call for skill tracking
-                                            let tool_result = self.tool_registry.execute(
-                                                &tool_call.tool_name,
-                                                tool_call.tool_params.clone(),
-                                                tool_context,
-                                                Some(tool_config),
-                                            ).await;
-
-                                            // Record this tool call for active skill tracking
-                                            if tool_result.success {
-                                                orchestrator.record_tool_call(&tool_call.tool_name);
-                                            }
-
-                                            tool_result
-                                        }
-                                    }
-                                };
-
-                                // Handle subtype change: update orchestrator and refresh tools
-                                if tool_call.tool_name == "set_agent_subtype" && result.success {
-                                    if let Some(subtype_str) = tool_call.tool_params.get("subtype").and_then(|v| v.as_str()) {
-                                        if let Some(new_subtype) = AgentSubtype::from_str(subtype_str) {
-                                            orchestrator.set_subtype(new_subtype);
-                                            log::info!(
-                                                "[SUBTYPE] Changed to {} mode",
-                                                new_subtype.label()
-                                            );
-
-                                            // Refresh tools for new subtype (strip define_tasks unless skill requires it)
-                                            tools = self
-                                                .tool_registry
-                                                .get_tool_definitions_for_subtype(tool_config, new_subtype);
-                                            if let Some(skill_tool) =
-                                                self.create_skill_tool_definition_for_subtype(new_subtype)
-                                            {
-                                                tools.push(skill_tool);
-                                            }
-                                            tools.extend(orchestrator.get_mode_tools());
-                                            {
-                                                let skill_requires_dt = orchestrator.context().active_skill
-                                                    .as_ref()
-                                                    .map(|s| s.requires_tools.iter().any(|t| t == "define_tasks"))
-                                                    .unwrap_or(false);
-                                                if !skill_requires_dt {
-                                                    tools.retain(|t| t.name != "define_tasks");
-                                                }
-                                            }
-
-                                            // Broadcast toolset update
-                                            self.broadcast_toolset_update(
-                                                original_message.channel_id,
-                                                &orchestrator.current_mode().to_string(),
-                                                new_subtype.as_str(),
-                                                &tools,
-                                            );
-                                        }
-                                    }
-                                }
-
-                                // Check if this tool requires user response (e.g., ask_user)
-                                if let Some(metadata) = &result.metadata {
-                                    if metadata.get("requires_user_response").and_then(|v| v.as_bool()).unwrap_or(false) {
-                                        waiting_for_user_response = true;
-                                        user_question_content = result.content.clone();
-                                        log::info!("[TEXT_ORCHESTRATED] Tool requires user response, will break after processing");
-                                    }
-                                    // Check if add_task was called - agent wants to insert a new task
-                                    if metadata.get("add_task").and_then(|v| v.as_bool()).unwrap_or(false) {
-                                        if let Some(desc) = metadata.get("task_description").and_then(|v| v.as_str()) {
-                                            let position = metadata.get("task_position")
-                                                .and_then(|v| v.as_str())
-                                                .unwrap_or("front");
-                                            let new_ids = match position {
-                                                "back" => orchestrator.append_task(desc.to_string()),
-                                                _ => orchestrator.insert_task_front(desc.to_string()),
-                                            };
-                                            log::info!(
-                                                "[TEXT_ORCHESTRATED] add_task: inserted task(s) {:?} at {} — '{}'",
-                                                new_ids, position, desc
-                                            );
-                                            // If task_fully_completed was already processed this turn,
-                                            // undo the completion since we now have pending tasks.
-                                            if orchestrator_complete && !orchestrator.all_tasks_complete() {
-                                                orchestrator_complete = false;
-                                                final_response.clear();
-                                                log::info!(
-                                                    "[TEXT_ORCHESTRATED] add_task: resetting orchestrator_complete — new pending tasks exist"
-                                                );
-                                                self.advance_to_next_task_or_complete(
-                                                    original_message.channel_id,
-                                                    session_id,
-                                                    orchestrator,
-                                                );
-                                            }
-                                            self.broadcast_task_queue_update(
-                                                original_message.channel_id,
-                                                session_id,
-                                                orchestrator,
-                                            );
-                                        }
-                                    }
-                                    // Check if define_tasks was called - agent wants to replace the task queue
-                                    if metadata.get("define_tasks").and_then(|v| v.as_bool()).unwrap_or(false) {
-                                        if let Some(tasks) = metadata.get("tasks").and_then(|v| v.as_array()) {
-                                            let task_descriptions: Vec<String> = tasks
-                                                .iter()
-                                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                                .collect();
-                                            if !task_descriptions.is_empty() {
-                                                log::info!(
-                                                    "[TEXT_ORCHESTRATED] define_tasks: replacing queue with {} tasks",
-                                                    task_descriptions.len()
-                                                );
-                                                let ctx = orchestrator.context_mut();
-                                                ctx.task_queue =
-                                                    crate::ai::multi_agent::types::TaskQueue::from_descriptions(task_descriptions);
-                                                ctx.planner_completed = true;
-                                                ctx.mode = AgentMode::Assistant;
-                                                self.advance_to_next_task_or_complete(
-                                                    original_message.channel_id,
-                                                    session_id,
-                                                    orchestrator,
-                                                );
-                                                self.broadcast_task_queue_update(
-                                                    original_message.channel_id,
-                                                    session_id,
-                                                    orchestrator,
-                                                );
-                                            }
-                                        }
-                                    }
-                                    // Check if task_fully_completed was called - agent signals it's done
-                                    if metadata.get("task_fully_completed").and_then(|v| v.as_bool()).unwrap_or(false) {
-                                        orchestrator_complete = true;
-                                        if let Some(summary) = metadata.get("summary").and_then(|v| v.as_str()) {
-                                            final_response = summary.to_string();
-                                        } else {
-                                            final_response = result.content.clone();
-                                        }
-                                        // Capture summary for session memory if say_to_user wasn't called
-                                        if last_say_to_user_content.is_empty() {
-                                            last_say_to_user_content = final_response.clone();
-                                        }
-                                        log::info!("[TEXT_ORCHESTRATED] Task fully completed signal received");
-                                    }
-                                }
-
-                                // Capture say_to_user content for session memory
-                                if tool_call.tool_name == "say_to_user" && result.success {
-                                    last_say_to_user_content = result.content.clone();
-                                }
-
-                                // say_to_user with finished_task=true completes the current task.
-                                // If more tasks remain, advance to the next one and keep looping.
-                                // Only terminate the loop when ALL tasks are done (or no task queue exists).
-                                // In safe mode, say_to_user always terminates (no ongoing tasks).
-                                if tool_call.tool_name == "say_to_user" && result.success {
-                                    let finished_task = result.metadata.as_ref()
-                                        .and_then(|m| m.get("finished_task"))
-                                        .and_then(|v| v.as_bool())
-                                        .unwrap_or(false);
-                                    if finished_task || is_safe_mode {
-                                        if !orchestrator.task_queue_is_empty() && !is_safe_mode {
-                                            // Complete current task and try to advance
-                                            if let Some(completed_task_id) = orchestrator.complete_current_task() {
-                                                log::info!("[TEXT_ORCHESTRATED] say_to_user completed task {}", completed_task_id);
-                                                self.broadcast_task_status_change(
-                                                    original_message.channel_id,
-                                                    session_id,
-                                                    completed_task_id,
-                                                    "completed",
-                                                    &format!("Completed via say_to_user"),
-                                                );
-                                            }
-                                            match self.advance_to_next_task_or_complete(
-                                                original_message.channel_id,
-                                                session_id,
-                                                orchestrator,
-                                            ) {
-                                                TaskAdvanceResult::AllTasksComplete => {
-                                                    log::info!("[TEXT_ORCHESTRATED] say_to_user: all tasks done, terminating loop");
-                                                    orchestrator_complete = true;
-                                                }
-                                                TaskAdvanceResult::NextTaskStarted => {
-                                                    log::info!("[TEXT_ORCHESTRATED] say_to_user: advanced to next task, continuing loop");
-                                                    // Don't set orchestrator_complete — keep going
-                                                }
-                                                TaskAdvanceResult::InconsistentState => {
-                                                    log::warn!("[TEXT_ORCHESTRATED] say_to_user: inconsistent task state, terminating");
-                                                    orchestrator_complete = true;
-                                                }
-                                            }
-                                        } else {
-                                            // No task queue or safe mode — terminate immediately
-                                            log::info!("[TEXT_ORCHESTRATED] say_to_user terminating loop (finished_task={}, safe_mode={})", finished_task, is_safe_mode);
-                                            orchestrator_complete = true;
-                                        }
-                                    }
-                                }
-
-                                // Extract duration_ms from metadata if available
-                                let duration_ms = result.metadata.as_ref()
-                                    .and_then(|m| m.get("duration_ms"))
-                                    .and_then(|v| v.as_i64())
-                                    .unwrap_or(0);
-
-                                self.broadcaster.broadcast(GatewayEvent::tool_result(
-                                    original_message.channel_id,
-                                    Some(&original_message.chat_id),
-                                    &tool_call.tool_name,
-                                    result.success,
-                                    duration_ms,
-                                    &result.content,
-                                    is_safe_mode,
-                                ));
-
-                                // Execute AfterToolCall hooks (for auto-memory, etc.)
-                                if let Some(hook_manager) = &self.hook_manager {
-                                    use crate::hooks::{HookContext, HookEvent, HookResult};
-                                    let mut hook_context = HookContext::new(HookEvent::AfterToolCall)
-                                        .with_channel(original_message.channel_id, Some(session_id))
-                                        .with_tool(tool_call.tool_name.clone(), tool_call.tool_params.clone())
-                                        .with_tool_result(serde_json::json!({
-                                            "success": result.success,
-                                            "content": result.content,
-                                        }));
-                                    let hook_result = hook_manager.execute(HookEvent::AfterToolCall, &mut hook_context).await;
-                                    if let HookResult::Error(e) = hook_result {
-                                        log::warn!("Hook execution failed for tool '{}': {}", tool_call.tool_name, e);
-                                    }
-                                }
-
-                                // Save tool result to session
-                                let tool_result_msg = format!(
-                                    "**{}:** {}\n{}",
-                                    if result.success { "Result" } else { "Error" },
-                                    tool_call.tool_name,
-                                    result.content
-                                );
-                                if let Err(e) = self.db.add_session_message(
-                                    session_id,
-                                    DbMessageRole::ToolResult,
-                                    &tool_result_msg,
-                                    None,
-                                    Some(&tool_call.tool_name),
-                                    None,
-                                    None,
-                                ) {
-                                    log::error!("Failed to save tool result to session: {}", e);
-                                }
-
-                                result.content
-                            }
-                        };
-
-                        // Broadcast task list update after any orchestrator tool processing
-                        self.broadcast_tasks_update(original_message.channel_id, session_id, orchestrator);
+                        let tool_result_content = processed.result_content;
 
                         // Add to conversation
                         conversation.push(Message {
@@ -3480,113 +3285,21 @@ impl MessageDispatcher {
             }
         }
 
-        // Clear active skill when the orchestrator loop completes (not when paused for user response)
-        // so skill-enabled tools are reset for the next session
-        if orchestrator_complete || was_cancelled {
-            if orchestrator.context().active_skill.is_some() {
-                log::info!("[TEXT_ORCHESTRATED] Clearing active skill on session completion");
-                orchestrator.context_mut().active_skill = None;
-            }
-        }
-
-        // Save orchestrator context for next turn
-        if let Err(e) = self.db.save_agent_context(session_id, orchestrator.context()) {
-            log::warn!("[MULTI_AGENT] Failed to save context for session {}: {}", session_id, e);
-        }
-
-        // Update completion status based on how the loop ended
-        // This is critical for safe mode chats that don't use tasks - they would otherwise stay 'active' forever
-        if was_cancelled {
-            log::info!("[TEXT_ORCHESTRATED] Marking session {} as Cancelled", session_id);
-            if let Err(e) = self.db.update_session_completion_status(session_id, CompletionStatus::Cancelled) {
-                log::error!("[TEXT_ORCHESTRATED] Failed to update session completion status: {}", e);
-            }
-            self.broadcast_session_complete(original_message.channel_id, session_id);
-        } else if orchestrator_complete && !waiting_for_user_response {
-            // Session completed successfully (via say_to_user with finished_task, task_fully_completed, etc.)
-            log::info!("[TEXT_ORCHESTRATED] Marking session {} as Complete", session_id);
-            if let Err(e) = self.db.update_session_completion_status(session_id, CompletionStatus::Complete) {
-                log::error!("[TEXT_ORCHESTRATED] Failed to update session completion status: {}", e);
-            }
-            self.broadcast_session_complete(original_message.channel_id, session_id);
-            if memory_suppressed {
-                log::info!("[TEXT_ORCHESTRATED] Skipping session memory — memory-excluded tool was called");
-            } else {
-                self.save_session_completion_memory(
-                    &original_message.text,
-                    &last_say_to_user_content,
-                    is_safe_mode,
-                );
-            }
-        }
-        // Note: If waiting_for_user_response, session stays Active (correct behavior)
-        // Note: If max iterations hit without completion, session stays Active for potential retry
-
-        // If cancelled with work done, save a summary so context is preserved on resume
-        if was_cancelled && !tool_call_log.is_empty() {
-            let summary = format!(
-                "[Session stopped by user. Work completed before stop:]\n{}",
-                tool_call_log.join("\n")
-            );
-            log::info!("[TEXT_ORCHESTRATED] Saving cancellation summary with {} tool calls", tool_call_log.len());
-            if let Err(e) = self.db.add_session_message(
-                session_id,
-                DbMessageRole::Assistant,
-                &summary,
-                None,
-                None,
-                None,
-                None,
-            ) {
-                log::error!("Failed to save cancellation summary: {}", e);
-            }
-        }
-
-        // If waiting for user response, save context and return the question content
-        if waiting_for_user_response {
-            // Save the tool call log to the orchestrator context so the AI knows what it already did
-            if !tool_call_log.is_empty() {
-                let context_summary = format!(
-                    "Before asking the user, I already completed these actions:\n{}",
-                    tool_call_log.join("\n")
-                );
-                orchestrator.context_mut().waiting_for_user_context = Some(context_summary);
-                // Re-save context with the waiting_for_user_context
-                if let Err(e) = self.db.save_agent_context(session_id, orchestrator.context()) {
-                    log::warn!("[MULTI_AGENT] Failed to save context with user_context: {}", e);
-                }
-            }
-            return Ok(user_question_content);
-        }
-
-        // If say_to_user already delivered the response, return empty to avoid duplication
-        if !last_say_to_user_content.is_empty() {
-            log::info!("[TEXT_ORCHESTRATED] say_to_user already delivered response, suppressing final_response");
-            return Ok(String::new());
-        }
-
-        if final_response.is_empty() {
-            // Empty response with work done - save summary
-            if !tool_call_log.is_empty() {
-                let summary = format!(
-                    "[Session ended with empty response. Work completed:]\n{}",
-                    tool_call_log.join("\n")
-                );
-                log::info!("[TEXT_ORCHESTRATED] Saving empty-response summary with {} tool calls", tool_call_log.len());
-                let _ = self.db.add_session_message(
-                    session_id,
-                    DbMessageRole::Assistant,
-                    &summary,
-                    None,
-                    None,
-                    None,
-                    None,
-                );
-            }
-            return Err("AI returned empty response".to_string());
-        }
-
-        Ok(final_response)
+        self.finalize_tool_loop(
+            original_message,
+            session_id,
+            is_safe_mode,
+            orchestrator,
+            orchestrator_complete,
+            was_cancelled,
+            waiting_for_user_response,
+            memory_suppressed,
+            &last_say_to_user_content,
+            &tool_call_log,
+            &final_response,
+            &user_question_content,
+            max_tool_iterations,
+        )
     }
 
     /// Execute the special "use_skill" tool

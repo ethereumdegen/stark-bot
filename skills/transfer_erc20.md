@@ -1,7 +1,7 @@
 ---
 name: transfer_erc20
 description: "Transfer (Send) ERC20 tokens on Base/Ethereum using the burner wallet"
-version: 2.0.0
+version: 2.1.0
 author: starkbot
 homepage: https://basescan.org
 metadata: {"requires_auth": false, "clawdbot":{"emoji":"🪙"}}
@@ -28,7 +28,7 @@ Call `define_tasks` with all 4 tasks in order:
   "TASK 1 — Prepare: select network (if specified), look up token, check token balance, check ETH for gas. See transfer_erc20 skill 'Task 1'.",
   "TASK 2 — Set up: set recipient address, convert amount to raw units. See transfer_erc20 skill 'Task 2'.",
   "TASK 3 — Execute: call erc20_transfer preset, then broadcast_web3_tx. See transfer_erc20 skill 'Task 3'.",
-  "TASK 4 — Verify: call verify_tx_broadcast, report result. See transfer_erc20 skill 'Task 4'."
+  "TASK 4 — Verify the transfer result and report to the user. See transfer_erc20 skill 'Task 4'."
 ]}
 ```
 
@@ -113,10 +113,7 @@ Wait for the result. Extract the `uuid` from the response.
 {"tool": "broadcast_web3_tx", "uuid": "<uuid_from_3a>"}
 ```
 
-After broadcast succeeds:
-```json
-{"tool": "task_fully_completed", "summary": "Transfer broadcast. Verifying next."}
-```
+The task auto-completes when `broadcast_web3_tx` succeeds.
 
 ---
 

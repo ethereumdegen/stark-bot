@@ -148,6 +148,36 @@ impl IdentityRegistry {
         decode_address_result(&result)
     }
 
+    /// Get number of identity NFTs owned by an address
+    pub async fn balance_of(&self, owner: &str) -> Result<u64, String> {
+        if !self.is_deployed() {
+            return Err("Identity Registry not deployed".to_string());
+        }
+
+        let rpc = self.get_free_rpc()?;
+        let registry_addr = self.parse_registry_address()?;
+        let calldata = encode_balance_of(owner);
+
+        let result = rpc.eth_call(registry_addr, &calldata).await?;
+
+        decode_uint256_result(&result)
+    }
+
+    /// Get token ID by owner address and index (ERC-721 Enumerable)
+    pub async fn token_of_owner_by_index(&self, owner: &str, index: u64) -> Result<u64, String> {
+        if !self.is_deployed() {
+            return Err("Identity Registry not deployed".to_string());
+        }
+
+        let rpc = self.get_free_rpc()?;
+        let registry_addr = self.parse_registry_address()?;
+        let calldata = encode_token_of_owner_by_index(owner, index);
+
+        let result = rpc.eth_call(registry_addr, &calldata).await?;
+
+        decode_uint256_result(&result)
+    }
+
     /// Check if an agent exists
     pub async fn agent_exists(&self, agent_id: u64) -> Result<bool, String> {
         match self.get_owner(agent_id).await {

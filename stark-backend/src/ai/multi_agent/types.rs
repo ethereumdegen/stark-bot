@@ -39,6 +39,9 @@ pub struct PlannerTask {
     pub id: u32,
     pub description: String,
     pub status: TaskStatus,
+    /// If set, this task auto-completes when the named tool succeeds
+    #[serde(default)]
+    pub auto_complete_tool: Option<String>,
 }
 
 impl PlannerTask {
@@ -47,6 +50,7 @@ impl PlannerTask {
             id,
             description,
             status: TaskStatus::Pending,
+            auto_complete_tool: None,
         }
     }
 }
@@ -170,6 +174,64 @@ impl TaskQueue {
         new_ids
     }
 
+    /// System/meta tool names excluded from auto-complete matching
+    const AUTO_COMPLETE_EXCLUDED_TOOLS: &'static [&'static str] = &[
+        "say_to_user",
+        "task_fully_completed",
+        "define_tasks",
+        "set_agent_subtype",
+        "add_task",
+        "ask_user",
+        "subagent",
+        "subagent_status",
+        "use_skill",
+        "manage_skills",
+    ];
+
+    /// Create a task queue with auto-complete tool matching.
+    /// For each task description, scans for tool names (case-insensitive substring).
+    /// If multiple match, picks the longest (most specific).
+    /// System/meta tools are excluded from matching.
+    pub fn from_descriptions_with_tool_matching(
+        descriptions: Vec<String>,
+        tool_names: &[String],
+    ) -> Self {
+        let tasks = descriptions
+            .into_iter()
+            .enumerate()
+            .map(|(i, desc)| {
+                let desc_lower = desc.to_lowercase();
+                let mut best_match: Option<&String> = None;
+                let mut best_len = 0;
+                for name in tool_names {
+                    // Skip system/meta tools
+                    if Self::AUTO_COMPLETE_EXCLUDED_TOOLS.contains(&name.as_str()) {
+                        continue;
+                    }
+                    let name_lower = name.to_lowercase();
+                    if desc_lower.contains(&name_lower) && name.len() > best_len {
+                        best_match = Some(name);
+                        best_len = name.len();
+                    }
+                }
+                let mut task = PlannerTask::new((i + 1) as u32, desc);
+                task.auto_complete_tool = best_match.cloned();
+                if let Some(ref tool) = task.auto_complete_tool {
+                    log::info!(
+                        "[TASK_QUEUE] Task {}: auto_complete_tool = '{}'",
+                        task.id,
+                        tool
+                    );
+                }
+                task
+            })
+            .collect();
+        Self {
+            tasks,
+            current_task_idx: None,
+        }
+    }
+
     /// Append new tasks at the end of the queue.
     /// Returns the IDs of the newly created tasks.
     pub fn append_tasks(&mut self, descriptions: Vec<String>) -> Vec<u32> {
@@ -271,6 +333,86 @@ mod task_queue_tests {
         assert_eq!(ids.len(), 1);
         assert_eq!(queue.tasks[0].description, "New task");
     }
+
+    // =========================================================================
+    // Auto-complete tool matching tests
+    // =========================================================================
+
+    #[test]
+    fn test_auto_complete_basic_match() {
+        let tools = vec!["token_lookup".to_string(), "web_fetch".to_string()];
+        let queue = TaskQueue::from_descriptions_with_tool_matching(
+            vec!["Look up the token price using token_lookup".to_string()],
+            &tools,
+        );
+        assert_eq!(queue.tasks[0].auto_complete_tool, Some("token_lookup".to_string()));
+    }
+
+    #[test]
+    fn test_auto_complete_no_match() {
+        let tools = vec!["token_lookup".to_string(), "web_fetch".to_string()];
+        let queue = TaskQueue::from_descriptions_with_tool_matching(
+            vec!["Tell the user the final answer".to_string()],
+            &tools,
+        );
+        assert_eq!(queue.tasks[0].auto_complete_tool, None);
+    }
+
+    #[test]
+    fn test_auto_complete_longest_wins() {
+        let tools = vec![
+            "web3".to_string(),
+            "web3_preset_function_call".to_string(),
+        ];
+        let queue = TaskQueue::from_descriptions_with_tool_matching(
+            vec!["Call web3_preset_function_call to get balance".to_string()],
+            &tools,
+        );
+        assert_eq!(
+            queue.tasks[0].auto_complete_tool,
+            Some("web3_preset_function_call".to_string())
+        );
+    }
+
+    #[test]
+    fn test_auto_complete_case_insensitive() {
+        let tools = vec!["token_lookup".to_string()];
+        let queue = TaskQueue::from_descriptions_with_tool_matching(
+            vec!["Use TOKEN_LOOKUP to find the price".to_string()],
+            &tools,
+        );
+        assert_eq!(queue.tasks[0].auto_complete_tool, Some("token_lookup".to_string()));
+    }
+
+    #[test]
+    fn test_auto_complete_excludes_system_tools() {
+        let tools = vec![
+            "say_to_user".to_string(),
+            "task_fully_completed".to_string(),
+            "define_tasks".to_string(),
+            "set_agent_subtype".to_string(),
+            "token_lookup".to_string(),
+        ];
+        let queue = TaskQueue::from_descriptions_with_tool_matching(
+            vec![
+                "Use say_to_user to respond".to_string(),
+                "Call define_tasks to plan".to_string(),
+                "Look up token_lookup".to_string(),
+            ],
+            &tools,
+        );
+        assert_eq!(queue.tasks[0].auto_complete_tool, None);
+        assert_eq!(queue.tasks[1].auto_complete_tool, None);
+        assert_eq!(queue.tasks[2].auto_complete_tool, Some("token_lookup".to_string()));
+    }
+
+    #[test]
+    fn test_auto_complete_serde_backward_compat() {
+        // Old JSON without auto_complete_tool field should deserialize fine
+        let json = r#"{"id": 1, "description": "test", "status": "pending"}"#;
+        let task: PlannerTask = serde_json::from_str(json).unwrap();
+        assert_eq!(task.auto_complete_tool, None);
+    }
 }
 
 /// The specialized mode/persona of the agent
@@ -370,7 +512,7 @@ impl AgentSubtype {
                     ]),
                     AgentSubtype::Secretary => tags.extend([
                         "social", "marketing", "messaging", "moltx", "scheduling", "communication",
-                        "social-media", "secretary", "journal", "discord", "twitter", "4claw",
+                        "social-media", "secretary", "journal", "discord", "telegram", "twitter", "4claw",
                         "x402", "cron", "moltbook", "publishing", "content",
                     ]),
                     AgentSubtype::None => unreachable!(),

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, KeyboardEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Send, RotateCcw, Copy, Check, Wallet, Bug, Square, Loader2, ChevronDown, CheckCircle, Circle } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import ChatMessage from '@/components/chat/ChatMessage';
@@ -139,6 +139,7 @@ export default function AgentChat() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { connected, on, off } = useGateway();
   const { address, usdcBalance, isConnected: walletConnected, isLoading: walletLoading, error: walletError, isCorrectNetwork, currentNetwork, switchNetwork, walletMode } = useWallet();
 
@@ -160,6 +161,17 @@ export default function AgentChat() {
       localStorage.setItem(STORAGE_KEY_SUBTYPE, JSON.stringify(agentSubtype));
     }
   }, [agentSubtype]);
+
+  // Pre-fill input from ?message= query param
+  useEffect(() => {
+    const message = searchParams.get('message');
+    if (message) {
+      setInput(message);
+      searchParams.delete('message');
+      setSearchParams(searchParams, { replace: true });
+      setTimeout(() => inputRef.current?.focus(), 100);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close dropdowns when clicking outside
   useEffect(() => {

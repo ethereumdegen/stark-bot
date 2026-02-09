@@ -398,17 +398,47 @@ impl TelegramReadTool {
         // If a chatId is provided, look up that specific chat's session.
         // Otherwise use the current session_id from context.
         let (session_id, chat_label) = if let Some(chat_id) = &params.chat_id {
-            // Build session key: telegram:{channel_id}:{chat_id}
-            let channel_id = context.channel_id.unwrap_or(0);
-            let session_key = format!("telegram:{}:{}", channel_id, chat_id);
+            // Build candidate session keys. When called cross-channel (e.g. from Discord or web),
+            // context.channel_id is the *calling* channel, not the Telegram channel.
+            // We try the current channel first, then fall back to all Telegram channels in the DB.
+            let mut candidate_channel_ids: Vec<i64> = Vec::new();
 
-            match db.get_chat_session_by_key(&session_key) {
-                Ok(Some(session)) => (session.id, format!("chat {}", chat_id)),
-                Ok(None) => return ToolResult::error(format!(
+            // If we're already on a Telegram channel, try it first
+            if context.channel_type.as_deref() == Some("telegram") {
+                if let Some(cid) = context.channel_id {
+                    candidate_channel_ids.push(cid);
+                }
+            }
+
+            // Fall back: collect all Telegram channel IDs from the DB
+            if let Ok(channels) = db.list_channels() {
+                for ch in channels {
+                    if ch.channel_type == "telegram" && !candidate_channel_ids.contains(&ch.id) {
+                        candidate_channel_ids.push(ch.id);
+                    }
+                }
+            }
+
+            // Try each candidate until we find a matching session
+            let mut found_session = None;
+            for cid in &candidate_channel_ids {
+                let session_key = format!("telegram:{}:{}", cid, chat_id);
+                match db.get_chat_session_by_key(&session_key) {
+                    Ok(Some(session)) => {
+                        found_session = Some(session);
+                        break;
+                    }
+                    Ok(None) => continue,
+                    Err(e) => return ToolResult::error(format!("Database error looking up session: {}", e)),
+                }
+            }
+
+            match found_session {
+                Some(session) => (session.id, format!("chat {}", chat_id)),
+                None => return ToolResult::error(format!(
                     "No active session found for Telegram chat {}. The bot may not have interacted in that chat yet.",
                     chat_id
                 )),
-                Err(e) => return ToolResult::error(format!("Database error looking up session: {}", e)),
             }
         } else if let Some(sid) = context.session_id {
             (sid, "current chat".to_string())

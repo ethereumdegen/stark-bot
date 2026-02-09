@@ -27,9 +27,9 @@ pub use bash::{
 };
 pub use code::{CommitterTool, DeployTool, PrQualityTool};
 pub use core::{
-    AddTaskTool, DefineTasksTool, AgentSendTool, ApiKeysCheckTool, AskUserTool, InstallApiKeyTool,
-    ManageSkillsTool, ModifyIdentityTool, ModifySoulTool, SayToUserTool, SetAgentSubtypeTool, SubagentStatusTool,
-    SubagentTool, TaskFullyCompletedTool,
+    AddTaskTool, DefineTasksTool, AgentSendTool, ApiKeysCheckTool, AskUserTool, ImportIdentityTool,
+    InstallApiKeyTool, ManageSkillsTool, ModifyIdentityTool, ModifySoulTool, SayToUserTool,
+    SetAgentSubtypeTool, SubagentStatusTool, SubagentTool, TaskFullyCompletedTool,
 };
 pub use cryptocurrency::{
     load_networks, load_tokens, BridgeUsdcTool, BroadcastWeb3TxTool, DecodeCalldataTool,

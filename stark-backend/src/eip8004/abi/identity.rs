@@ -14,6 +14,8 @@ pub const GET_AGENT_WALLET_SELECTOR: [u8; 4] = [0xa8, 0x7d, 0x94, 0x2c]; // getA
 pub const SET_AGENT_WALLET_SELECTOR: [u8; 4] = [0xd4, 0x5c, 0x44, 0x35]; // setAgentWallet(uint256,address,uint256,bytes)
 pub const GET_METADATA_SELECTOR: [u8; 4] = [0xa3, 0xdb, 0x80, 0xe2]; // getMetadata(uint256,string)
 pub const SET_METADATA_SELECTOR: [u8; 4] = [0x5d, 0x3a, 0x1f, 0x9d]; // setMetadata(uint256,string,bytes)
+pub const BALANCE_OF_SELECTOR: [u8; 4] = [0x70, 0xa0, 0x82, 0x31]; // balanceOf(address)
+pub const TOKEN_OF_OWNER_BY_INDEX_SELECTOR: [u8; 4] = [0x2f, 0x74, 0x5c, 0x59]; // tokenOfOwnerByIndex(address,uint256)
 
 /// Encode register(string agentURI) call
 pub fn encode_register(agent_uri: &str) -> Vec<u8> {
@@ -149,6 +151,23 @@ pub fn encode_set_metadata(agent_id: u64, metadata_key: &str, metadata_value: &[
     calldata
 }
 
+/// Encode balanceOf(address owner) call
+pub fn encode_balance_of(owner: &str) -> Vec<u8> {
+    let mut calldata = Vec::new();
+    calldata.extend_from_slice(&BALANCE_OF_SELECTOR);
+    calldata.extend(encode_address(owner));
+    calldata
+}
+
+/// Encode tokenOfOwnerByIndex(address owner, uint256 index) call
+pub fn encode_token_of_owner_by_index(owner: &str, index: u64) -> Vec<u8> {
+    let mut calldata = Vec::new();
+    calldata.extend_from_slice(&TOKEN_OF_OWNER_BY_INDEX_SELECTOR);
+    calldata.extend(encode_address(owner));
+    calldata.extend(encode_uint256(index));
+    calldata
+}
+
 /// Decode tokenURI result
 pub fn decode_token_uri_result(data: &[u8]) -> Result<String, String> {
     if data.len() < 64 {
@@ -200,5 +219,19 @@ mod tests {
         let calldata = encode_owner_of(1);
         assert!(calldata.starts_with(&OWNER_OF_SELECTOR));
         assert_eq!(calldata.len(), 36);
+    }
+
+    #[test]
+    fn test_encode_balance_of() {
+        let calldata = encode_balance_of("0x1234567890AbCdEf1234567890aBcDeF12345678");
+        assert!(calldata.starts_with(&BALANCE_OF_SELECTOR));
+        assert_eq!(calldata.len(), 36); // 4 + 32
+    }
+
+    #[test]
+    fn test_encode_token_of_owner_by_index() {
+        let calldata = encode_token_of_owner_by_index("0x1234567890AbCdEf1234567890aBcDeF12345678", 0);
+        assert!(calldata.starts_with(&TOKEN_OF_OWNER_BY_INDEX_SELECTOR));
+        assert_eq!(calldata.len(), 68); // 4 + 32 + 32
     }
 }

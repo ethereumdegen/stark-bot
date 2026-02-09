@@ -1,8 +1,12 @@
-import { MessageSquare, Calendar, Wrench, Zap } from 'lucide-react';
+import { MessageSquare, Calendar, Wrench, Zap, Sparkles } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import Card, { CardContent } from '@/components/ui/Card';
 import { useApi } from '@/hooks/useApi';
 
+const APP_VERSION = '0.5.17';
+
 export default function Dashboard() {
+  const navigate = useNavigate();
   const { data: sessions } = useApi<Array<unknown>>('/sessions');
   const { data: tools } = useApi<Array<unknown>>('/tools');
   const { data: skills } = useApi<Array<unknown>>('/skills');
@@ -121,6 +125,16 @@ export default function Dashboard() {
             </div>
           </CardContent>
         </Card>
+      </div>
+
+      <div className="mt-8 flex justify-center">
+        <button
+          onClick={() => navigate(`/agent-chat?message=${encodeURIComponent(`What's new in version ${APP_VERSION}?`)}`)}
+          className="flex items-center gap-2 px-6 py-3 rounded-lg bg-stark-500/20 border border-stark-500/30 text-stark-400 hover:bg-stark-500/30 hover:text-stark-300 transition-colors"
+        >
+          <Sparkles className="w-5 h-5" />
+          <span>What's new in version {APP_VERSION}?</span>
+        </button>
       </div>
     </div>
   );

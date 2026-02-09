@@ -30,6 +30,7 @@ fn register_all_tools(registry: &mut ToolRegistry) {
     registry.register(Arc::new(builtin::QmdMemoryReadTool::new()));
     registry.register(Arc::new(builtin::ModifySoulTool::new()));
     registry.register(Arc::new(builtin::ModifyIdentityTool::new()));
+    registry.register(Arc::new(builtin::ImportIdentityTool::new()));
     registry.register(Arc::new(builtin::ApiKeysCheckTool::new()));
     registry.register(Arc::new(builtin::TaskFullyCompletedTool::new()));
     registry.register(Arc::new(builtin::AddTaskTool::new()));

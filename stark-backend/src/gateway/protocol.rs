@@ -1105,7 +1105,8 @@ impl GatewayEvent {
                 serde_json::json!({
                     "id": t.id,
                     "description": t.description,
-                    "status": t.status.to_string()
+                    "status": t.status.to_string(),
+                    "auto_complete_tool": t.auto_complete_tool
                 })
             })
             .collect();

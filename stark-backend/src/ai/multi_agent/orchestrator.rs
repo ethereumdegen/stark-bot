@@ -1,7 +1,7 @@
 //! Simplified orchestrator - manages agent context without mode transitions
 
 use super::tools;
-use super::types::{AgentContext, AgentMode, TaskQueue};
+use super::types::{AgentContext, AgentMode};
 use crate::tools::ToolDefinition;
 use serde_json::Value;
 
@@ -179,14 +179,25 @@ impl Orchestrator {
                 String::new()
             };
 
+            let auto_complete_hint = if let Some(ref tool_name) = task.auto_complete_tool {
+                format!(
+                    "\n\n**Note:** This task will auto-complete when `{}` succeeds. \
+                     You do NOT need to call `task_fully_completed` for this task.",
+                    tool_name
+                )
+            } else {
+                String::new()
+            };
+
             prompt.push_str(&format!(
-                "# >>> CURRENT TASK ({}/{}) <<<\n\n{}{}\n\n\
+                "# >>> CURRENT TASK ({}/{}) <<<\n\n{}{}{}\n\n\
                  **YOU MUST**: Complete ONLY this task. Do NOT skip ahead. \
                  When done, call `say_to_user` with `finished_task: true` or `task_fully_completed` with a summary.\n\n---\n\n",
                 completed + 1,
                 total,
                 task.description,
                 skill_instruction,
+                auto_complete_hint,
             ));
         }
 

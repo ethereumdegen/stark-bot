@@ -1,7 +1,7 @@
 ---
 name: uniswap_lp
 description: "Provide liquidity on Uniswap V4 (Base) — deposit to pools, withdraw, collect fees."
-version: 1.0.0
+version: 1.1.0
 author: starkbot
 homepage: https://app.uniswap.org
 metadata: {"requires_auth": false, "clawdbot":{"emoji":"🦄"}}
@@ -99,8 +99,8 @@ Report: current tick, sqrtPriceX96, liquidity, approximate price.
   "TASK 1 — Prepare: select Base, look up both tokens, check balances, read pool state (slot0 + liquidity). See LP skill 'Task 1'.",
   "TASK 2 — Approve: approve both tokens for Permit2 (skip if sufficient). See LP skill 'Task 2'.",
   "TASK 3 — Build tx: POST to Uniswap API /lp/create, cache response. See LP skill 'Task 3'.",
-  "TASK 4 — Execute: decode_calldata → uni_v4_modify_liquidities preset → broadcast. See LP skill 'Task 4'.",
-  "TASK 5 — Verify: verify_tx_broadcast, report position. See LP skill 'Task 5'."
+  "TASK 4 — Execute: decode calldata, call LP preset, then broadcast_web3_tx. See LP skill 'Task 4'.",
+  "TASK 5 — Verify the LP position result and report to the user. See LP skill 'Task 5'."
 ]}
 ```
 
@@ -313,10 +313,7 @@ This extracts `uni_lp_contract`, `uni_lp_param_0`, `uni_lp_param_1`, `uni_lp_val
 {"tool": "broadcast_web3_tx", "uuid": "<uuid>"}
 ```
 
-After broadcast:
-```json
-{"tool": "task_fully_completed", "summary": "LP position creation broadcast. Verifying next."}
-```
+The task auto-completes when `broadcast_web3_tx` succeeds.
 
 ---
 
@@ -347,8 +344,8 @@ Used to add more liquidity to an existing position.
 {"tool": "define_tasks", "tasks": [
   "TASK 1 — Prepare: select Base, look up tokens, check balances, read pool state. Get tokenId from user. See LP skill 'Increase Task 1'.",
   "TASK 2 — Approve: approve both tokens for Permit2 (skip if sufficient). See LP skill 'Task 2' (same as create).",
-  "TASK 3 — Build + Execute: POST to /lp/increase, decode, execute, broadcast. See LP skill 'Increase Task 3'.",
-  "TASK 4 — Verify: verify_tx_broadcast. See LP skill 'Task 5' (same as create)."
+  "TASK 3 — Build + Execute: POST to /lp/increase, decode, execute, then broadcast_web3_tx. See LP skill 'Increase Task 3'.",
+  "TASK 4 — Verify the result and report to the user. See LP skill 'Task 5' (same as create)."
 ]}
 ```
 
@@ -418,8 +415,8 @@ Then decode and execute (same as Create Task 4):
 ```json
 {"tool": "define_tasks", "tasks": [
   "TASK 1 — Prepare: select Base, get tokenId and withdrawal percentage from user, read pool state. See LP skill 'Decrease Task 1'.",
-  "TASK 2 — Build + Execute: POST to /lp/decrease, decode, execute, broadcast. See LP skill 'Decrease Task 2'.",
-  "TASK 3 — Verify: verify_tx_broadcast. See LP skill 'Task 5'.",
+  "TASK 2 — Build + Execute: POST to /lp/decrease, decode, execute, then broadcast_web3_tx. See LP skill 'Decrease Task 2'.",
+  "TASK 3 — Verify the result and report to the user. See LP skill 'Task 5'.",
   "TASK 4 — Report: report withdrawn amounts. See LP skill 'Decrease Task 4'."
 ]}
 ```
@@ -493,8 +490,8 @@ After verification, report the withdrawn token amounts and remaining position (i
 ```json
 {"tool": "define_tasks", "tasks": [
   "TASK 1 — Prepare: select Base, get tokenId from user, read pool state. See LP skill 'Collect Task 1'.",
-  "TASK 2 — Build + Execute: POST to /lp/claim, decode, execute, broadcast. See LP skill 'Collect Task 2'.",
-  "TASK 3 — Verify: verify_tx_broadcast, report collected fees. See LP skill 'Task 5'."
+  "TASK 2 — Build + Execute: POST to /lp/claim, decode, execute, then broadcast_web3_tx. See LP skill 'Collect Task 2'.",
+  "TASK 3 — Verify the result and report collected fees. See LP skill 'Task 5'."
 ]}
 ```
 

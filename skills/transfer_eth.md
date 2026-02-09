@@ -1,7 +1,7 @@
 ---
 name: transfer_eth
 description: "Transfer (Send) native ETH on Base/Ethereum using the burner wallet"
-version: 3.0.0
+version: 3.1.0
 author: starkbot
 homepage: https://basescan.org
 metadata: {"requires_auth": false, "clawdbot":{"emoji":"💸"}}
@@ -28,7 +28,7 @@ Call `define_tasks` with all 4 tasks in order:
   "TASK 1 — Prepare: select network (if specified), check ETH balance, report to user. See transfer_eth skill 'Task 1'.",
   "TASK 2 — Set up: set recipient address, convert amount to wei. See transfer_eth skill 'Task 2'.",
   "TASK 3 — Execute: call send_eth, then broadcast_web3_tx. See transfer_eth skill 'Task 3'.",
-  "TASK 4 — Verify: call verify_tx_broadcast, report result. See transfer_eth skill 'Task 4'."
+  "TASK 4 — Verify the transfer result and report to the user. See transfer_eth skill 'Task 4'."
 ]}
 ```
 
@@ -105,10 +105,7 @@ Wait for the result. Extract the `uuid` from the response.
 {"tool": "broadcast_web3_tx", "uuid": "<uuid_from_3a>"}
 ```
 
-After broadcast succeeds:
-```json
-{"tool": "task_fully_completed", "summary": "ETH transfer broadcast. Verifying next."}
-```
+The task auto-completes when `broadcast_web3_tx` succeeds.
 
 ---
 

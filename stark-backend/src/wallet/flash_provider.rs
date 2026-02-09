@@ -222,12 +222,13 @@ impl FlashWalletProvider {
         let item_count = rlp_data.item_count()
             .map_err(|e| format!("Failed to decode RLP: {}", e))?;
 
-        // EIP-1559 (type 2): 12 items [chain_id, nonce, max_priority, max_fee, gas, to, value, data, access_list, y_parity, r, s]
-        // EIP-2930 (type 1): 11 items [chain_id, nonce, gas_price, gas, to, value, data, access_list, y_parity, r, s]
-        if item_count < 11 {
+        // EIP-1559 (type 2): exactly 12 items [chain_id, nonce, max_priority, max_fee, gas, to, value, data, access_list, y_parity, r, s]
+        // EIP-2930 (type 1): exactly 11 items [chain_id, nonce, gas_price, gas, to, value, data, access_list, y_parity, r, s]
+        let expected_count = if tx_type == 0x02 { 12 } else { 11 };
+        if item_count != expected_count {
             return Err(format!(
-                "Unexpected RLP item count: {} (expected >= 11)",
-                item_count
+                "Unexpected RLP item count for type 0x{:02x}: {} (expected {})",
+                tx_type, item_count, expected_count
             ));
         }
 
@@ -238,6 +239,10 @@ impl FlashWalletProvider {
             .map_err(|e| format!("Failed to decode r: {}", e))?;
         let s: U256 = rlp_data.val_at(item_count - 1)
             .map_err(|e| format!("Failed to decode s: {}", e))?;
+
+        if y_parity > 1 {
+            return Err(format!("Invalid y_parity: {} (expected 0 or 1)", y_parity));
+        }
 
         // For EIP-1559/2930 typed transactions, v = y_parity (0 or 1)
         // ethers expects v as 0 or 1 for typed transactions (NOT 27/28)
@@ -478,14 +483,63 @@ impl WalletProvider for FlashWalletProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ethers::utils::rlp::RlpStream;
 
     #[test]
     fn test_env_vars_defined() {
-        // Just ensure the env var names are consistent
         assert_eq!(env_vars::FLASH_KEYSTORE_URL, "FLASH_KEYSTORE_URL");
         assert_eq!(env_vars::FLASH_TENANT_ID, "FLASH_TENANT_ID");
         assert_eq!(env_vars::FLASH_INSTANCE_TOKEN, "FLASH_INSTANCE_TOKEN");
     }
+
+    // ── helpers ──────────────────────────────────────────────────────
+
+    /// Build a type-2 (EIP-1559) signed tx with known signature values.
+    /// Returns the hex string WITH "0x" prefix.
+    fn build_signed_eip1559_tx(chain_id: u64, v: u64, r: U256, s: U256) -> String {
+        let mut stream = RlpStream::new_list(12);
+        stream.append(&chain_id);      // chain_id
+        stream.append(&0u64);          // nonce
+        stream.append(&1_000_000_000u64); // max_priority_fee_per_gas
+        stream.append(&2_000_000_000u64); // max_fee_per_gas
+        stream.append(&21_000u64);     // gas_limit
+        stream.append(&ethers::types::H160::zero()); // to
+        stream.append(&U256::from(1_000_000u64));     // value
+        stream.append(&Vec::<u8>::new()); // data (empty)
+        // access_list (empty list)
+        stream.begin_list(0);
+        stream.append(&v);             // y_parity
+        stream.append(&r);             // r
+        stream.append(&s);             // s
+        let rlp_bytes = stream.out();
+        // type byte 0x02 + RLP payload
+        let mut tx_bytes = vec![0x02u8];
+        tx_bytes.extend_from_slice(&rlp_bytes);
+        format!("0x{}", hex::encode(&tx_bytes))
+    }
+
+    /// Build a type-1 (EIP-2930) signed tx with known signature values.
+    fn build_signed_eip2930_tx(chain_id: u64, v: u64, r: U256, s: U256) -> String {
+        let mut stream = RlpStream::new_list(11);
+        stream.append(&chain_id);      // chain_id
+        stream.append(&0u64);          // nonce
+        stream.append(&1_000_000_000u64); // gas_price
+        stream.append(&21_000u64);     // gas_limit
+        stream.append(&ethers::types::H160::zero()); // to
+        stream.append(&U256::from(1_000_000u64));     // value
+        stream.append(&Vec::<u8>::new()); // data
+        // access_list (empty list)
+        stream.begin_list(0);
+        stream.append(&v);             // y_parity
+        stream.append(&r);             // r
+        stream.append(&s);             // s
+        let rlp_bytes = stream.out();
+        let mut tx_bytes = vec![0x01u8];
+        tx_bytes.extend_from_slice(&rlp_bytes);
+        format!("0x{}", hex::encode(&tx_bytes))
+    }
+
+    // ── parse_signature tests ───────────────────────────────────────
 
     #[test]
     fn test_parse_signature() {
@@ -493,5 +547,161 @@ mod tests {
         let sig_hex = "0x".to_string() + &"a".repeat(128) + "1b";
         let sig = FlashWalletProvider::parse_signature(&sig_hex).unwrap();
         assert_eq!(sig.v, 27); // 0x1b = 27
+    }
+
+    #[test]
+    fn test_parse_signature_v_normalization() {
+        // v=0 should be normalized to 27
+        let sig_hex_v0 = "0x".to_string() + &"a".repeat(128) + "00";
+        let sig = FlashWalletProvider::parse_signature(&sig_hex_v0).unwrap();
+        assert_eq!(sig.v, 27);
+
+        // v=1 should be normalized to 28
+        let sig_hex_v1 = "0x".to_string() + &"a".repeat(128) + "01";
+        let sig = FlashWalletProvider::parse_signature(&sig_hex_v1).unwrap();
+        assert_eq!(sig.v, 28);
+    }
+
+    #[test]
+    fn test_parse_signature_wrong_length() {
+        let short = "0x".to_string() + &"a".repeat(64);
+        let err = FlashWalletProvider::parse_signature(&short).unwrap_err();
+        assert!(err.contains("Invalid signature length"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_parse_signature_invalid_hex() {
+        // 130 chars but not valid hex
+        let bad = "0x".to_string() + &"zz".repeat(65);
+        let err = FlashWalletProvider::parse_signature(&bad).unwrap_err();
+        // Could fail at length check (zz repeat is 130 chars) or hex decode
+        assert!(
+            err.contains("Invalid signature") || err.contains("hex"),
+            "got: {}",
+            err
+        );
+    }
+
+    // ── extract_signature_from_signed_tx tests ──────────────────────
+
+    #[test]
+    fn test_extract_sig_eip1559_v0() {
+        let r = U256::from(0xdeadbeef_u64);
+        let s = U256::from(0xcafebabe_u64);
+        let tx = build_signed_eip1559_tx(1, 0, r, s);
+        let sig = FlashWalletProvider::extract_signature_from_signed_tx(&tx).unwrap();
+        assert_eq!(sig.v, 0);
+        assert_eq!(sig.r, r);
+        assert_eq!(sig.s, s);
+    }
+
+    #[test]
+    fn test_extract_sig_eip1559_v1() {
+        let r = U256::from(0x1234_u64);
+        let s = U256::from(0x5678_u64);
+        let tx = build_signed_eip1559_tx(1, 1, r, s);
+        let sig = FlashWalletProvider::extract_signature_from_signed_tx(&tx).unwrap();
+        assert_eq!(sig.v, 1);
+        assert_eq!(sig.r, r);
+        assert_eq!(sig.s, s);
+    }
+
+    #[test]
+    fn test_extract_sig_eip2930() {
+        let r = U256::from(0xabcd_u64);
+        let s = U256::from(0xef01_u64);
+        let tx = build_signed_eip2930_tx(1, 0, r, s);
+        let sig = FlashWalletProvider::extract_signature_from_signed_tx(&tx).unwrap();
+        assert_eq!(sig.v, 0);
+        assert_eq!(sig.r, r);
+        assert_eq!(sig.s, s);
+    }
+
+    #[test]
+    fn test_extract_sig_with_0x_prefix() {
+        let r = U256::from(1u64);
+        let s = U256::from(2u64);
+        let tx = build_signed_eip1559_tx(1, 0, r, s);
+        assert!(tx.starts_with("0x"));
+        let sig = FlashWalletProvider::extract_signature_from_signed_tx(&tx).unwrap();
+        assert_eq!(sig.r, r);
+        assert_eq!(sig.s, s);
+    }
+
+    #[test]
+    fn test_extract_sig_without_prefix() {
+        let r = U256::from(1u64);
+        let s = U256::from(2u64);
+        let tx = build_signed_eip1559_tx(1, 0, r, s);
+        let tx_no_prefix = tx.strip_prefix("0x").unwrap();
+        let sig = FlashWalletProvider::extract_signature_from_signed_tx(tx_no_prefix).unwrap();
+        assert_eq!(sig.r, r);
+        assert_eq!(sig.s, s);
+    }
+
+    #[test]
+    fn test_extract_sig_empty_tx() {
+        let err = FlashWalletProvider::extract_signature_from_signed_tx("").unwrap_err();
+        assert!(err.contains("Invalid signed tx hex") || err.contains("Empty"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_extract_sig_unsupported_type() {
+        // Legacy transaction (type 0xc0+ is RLP list prefix, not typed tx)
+        // Single byte 0x00 is "type 0" which we don't support
+        let err = FlashWalletProvider::extract_signature_from_signed_tx("0x00aabbcc").unwrap_err();
+        assert!(err.contains("Unsupported transaction type"), "got: {}", err);
+
+        // Unknown type 0x05
+        let err = FlashWalletProvider::extract_signature_from_signed_tx("0x05aabbcc").unwrap_err();
+        assert!(err.contains("Unsupported transaction type"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_extract_sig_invalid_hex() {
+        let err = FlashWalletProvider::extract_signature_from_signed_tx("0xZZZZZZ").unwrap_err();
+        assert!(err.contains("Invalid signed tx hex"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_extract_sig_truncated_rlp() {
+        // Type byte 0x02 followed by truncated/garbage RLP
+        let err = FlashWalletProvider::extract_signature_from_signed_tx("0x02ff").unwrap_err();
+        assert!(err.contains("Failed to decode RLP") || err.contains("Unexpected RLP item count"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_extract_sig_invalid_y_parity() {
+        // Build a tx with y_parity = 5 (invalid, must be 0 or 1)
+        let r = U256::from(1u64);
+        let s = U256::from(2u64);
+        let tx = build_signed_eip1559_tx(1, 5, r, s);
+        let err = FlashWalletProvider::extract_signature_from_signed_tx(&tx).unwrap_err();
+        assert!(err.contains("Invalid y_parity"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_extract_sig_wrong_item_count() {
+        // Build a type-2 RLP with only 11 items (should be 12)
+        let mut stream = RlpStream::new_list(11);
+        stream.append(&1u64);          // chain_id
+        stream.append(&0u64);          // nonce
+        stream.append(&1_000_000_000u64); // max_priority_fee
+        stream.append(&2_000_000_000u64); // max_fee
+        stream.append(&21_000u64);     // gas
+        stream.append(&ethers::types::H160::zero()); // to
+        stream.append(&U256::from(1_000_000u64));     // value
+        stream.append(&Vec::<u8>::new()); // data
+        stream.append(&0u64);          // y_parity
+        stream.append(&U256::from(1u64)); // r
+        stream.append(&U256::from(2u64)); // s
+        // Missing access_list — only 11 items for type-2 (should be 12)
+        let rlp_bytes = stream.out();
+        let mut tx_bytes = vec![0x02u8];
+        tx_bytes.extend_from_slice(&rlp_bytes);
+        let tx_hex = format!("0x{}", hex::encode(&tx_bytes));
+
+        let err = FlashWalletProvider::extract_signature_from_signed_tx(&tx_hex).unwrap_err();
+        assert!(err.contains("Unexpected RLP item count"), "got: {}", err);
     }
 }
