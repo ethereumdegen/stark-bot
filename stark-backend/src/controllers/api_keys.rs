@@ -44,6 +44,10 @@ pub enum ApiKeyId {
     TwitterAccessTokenSecret,
     #[strum(serialize = "RAILWAY_TOKEN")]
     RailwayToken,
+    #[strum(serialize = "SUPABASE_ACCESS_TOKEN")]
+    SupabaseAccessToken,
+    #[strum(serialize = "CLOUDFLARE_API_TOKEN")]
+    CloudflareApiToken,
 }
 
 impl ApiKeyId {
@@ -62,6 +66,8 @@ impl ApiKeyId {
             Self::TwitterAccessToken => "TWITTER_ACCESS_TOKEN",
             Self::TwitterAccessTokenSecret => "TWITTER_ACCESS_TOKEN_SECRET",
             Self::RailwayToken => "RAILWAY_TOKEN",
+            Self::SupabaseAccessToken => "SUPABASE_ACCESS_TOKEN",
+            Self::CloudflareApiToken => "CLOUDFLARE_API_TOKEN",
         }
     }
 
@@ -79,6 +85,8 @@ impl ApiKeyId {
             Self::TwitterAccessToken => Some(&["TWITTER_ACCESS_TOKEN"]),
             Self::TwitterAccessTokenSecret => Some(&["TWITTER_ACCESS_TOKEN_SECRET"]),
             Self::RailwayToken => Some(&["RAILWAY_API_TOKEN"]),
+            Self::SupabaseAccessToken => Some(&["SUPABASE_ACCESS_TOKEN"]),
+            Self::CloudflareApiToken => Some(&["CLOUDFLARE_API_TOKEN"]),
         }
     }
 
@@ -205,6 +213,28 @@ pub fn get_service_configs() -> Vec<ServiceConfig> {
             url: "https://railway.com/account/tokens",
             keys: vec![KeyConfig {
                 name: "RAILWAY_TOKEN",
+                label: "API Token",
+                secret: true,
+            }],
+        },
+        ServiceConfig {
+            group: "supabase",
+            label: "Supabase",
+            description: "Manage Supabase projects. Create a Personal Access Token from your dashboard.",
+            url: "https://supabase.com/dashboard/account/tokens",
+            keys: vec![KeyConfig {
+                name: "SUPABASE_ACCESS_TOKEN",
+                label: "Personal Access Token",
+                secret: true,
+            }],
+        },
+        ServiceConfig {
+            group: "cloudflare",
+            label: "Cloudflare",
+            description: "Manage Cloudflare Workers, Pages, and DNS. Create an API token from your dashboard.",
+            url: "https://dash.cloudflare.com/profile/api-tokens",
+            keys: vec![KeyConfig {
+                name: "CLOUDFLARE_API_TOKEN",
                 label: "API Token",
                 secret: true,
             }],

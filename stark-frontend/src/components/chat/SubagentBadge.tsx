@@ -20,9 +20,6 @@ export default function SubagentBadge({ subagents, onSubagentCancelled }: Subage
   // Only show running subagents
   const runningSubagents = subagents.filter(s => s.status === SubagentStatus.Running || s.status === SubagentStatus.Pending);
 
-  // Debug log
-  console.log('[SubagentBadge] Total:', subagents.length, 'Running:', runningSubagents.length, 'Statuses:', subagents.map(s => s.status));
-
   // Close dropdown when clicking outside
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -80,7 +77,7 @@ export default function SubagentBadge({ subagents, onSubagentCancelled }: Subage
 
       {/* Dropdown panel */}
       {isOpen && (
-        <div className="absolute right-0 top-full mt-2 w-80 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 overflow-hidden">
+        <div className="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-1.5rem)] bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 overflow-hidden">
           <div className="px-3 py-2 border-b border-slate-700 bg-slate-800/80">
             <h3 className="text-sm font-semibold text-white">Running Subagents</h3>
           </div>

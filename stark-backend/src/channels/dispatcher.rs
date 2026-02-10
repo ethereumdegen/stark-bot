@@ -914,7 +914,12 @@ impl MessageDispatcher {
                 let response_tokens = estimate_tokens(&response);
 
                 // Store AI response in session with token count
-                if let Err(e) = self.db.add_session_message(
+                // Skip empty responses — say_to_user already stored its content as an
+                // Assistant message during the tool loop, so an empty final response
+                // would just create a useless entry that gets filtered during context build.
+                if response.trim().is_empty() {
+                    log::info!("[DISPATCH] Skipping empty assistant response (say_to_user already stored)");
+                } else if let Err(e) = self.db.add_session_message(
                     session.id,
                     DbMessageRole::Assistant,
                     &response,
@@ -1931,6 +1936,24 @@ impl MessageDispatcher {
         // Capture say_to_user content for session memory
         if tool_name == "say_to_user" && result.success {
             *last_say_to_user_content = result.content.clone();
+
+            // Also store as an Assistant message so the content survives in conversation
+            // context for follow-up queries. ToolResult messages are filtered out when
+            // building AI context, so without this the AI loses all knowledge of what
+            // it communicated to the user in previous turns.
+            if let Err(e) = self.db.add_session_message(
+                session_id,
+                DbMessageRole::Assistant,
+                &result.content,
+                None,
+                None,
+                None,
+                Some(estimate_tokens(&result.content)),
+            ) {
+                log::error!("[ORCHESTRATED_LOOP] Failed to store say_to_user as assistant message: {}", e);
+            } else {
+                self.context_manager.update_context_tokens(session_id, estimate_tokens(&result.content));
+            }
         }
 
         // say_to_user with finished_task=true completes the current task.

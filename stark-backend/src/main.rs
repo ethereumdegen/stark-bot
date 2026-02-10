@@ -25,6 +25,7 @@ mod skills;
 mod tools;
 mod wallet;
 mod x402;
+mod erc8128;
 mod eip8004;
 mod hooks;
 mod tool_validators;

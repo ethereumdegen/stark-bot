@@ -62,6 +62,11 @@ RUN curl -fsSL "https://github.com/railwayapp/cli/releases/download/v4.29.0/rail
     | tar xz -C /usr/local/bin/ \
     && chmod +x /usr/local/bin/railway
 
+# Install Supabase CLI
+RUN curl -fsSL "https://github.com/supabase/cli/releases/download/v2.75.0/supabase_linux_amd64.tar.gz" \
+    | tar xz -C /usr/local/bin/ supabase \
+    && chmod +x /usr/local/bin/supabase
+
 # Copy the binary
 COPY --from=backend-builder /app/target/release/stark-backend /app/stark-backend-bin
 

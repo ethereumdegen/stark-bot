@@ -67,6 +67,8 @@ fn register_all_tools(registry: &mut ToolRegistry) {
     registry.register(Arc::new(builtin::GeckoTerminalTool::new()));
     // Cross-chain USDC bridging via Across Protocol
     registry.register(Arc::new(builtin::BridgeUsdcTool::new()));
+    // ERC-8128 signed HTTP requests (Ethereum identity)
+    registry.register(Arc::new(builtin::Erc8128FetchTool::new()));
 
     // Filesystem tools (read-only, shared)
     registry.register(Arc::new(builtin::ReadFileTool::new()));

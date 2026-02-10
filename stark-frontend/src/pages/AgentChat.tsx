@@ -1259,7 +1259,10 @@ export default function AgentChat() {
       setMessages((prev) => prev.filter(
         (m) => !(m.role === 'system' && m.content.startsWith('Still thinking'))
       ));
-      addMessage('assistant', response.response);
+      // Skip empty responses — say_to_user already delivered the content via WebSocket
+      if (response.response.trim()) {
+        addMessage('assistant', response.response);
+      }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to send message';
       const errorLower = errorMsg.toLowerCase();
@@ -1346,9 +1349,9 @@ export default function AgentChat() {
   return (
     <div className="flex flex-col h-screen">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700 bg-slate-800/50">
-        <div className="flex items-center gap-4">
-          <h1 className="text-xl font-bold text-white">Agent Chat</h1>
+      <div className="flex flex-wrap items-center px-3 sm:px-6 py-2 sm:py-4 gap-x-4 gap-y-2 border-b border-slate-700 bg-slate-800/50">
+        <div className="flex items-center gap-2 sm:gap-4 w-full sm:w-auto">
+          <h1 className="text-lg sm:text-xl font-bold text-white">Agent Chat</h1>
           <div
             className="flex items-center gap-2 bg-slate-700/50 px-2 py-1 rounded cursor-pointer hover:bg-slate-600/50 transition-colors"
             onClick={() => navigate('/sessions')}
@@ -1359,7 +1362,7 @@ export default function AgentChat() {
                 connected ? 'bg-green-400' : 'bg-red-400'
               }`}
             />
-            <span className="text-xs text-slate-500">Session:</span>
+            <span className="text-xs text-slate-500 hidden sm:inline">Session:</span>
             <span className="text-xs font-mono text-slate-300">
               {dbSessionId ? dbSessionId.toString(16).padStart(8, '0') : sessionId.slice(0, 8)}
             </span>
@@ -1381,77 +1384,10 @@ export default function AgentChat() {
               <span>{agentMode.label}</span>
             </div>
           )}
-          {/* Agent Subtype Dropdown */}
-          <div className="relative" ref={subtypeDropdownRef}>
-            <button
-              onClick={() => setSubtypeDropdownOpen(!subtypeDropdownOpen)}
-              className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium cursor-pointer transition-colors ${
-                agentSubtype
-                  ? agentSubtype.subtype === 'finance'
-                    ? 'bg-purple-500/20 text-purple-400 border border-purple-500/50 hover:bg-purple-500/30'
-                    : agentSubtype.subtype === 'code_engineer'
-                    ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/50 hover:bg-cyan-500/30'
-                    : 'bg-pink-500/20 text-pink-400 border border-pink-500/50 hover:bg-pink-500/30'
-                  : 'bg-slate-500/20 text-slate-400 border border-slate-500/50 hover:bg-slate-500/30'
-              }`}
-            >
-              <span>{
-                agentSubtype
-                  ? agentSubtype.subtype === 'finance' ? '💰' :
-                    agentSubtype.subtype === 'code_engineer' ? '🛠️' : '📱'
-                  : '🔧'
-              }</span>
-              <span>{agentSubtype?.label || 'Select Toolbox'}</span>
-              <ChevronDown className={`w-3 h-3 transition-transform ${subtypeDropdownOpen ? 'rotate-180' : ''}`} />
-            </button>
-            {subtypeDropdownOpen && (
-              <div className="absolute top-full left-0 mt-1 bg-slate-800 border border-slate-600 rounded-lg shadow-xl z-50 min-w-[160px] py-1">
-                {AGENT_SUBTYPES.map((st) => (
-                  <button
-                    key={st.subtype}
-                    onClick={() => {
-                      setAgentSubtype({ subtype: st.subtype, label: st.label });
-                      setSubtypeDropdownOpen(false);
-                    }}
-                    className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors ${
-                      agentSubtype?.subtype === st.subtype
-                        ? `${st.bgClass} ${st.textClass}`
-                        : 'text-slate-300 hover:bg-slate-700'
-                    }`}
-                  >
-                    <span>{st.emoji}</span>
-                    <span>{st.label}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
         </div>
 
-        {/* Debug Toggle + Wallet Info */}
-        <div className="flex items-center gap-4">
-          {/* Debug Toggle - to the left of wallet */}
-          <button
-            onClick={() => setDebugMode(!debugMode)}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-              debugMode
-                ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/50'
-                : 'bg-slate-700/50 text-slate-400 hover:text-slate-200 hover:bg-slate-700'
-            }`}
-            title="Toggle debug mode"
-          >
-            <Bug className="w-4 h-4" />
-            <span className="hidden sm:inline">Debug</span>
-            {/* Toggle switch */}
-            <div className={`w-8 h-4 rounded-full transition-colors ${debugMode ? 'bg-cyan-500' : 'bg-slate-600'}`}>
-              <div
-                className={`w-3 h-3 rounded-full bg-white transition-transform transform mt-0.5 ${
-                  debugMode ? 'translate-x-4 ml-0.5' : 'translate-x-0.5'
-                }`}
-              />
-            </div>
-          </button>
-
+        {/* Row 2: Wallet */}
+        <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
           {/* Wallet Info - always shown (no browser connection needed) */}
           {walletLoading ? (
             <div className="flex items-center gap-2 bg-slate-700/50 px-3 py-1.5 rounded-lg">
@@ -1505,7 +1441,7 @@ export default function AgentChat() {
                   <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform ${networkDropdownOpen ? 'rotate-180' : ''}`} />
                 </button>
                 {networkDropdownOpen && (
-                  <div className="absolute top-full right-0 mt-1 bg-slate-800 border border-slate-600 rounded-lg shadow-xl z-50 min-w-[160px] py-1">
+                  <div className="absolute top-full right-0 mt-1 bg-slate-800 border border-slate-600 rounded-lg shadow-xl z-50 min-w-[160px] max-w-[calc(100vw-1.5rem)] py-1">
                     {(Object.keys(SUPPORTED_NETWORKS) as SupportedNetwork[]).map((networkKey) => {
                       const network = SUPPORTED_NETWORKS[networkKey];
                       const isActive = currentNetwork?.name === network.name;
@@ -1541,6 +1477,77 @@ export default function AgentChat() {
               </span>
             </div>
           )}
+        </div>
+
+        {/* Row 3: Controls */}
+        <div className="flex items-center gap-2 sm:gap-4 w-full sm:w-auto sm:ml-auto flex-wrap">
+          {/* Agent Subtype Dropdown */}
+          <div className="relative" ref={subtypeDropdownRef}>
+            <button
+              onClick={() => setSubtypeDropdownOpen(!subtypeDropdownOpen)}
+              className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium cursor-pointer transition-colors ${
+                agentSubtype
+                  ? agentSubtype.subtype === 'finance'
+                    ? 'bg-purple-500/20 text-purple-400 border border-purple-500/50 hover:bg-purple-500/30'
+                    : agentSubtype.subtype === 'code_engineer'
+                    ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/50 hover:bg-cyan-500/30'
+                    : 'bg-pink-500/20 text-pink-400 border border-pink-500/50 hover:bg-pink-500/30'
+                  : 'bg-slate-500/20 text-slate-400 border border-slate-500/50 hover:bg-slate-500/30'
+              }`}
+            >
+              <span>{
+                agentSubtype
+                  ? agentSubtype.subtype === 'finance' ? '💰' :
+                    agentSubtype.subtype === 'code_engineer' ? '🛠️' : '📱'
+                  : '🔧'
+              }</span>
+              <span>{agentSubtype?.label || 'Select Toolbox'}</span>
+              <ChevronDown className={`w-3 h-3 transition-transform ${subtypeDropdownOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {subtypeDropdownOpen && (
+              <div className="absolute top-full left-0 mt-1 bg-slate-800 border border-slate-600 rounded-lg shadow-xl z-50 min-w-[160px] max-w-[calc(100vw-1.5rem)] py-1">
+                {AGENT_SUBTYPES.map((st) => (
+                  <button
+                    key={st.subtype}
+                    onClick={() => {
+                      setAgentSubtype({ subtype: st.subtype, label: st.label });
+                      setSubtypeDropdownOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors ${
+                      agentSubtype?.subtype === st.subtype
+                        ? `${st.bgClass} ${st.textClass}`
+                        : 'text-slate-300 hover:bg-slate-700'
+                    }`}
+                  >
+                    <span>{st.emoji}</span>
+                    <span>{st.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Debug Toggle */}
+          <button
+            onClick={() => setDebugMode(!debugMode)}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+              debugMode
+                ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/50'
+                : 'bg-slate-700/50 text-slate-400 hover:text-slate-200 hover:bg-slate-700'
+            }`}
+            title="Toggle debug mode"
+          >
+            <Bug className="w-4 h-4" />
+            <span className="hidden sm:inline">Debug</span>
+            {/* Toggle switch */}
+            <div className={`w-8 h-4 rounded-full transition-colors ${debugMode ? 'bg-cyan-500' : 'bg-slate-600'}`}>
+              <div
+                className={`w-3 h-3 rounded-full bg-white transition-transform transform mt-0.5 ${
+                  debugMode ? 'translate-x-4 ml-0.5' : 'translate-x-0.5'
+                }`}
+              />
+            </div>
+          </button>
 
           <SubagentBadge
             subagents={subagents}
@@ -1616,7 +1623,7 @@ export default function AgentChat() {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto p-3 sm:p-6">
         {messages.filter((m) => m.sessionId === sessionId).length === 0 ? (
           <div className="h-full flex items-center justify-center">
             <div className="text-center">
@@ -1718,7 +1725,7 @@ export default function AgentChat() {
       )}
 
       {/* Input */}
-      <div className="px-6 pb-6">
+      <div className="px-3 sm:px-6 pb-3 sm:pb-6">
         <div className="relative">
           {showAutocomplete && !isLoading && (
             <CommandAutocomplete

@@ -6455,7 +6455,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stark-backend"
-version = "0.5.18"
+version = "0.5.19"
 dependencies = [
  "actix-cors",
  "actix-files",
@@ -6492,6 +6492,7 @@ dependencies = [
  "serde_json",
  "serenity",
  "sha1",
+ "sha2",
  "slack-morphism",
  "strum 0.26.3",
  "teloxide",

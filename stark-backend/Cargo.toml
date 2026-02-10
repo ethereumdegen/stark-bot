@@ -68,6 +68,9 @@ urlencoding = "2"
 hmac = "0.12"
 sha1 = "0.10"
 
+# ERC-8128 Content-Digest (SHA-256)
+sha2 = "0.10"
+
 # Cron scheduling
 cron = "0.12"
 

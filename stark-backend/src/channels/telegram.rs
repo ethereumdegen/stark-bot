@@ -318,6 +318,12 @@ pub async fn start_telegram_listener(
 
                 // Only handle text messages
                 if let Some(text) = msg.text() {
+                    // Ignore messages from the bot itself to prevent self-triggered loops
+                    if msg.from().map(|u| u.id == bot_user_id).unwrap_or(false) {
+                        log::debug!("Telegram: Ignoring self-message from bot user {}", bot_user_id);
+                        return Ok(());
+                    }
+
                     // Passively log ALL messages for readHistory (before mention check)
                     let passive_user = msg.from();
                     let passive_user_id = passive_user.map(|u| u.id.to_string());
