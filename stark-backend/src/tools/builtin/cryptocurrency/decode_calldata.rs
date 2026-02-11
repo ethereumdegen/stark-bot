@@ -11,6 +11,7 @@ use crate::tools::registry::Tool;
 use crate::tools::types::{
     PropertySchema, ToolContext, ToolDefinition, ToolGroup, ToolInputSchema, ToolResult,
 };
+use crate::tools::ToolSafetyLevel;
 use async_trait::async_trait;
 use ethers::abi::{Abi, Token, ParamType};
 use serde::Deserialize;
@@ -423,5 +424,9 @@ impl Tool for DecodeCalldataTool {
             "contract_register": contract_key,
             "value_register": value_key,
         }))
+    }
+
+    fn safety_level(&self) -> ToolSafetyLevel {
+        ToolSafetyLevel::ReadOnly
     }
 }

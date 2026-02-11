@@ -11,6 +11,7 @@ use crate::tools::rpc_config::resolve_rpc_from_context;
 use crate::tools::types::{
     PropertySchema, ToolContext, ToolDefinition, ToolGroup, ToolInputSchema, ToolResult,
 };
+use crate::tools::ToolSafetyLevel;
 use crate::tx_queue::QueuedTxStatus;
 use crate::x402::{TxLog, X402EvmRpc};
 use async_trait::async_trait;
@@ -336,6 +337,10 @@ impl Tool for VerifyTxBroadcastTool {
                 "amount_raw": t.amount_raw,
             })).collect::<Vec<_>>(),
         }))
+    }
+
+    fn safety_level(&self) -> ToolSafetyLevel {
+        ToolSafetyLevel::ReadOnly
     }
 }
 

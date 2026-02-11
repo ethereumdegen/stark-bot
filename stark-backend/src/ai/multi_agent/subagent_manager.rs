@@ -333,13 +333,47 @@ impl SubAgentManager {
             .with_workspace(workspace_dir)
             .with_broadcaster(broadcaster.clone());
 
-        // Get tool configuration
-        let tool_config = db
+        // Get tool configuration — enforce safe mode and read_only restrictions
+        let mut tool_config = db
             .get_effective_tool_config(Some(context.parent_channel_id))
             .unwrap_or_default();
 
-        // Get available tools
-        let tools: Vec<ToolDefinition> = tool_registry.get_tool_definitions(&tool_config);
+        // SECURITY: If parent channel is in safe mode, override to safe mode config.
+        // Defense-in-depth — the subagent tool shouldn't be callable in safe mode,
+        // but if we ever get here, enforce the restriction.
+        let parent_channel_safe_mode = db
+            .get_channel(context.parent_channel_id)
+            .ok()
+            .flatten()
+            .map(|ch| ch.safe_mode)
+            .unwrap_or(false);
+
+        if parent_channel_safe_mode {
+            log::info!(
+                "[SUBAGENT] {} parent channel is safe mode — restricting to safe mode tools",
+                context.id
+            );
+            tool_config = crate::tools::ToolConfig::safe_mode();
+        }
+
+        // Get available tools — filtered by safety level when in restricted mode
+        let tools: Vec<ToolDefinition> = if parent_channel_safe_mode {
+            tool_registry.get_tool_definitions_at_safety_level(
+                &tool_config,
+                crate::tools::ToolSafetyLevel::SafeMode,
+            )
+        } else if context.read_only {
+            log::info!(
+                "[SUBAGENT] {} is read_only — restricting to read-only tools",
+                context.id
+            );
+            tool_registry.get_tool_definitions_at_safety_level(
+                &tool_config,
+                crate::tools::ToolSafetyLevel::ReadOnly,
+            )
+        } else {
+            tool_registry.get_tool_definitions(&tool_config)
+        };
 
         // Execute the AI with tool loop
         let max_iterations = 15; // Sub-agents get fewer iterations

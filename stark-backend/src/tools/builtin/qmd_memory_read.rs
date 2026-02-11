@@ -7,6 +7,7 @@ use crate::tools::registry::Tool;
 use crate::tools::types::{
     PropertySchema, ToolContext, ToolDefinition, ToolGroup, ToolInputSchema, ToolResult,
 };
+use crate::tools::ToolSafetyLevel;
 use async_trait::async_trait;
 use chrono::NaiveDate;
 use serde::Deserialize;
@@ -263,6 +264,10 @@ impl Tool for QmdMemoryReadTool {
             - `list`: true to see all available files\n\n\
             Example: `{\"type\": \"long_term\"}` to read persistent memories."
         )
+    }
+
+    fn safety_level(&self) -> ToolSafetyLevel {
+        ToolSafetyLevel::SafeMode
     }
 }
 

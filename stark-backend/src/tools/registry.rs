@@ -1,5 +1,5 @@
 use crate::ai::multi_agent::types::AgentSubtype;
-use crate::tools::types::{ToolConfig, ToolContext, ToolDefinition, ToolGroup, ToolResult};
+use crate::tools::types::{ToolConfig, ToolContext, ToolDefinition, ToolGroup, ToolResult, ToolSafetyLevel};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -22,6 +22,14 @@ pub trait Tool: Send + Sync {
     /// Returns the tool's group for access control
     fn group(&self) -> ToolGroup {
         self.definition().group
+    }
+
+    /// The safety level of this tool — determines availability in restricted contexts.
+    /// Defaults to Standard (only normal mode). Override to ReadOnly or SafeMode to
+    /// make the tool available in those restricted contexts.
+    /// New tools default to Standard so they can't accidentally leak into restricted modes.
+    fn safety_level(&self) -> ToolSafetyLevel {
+        ToolSafetyLevel::Standard
     }
 }
 
@@ -60,6 +68,28 @@ impl ToolRegistry {
     /// List all registered tools
     pub fn list(&self) -> Vec<&Arc<dyn Tool>> {
         self.tools.values().collect()
+    }
+
+    /// Get tools at or above a minimum safety level, filtered by config.
+    /// - ReadOnly: tools with safety_level >= ReadOnly (ReadOnly + SafeMode)
+    /// - SafeMode: tools with safety_level >= SafeMode (SafeMode only)
+    pub fn get_tools_at_safety_level(&self, config: &ToolConfig, min_level: ToolSafetyLevel) -> Vec<Arc<dyn Tool>> {
+        self.tools
+            .values()
+            .filter(|tool| {
+                tool.safety_level() >= min_level
+                    && config.is_tool_allowed(&tool.definition().name, tool.group())
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Get tool definitions at or above a minimum safety level, filtered by config.
+    pub fn get_tool_definitions_at_safety_level(&self, config: &ToolConfig, min_level: ToolSafetyLevel) -> Vec<ToolDefinition> {
+        self.get_tools_at_safety_level(config, min_level)
+            .iter()
+            .map(|tool| tool.definition())
+            .collect()
     }
 
     /// Get tools that are allowed by a configuration

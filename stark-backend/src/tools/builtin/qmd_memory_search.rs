@@ -7,6 +7,7 @@ use crate::tools::registry::Tool;
 use crate::tools::types::{
     PropertySchema, ToolContext, ToolDefinition, ToolGroup, ToolInputSchema, ToolResult,
 };
+use crate::tools::ToolSafetyLevel;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -157,6 +158,10 @@ impl Tool for QmdMemorySearchTool {
             }
             Err(e) => ToolResult::error(format!("Search failed: {}", e)),
         }
+    }
+
+    fn safety_level(&self) -> ToolSafetyLevel {
+        ToolSafetyLevel::SafeMode
     }
 }
 

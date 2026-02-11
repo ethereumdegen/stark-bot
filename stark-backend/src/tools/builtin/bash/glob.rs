@@ -2,6 +2,7 @@ use crate::tools::registry::Tool;
 use crate::tools::types::{
     PropertySchema, ToolContext, ToolDefinition, ToolGroup, ToolInputSchema, ToolResult,
 };
+use crate::tools::ToolSafetyLevel;
 use async_trait::async_trait;
 use glob::glob as glob_match;
 use serde::Deserialize;
@@ -263,6 +264,10 @@ impl Tool for GlobTool {
             "sort_by": sort_by,
             "limited": total_found == limit
         }))
+    }
+
+    fn safety_level(&self) -> ToolSafetyLevel {
+        ToolSafetyLevel::ReadOnly
     }
 }
 

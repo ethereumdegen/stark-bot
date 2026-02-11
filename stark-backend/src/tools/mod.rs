@@ -12,7 +12,7 @@ pub use register::{PresetOrCustom, RegisterStore};
 pub use registry::{Tool, ToolRegistry};
 pub use types::{
     ChannelOutputType, PropertySchema, ToolConfig, ToolContext, ToolDefinition, ToolExecution,
-    ToolGroup, ToolInputSchema, ToolProfile, ToolResult, SAFE_MODE_ALLOW_LIST,
+    ToolGroup, ToolInputSchema, ToolProfile, ToolResult, ToolSafetyLevel, SAFE_MODE_ALLOW_LIST,
 };
 
 use std::sync::Arc;

@@ -4,6 +4,7 @@ use crate::tools::registry::Tool;
 use crate::tools::types::{
     PropertySchema, ToolContext, ToolDefinition, ToolGroup, ToolInputSchema, ToolResult,
 };
+use crate::tools::ToolSafetyLevel;
 use async_trait::async_trait;
 use regex::Regex;
 use serde::Deserialize;
@@ -148,6 +149,10 @@ impl Tool for DiscordResolveUserTool {
             )),
             Err(e) => ToolResult::error(format!("Database error: {}", e)),
         }
+    }
+
+    fn safety_level(&self) -> ToolSafetyLevel {
+        ToolSafetyLevel::ReadOnly
     }
 }
 

@@ -9,6 +9,7 @@ use crate::tools::types::{
     ChannelOutputType, PropertySchema, ToolContext, ToolDefinition, ToolGroup, ToolInputSchema,
     ToolResult,
 };
+use crate::tools::ToolSafetyLevel;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
@@ -291,6 +292,10 @@ impl Tool for GeckoTerminalTool {
             Some(output) => ToolResult::success(output),
             None => ToolResult::error("Pool data incomplete — try a different query"),
         }
+    }
+
+    fn safety_level(&self) -> ToolSafetyLevel {
+        ToolSafetyLevel::ReadOnly
     }
 }
 

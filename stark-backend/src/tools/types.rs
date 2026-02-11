@@ -25,6 +25,24 @@ pub enum ChannelOutputType {
     RichHtml,
 }
 
+/// Safety level for tool access in restricted contexts.
+/// Determines where a tool can be used. Higher levels are available in more contexts.
+/// Defaults to Standard — new tools must explicitly opt in to be available in restricted modes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub enum ToolSafetyLevel {
+    /// Only available in normal (unrestricted) mode. NOT available to read-only subagents or safe mode.
+    /// This is the default — new tools start here so they can't accidentally leak into restricted contexts.
+    #[default]
+    Standard,
+    /// Available in normal mode AND read-only subagents. Can observe but no side effects.
+    /// Examples: read_file, grep, glob, web_fetch, dexscreener
+    ReadOnly,
+    /// Available everywhere: normal, read-only subagents, AND safe mode (untrusted users).
+    /// SECURITY: Only add tools here that are safe for completely untrusted external input.
+    /// Examples: say_to_user, token_lookup, memory_read, discord_read
+    SafeMode,
+}
+
 /// Tool groups for access control
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, EnumIter)]
 #[serde(rename_all = "lowercase")]

@@ -11,6 +11,7 @@ use crate::tools::registry::Tool;
 use crate::tools::types::{
     PropertySchema, ToolContext, ToolDefinition, ToolGroup, ToolInputSchema, ToolResult,
 };
+use crate::tools::ToolSafetyLevel;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
@@ -97,5 +98,9 @@ impl Tool for SayToUserTool {
         }
 
         result
+    }
+
+    fn safety_level(&self) -> ToolSafetyLevel {
+        ToolSafetyLevel::SafeMode
     }
 }

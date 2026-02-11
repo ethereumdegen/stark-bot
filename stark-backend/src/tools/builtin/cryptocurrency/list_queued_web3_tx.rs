@@ -8,6 +8,7 @@ use crate::tools::registry::Tool;
 use crate::tools::types::{
     PropertySchema, ToolContext, ToolDefinition, ToolGroup, ToolInputSchema, ToolResult,
 };
+use crate::tools::ToolSafetyLevel;
 use crate::tx_queue::QueuedTxStatus;
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -341,5 +342,9 @@ impl Tool for ListQueuedWeb3TxTool {
             "failed_count": failed_count,
             "transactions": tx_data
         }))
+    }
+
+    fn safety_level(&self) -> ToolSafetyLevel {
+        ToolSafetyLevel::ReadOnly
     }
 }
