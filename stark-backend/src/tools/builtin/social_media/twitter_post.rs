@@ -67,6 +67,7 @@ impl TwitterPostTool {
                     required: vec!["text".to_string()],
                 },
                 group: ToolGroup::Messaging,
+                hidden: false,
             },
         }
     }
@@ -170,7 +171,7 @@ impl Tool for TwitterPostTool {
             access_token.clone(),
             access_token_secret.clone(),
         );
-        let client = crate::http::shared_client().clone();
+        let client = context.http_client();
         let tier = check_subscription_tier(&client, &credentials).await;
         let max_chars = tier.max_tweet_chars();
         let char_count = params.text.chars().count();

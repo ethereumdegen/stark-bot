@@ -50,6 +50,7 @@ impl DeleteFileTool {
                     required: vec!["path".to_string()],
                 },
                 group: ToolGroup::Development,
+                hidden: false,
             },
         }
     }

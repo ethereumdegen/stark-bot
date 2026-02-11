@@ -70,6 +70,7 @@ impl WriteFileTool {
                     required: vec!["path".to_string(), "content".to_string()],
                 },
                 group: ToolGroup::Development,
+                hidden: false,
             },
         }
     }

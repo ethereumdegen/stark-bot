@@ -55,6 +55,7 @@ impl SetAgentSubtypeTool {
                     required: vec!["subtype".to_string()],
                 },
                 group: ToolGroup::System,
+                hidden: false,
             },
         }
     }

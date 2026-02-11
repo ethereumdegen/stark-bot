@@ -129,6 +129,7 @@ impl ModifyIdentityTool {
                     required: vec!["action".to_string()],
                 },
                 group: ToolGroup::System,
+                hidden: false,
             },
         }
     }

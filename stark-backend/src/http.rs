@@ -22,3 +22,14 @@ static SHARED_CLIENT: Lazy<Client> = Lazy::new(|| {
 pub fn shared_client() -> &'static Client {
     &SHARED_CLIENT
 }
+
+/// Build a new HTTP client configured to route all requests through the given proxy URL.
+/// Uses the same pool/timeout settings as the shared client.
+pub fn build_proxy_client(proxy_url: &str) -> Result<Client, reqwest::Error> {
+    Client::builder()
+        .proxy(reqwest::Proxy::all(proxy_url)?)
+        .pool_max_idle_per_host(5)
+        .pool_idle_timeout(Duration::from_secs(90))
+        .timeout(Duration::from_secs(120))
+        .build()
+}

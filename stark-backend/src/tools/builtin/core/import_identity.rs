@@ -48,6 +48,7 @@ impl ImportIdentityTool {
                     required: vec![],
                 },
                 group: ToolGroup::Finance,
+                hidden: false,
             },
         }
     }

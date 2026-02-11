@@ -108,6 +108,7 @@ impl ExecTool {
                     required: vec!["command".to_string()],
                 },
                 group: ToolGroup::Exec,
+                hidden: false,
             },
             max_timeout,
             security_mode,

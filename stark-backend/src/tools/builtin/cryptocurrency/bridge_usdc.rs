@@ -165,6 +165,7 @@ impl BridgeUsdcTool {
                     ],
                 },
                 group: ToolGroup::Finance,
+                hidden: false,
             },
         }
     }
@@ -444,7 +445,7 @@ impl Tool for BridgeUsdcTool {
         );
 
         // Call Across API
-        let http_client = crate::http::shared_client().clone();
+        let http_client = context.http_client();
         let url = format!(
             "{}/swap/approval?tradeType=exactInput&amount={}&inputToken={}&originChainId={}&outputToken={}&destinationChainId={}&depositor={}&recipient={}&slippage={}",
             ACROSS_API_URL,

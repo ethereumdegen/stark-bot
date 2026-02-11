@@ -137,6 +137,7 @@ impl TokenLookupTool {
                     required: vec!["symbol".to_string()],
                 },
                 group: ToolGroup::Finance,
+                hidden: false,
             },
         }
     }

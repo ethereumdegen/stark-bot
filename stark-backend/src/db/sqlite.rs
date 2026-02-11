@@ -384,6 +384,20 @@ impl Database {
             conn.execute("ALTER TABLE bot_settings ADD COLUMN theme_accent TEXT", [])?;
         }
 
+        // Migration: Add proxy_url column to bot_settings if it doesn't exist
+        let has_proxy_url: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('bot_settings') WHERE name='proxy_url'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap_or(false);
+
+        if !has_proxy_url {
+            conn.execute("ALTER TABLE bot_settings ADD COLUMN proxy_url TEXT", [])?;
+        }
+
         // Initialize bot_settings with defaults if empty
         let bot_settings_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM bot_settings", [], |row| row.get(0))

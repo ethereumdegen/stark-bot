@@ -83,6 +83,7 @@ impl DecodeCalldataTool {
                     required: vec!["abi".to_string(), "cache_as".to_string()],
                 },
                 group: ToolGroup::Finance,
+                hidden: false,
             },
         }
     }

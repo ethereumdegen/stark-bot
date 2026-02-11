@@ -41,6 +41,7 @@ impl TaskFullyCompletedTool {
                     required: vec!["summary".to_string()],
                 },
                 group: ToolGroup::System,
+                hidden: false,
             },
         }
     }

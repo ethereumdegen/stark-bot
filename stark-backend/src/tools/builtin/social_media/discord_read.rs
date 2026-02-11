@@ -123,6 +123,7 @@ impl DiscordReadTool {
                     required: vec!["action".to_string()],
                 },
                 group: ToolGroup::Messaging,
+                hidden: false,
             },
         }
     }
@@ -302,7 +303,7 @@ impl DiscordReadTool {
             Ok(t) => t,
             Err(e) => return e,
         };
-        let client = crate::http::shared_client().clone();
+        let client = context.http_client();
 
         let limit = params.limit.unwrap_or(50).min(100);
         let mut url = format!(
@@ -411,7 +412,7 @@ impl DiscordReadTool {
             Ok(t) => t,
             Err(e) => return e,
         };
-        let client = crate::http::shared_client().clone();
+        let client = context.http_client();
 
         let limit = params.limit.unwrap_or(25).min(25);
 
@@ -488,7 +489,7 @@ impl DiscordReadTool {
             Ok(t) => t,
             Err(e) => return e,
         };
-        let client = crate::http::shared_client().clone();
+        let client = context.http_client();
 
         let url = format!("https://discord.com/api/v10/channels/{}", channel_id);
 
@@ -548,7 +549,7 @@ impl DiscordReadTool {
             Ok(t) => t,
             Err(e) => return e,
         };
-        let client = crate::http::shared_client().clone();
+        let client = context.http_client();
 
         let url = format!(
             "https://discord.com/api/v10/guilds/{}/members/{}",
@@ -623,7 +624,7 @@ impl DiscordReadTool {
             Ok(t) => t,
             Err(e) => return e,
         };
-        let client = crate::http::shared_client().clone();
+        let client = context.http_client();
 
         let url = format!("https://discord.com/api/v10/guilds/{}/roles", guild_id);
 
@@ -688,7 +689,7 @@ impl DiscordReadTool {
             Ok(t) => t,
             Err(e) => return e,
         };
-        let client = crate::http::shared_client().clone();
+        let client = context.http_client();
 
         let url = format!("https://discord.com/api/v10/channels/{}", channel_id);
 
@@ -765,7 +766,7 @@ impl DiscordReadTool {
             Ok(t) => t,
             Err(e) => return e,
         };
-        let client = crate::http::shared_client().clone();
+        let client = context.http_client();
 
         let url = format!("https://discord.com/api/v10/guilds/{}/channels", guild_id);
 

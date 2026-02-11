@@ -40,6 +40,7 @@ impl ApiKeysCheckTool {
                     required: vec![],
                 },
                 group: ToolGroup::System,
+                hidden: false,
             },
         }
     }

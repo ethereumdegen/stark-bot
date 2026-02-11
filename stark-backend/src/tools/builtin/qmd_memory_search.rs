@@ -53,6 +53,7 @@ impl QmdMemorySearchTool {
                     required: vec!["query".to_string()],
                 },
                 group: ToolGroup::Memory,
+                hidden: false,
             },
         }
     }

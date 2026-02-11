@@ -51,6 +51,7 @@ impl InstallApiKeyTool {
                     required: vec!["service_name".to_string(), "api_key".to_string()],
                 },
                 group: ToolGroup::System,
+                hidden: false,
             },
         }
     }

@@ -95,6 +95,7 @@ impl GlobTool {
                     required: vec!["pattern".to_string()],
                 },
                 group: ToolGroup::Development,
+                hidden: false,
             },
         }
     }

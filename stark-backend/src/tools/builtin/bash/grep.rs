@@ -117,6 +117,7 @@ impl GrepTool {
                     required: vec!["pattern".to_string()],
                 },
                 group: ToolGroup::Development,
+                hidden: false,
             },
         }
     }

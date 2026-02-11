@@ -264,6 +264,7 @@ pub async fn update_bot_settings(
         request.chat_session_memory_generation,
         request.guest_dashboard_enabled,
         request.theme_accent.as_deref(),
+        request.proxy_url.as_deref(),
     ) {
         Ok(settings) => {
             log::info!(

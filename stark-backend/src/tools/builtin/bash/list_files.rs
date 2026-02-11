@@ -121,6 +121,7 @@ impl ListFilesTool {
                     required: vec![],
                 },
                 group: ToolGroup::Filesystem,
+                hidden: false,
             },
         }
     }

@@ -88,6 +88,7 @@ impl X402PostTool {
                     required: vec!["url".to_string()],
                 },
                 group: ToolGroup::Finance,
+                hidden: false,
             },
         }
     }
@@ -261,7 +262,7 @@ impl Tool for X402PostTool {
             None
         };
 
-        let client = crate::http::shared_client();
+        let client = context.http_client();
 
         // Build initial request with custom headers
         let mut request = client

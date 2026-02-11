@@ -117,6 +117,7 @@ impl Web3FunctionCallTool {
                     required: vec!["abi".to_string(), "contract".to_string(), "function".to_string()],
                 },
                 group: ToolGroup::Finance,
+                hidden: false,
             },
         }
     }

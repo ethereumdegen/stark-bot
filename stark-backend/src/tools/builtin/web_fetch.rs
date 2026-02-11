@@ -153,6 +153,16 @@ impl WebFetchTool {
                 enum_values: None,
             },
         );
+        properties.insert(
+            "bearer_auth_token".to_string(),
+            PropertySchema {
+                schema_type: "string".to_string(),
+                description: "Bearer token for Authorization header. Use $VAR_NAME to reference an installed API key (e.g. '$FOMOLT_API_KEY'). Will be sent as 'Authorization: Bearer <token>'.".to_string(),
+                default: None,
+                items: None,
+                enum_values: None,
+            },
+        );
 
         WebFetchTool {
             definition: ToolDefinition {
@@ -164,6 +174,7 @@ impl WebFetchTool {
                     required: vec!["url".to_string()],
                 },
                 group: ToolGroup::Web,
+                hidden: false,
             },
             cache: FetchCache::new(900), // 15 minute cache
         }
@@ -190,6 +201,8 @@ struct WebFetchParams {
     method: Option<String>,
     // Request body for POST/PUT/PATCH
     body: Option<Value>,
+    // Bearer auth token (convenience shorthand for Authorization header)
+    bearer_auth_token: Option<String>,
 }
 
 /// Build a lookup map from env var names to values using the ToolContext's API keys.
@@ -298,11 +311,18 @@ impl Tool for WebFetchTool {
             }
         }
 
-        let client = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .user_agent("StarkBot/1.0 (Web Fetch Tool)")
-            .redirect(reqwest::redirect::Policy::limited(5))
-            .build()
+            .redirect(reqwest::redirect::Policy::limited(5));
+
+        if let Some(ref proxy_url) = context.proxy_url {
+            if let Ok(proxy) = reqwest::Proxy::all(proxy_url) {
+                builder = builder.proxy(proxy);
+            }
+        }
+
+        let client = builder.build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
         // Extract host for retry tracking
@@ -361,11 +381,20 @@ impl Tool for WebFetchTool {
             }
         }
 
-        // Add optional headers
+        // Build env var map once (needed for both bearer_auth_token and headers)
+        let var_map = build_env_var_map(context);
+
+        // Add bearer auth token if provided
+        if let Some(ref token) = params.bearer_auth_token {
+            let expanded_token = expand_context_vars(token, &var_map);
+            if !expanded_token.is_empty() {
+                request = request.header("Authorization", format!("Bearer {}", expanded_token));
+            }
+        }
+
+        // Add optional headers (can override bearer auth if needed)
         if let Some(ref headers) = params.headers {
-            let var_map = build_env_var_map(context);
             for (key, value) in headers {
-                // Expand context variables in header values
                 let expanded_value = expand_context_vars(value, &var_map);
                 if let Ok(header_name) = reqwest::header::HeaderName::from_bytes(key.as_bytes()) {
                     if let Ok(header_value) = reqwest::header::HeaderValue::from_str(&expanded_value) {

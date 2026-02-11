@@ -75,6 +75,7 @@ impl ToRawAmountTool {
                     required: vec!["amount".to_string()],
                 },
                 group: ToolGroup::Finance,
+                hidden: false,
             },
         }
     }

@@ -56,6 +56,7 @@ impl IdentityPostRegisterTool {
                     required: vec![],
                 },
                 group: ToolGroup::Finance,
+                hidden: false,
             },
         }
     }

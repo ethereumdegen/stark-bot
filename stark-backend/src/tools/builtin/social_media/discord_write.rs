@@ -120,6 +120,7 @@ impl DiscordWriteTool {
                     required: vec!["action".to_string()],
                 },
                 group: ToolGroup::Messaging,
+                hidden: false,
             },
         }
     }
@@ -216,7 +217,7 @@ impl DiscordWriteTool {
             Ok(t) => t,
             Err(e) => return e,
         };
-        let client = crate::http::shared_client().clone();
+        let client = context.http_client();
 
         // For DMs, we need to create a DM channel first
         let channel_id = if target_type == "user" {
@@ -336,7 +337,7 @@ impl DiscordWriteTool {
             Ok(t) => t,
             Err(e) => return e,
         };
-        let client = crate::http::shared_client().clone();
+        let client = context.http_client();
 
         let encoded_emoji = urlencoding::encode(emoji);
 
@@ -393,7 +394,7 @@ impl DiscordWriteTool {
             Ok(t) => t,
             Err(e) => return e,
         };
-        let client = crate::http::shared_client().clone();
+        let client = context.http_client();
 
         let url = format!(
             "https://discord.com/api/v10/channels/{}/messages/{}",
@@ -442,7 +443,7 @@ impl DiscordWriteTool {
             Ok(t) => t,
             Err(e) => return e,
         };
-        let client = crate::http::shared_client().clone();
+        let client = context.http_client();
 
         let url = format!(
             "https://discord.com/api/v10/channels/{}/messages/{}",

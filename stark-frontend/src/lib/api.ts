@@ -1184,6 +1184,7 @@ export interface BotSettings {
   chat_session_memory_generation: boolean;
   guest_dashboard_enabled: boolean;
   theme_accent?: string;
+  proxy_url?: string;
   created_at: string;
   updated_at: string;
 }
@@ -1205,6 +1206,7 @@ export async function updateBotSettings(data: {
   chat_session_memory_generation?: boolean;
   guest_dashboard_enabled?: boolean;
   theme_accent?: string;
+  proxy_url?: string;
 }): Promise<BotSettings> {
   return apiFetch('/bot-settings', {
     method: 'PUT',

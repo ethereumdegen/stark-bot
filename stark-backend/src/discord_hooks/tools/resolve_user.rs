@@ -50,6 +50,7 @@ impl DiscordResolveUserTool {
                     required: vec!["user_mention".to_string()],
                 },
                 group: ToolGroup::Messaging,
+                hidden: false,
             },
         }
     }

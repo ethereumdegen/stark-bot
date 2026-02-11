@@ -261,6 +261,10 @@ pub struct ToolDefinition {
     pub input_schema: ToolInputSchema,
     #[serde(skip)]
     pub group: ToolGroup,
+    /// Hidden tools are excluded from normal tool lists.
+    /// They can only be activated when a skill declares them in `requires_tools`.
+    #[serde(skip)]
+    pub hidden: bool,
 }
 
 /// Result of tool execution
@@ -376,6 +380,10 @@ pub struct ToolContext {
     /// Runtime API key store (interior-mutable so install_api_key can write via &self)
     /// Keys are stored as UPPER_SNAKE_CASE names → values
     pub api_keys: Arc<RwLock<HashMap<String, String>>>,
+    /// Optional HTTP proxy URL for tool requests (does not affect AI model API calls)
+    pub proxy_url: Option<String>,
+    /// Pre-built HTTP client configured with the proxy (if proxy_url is set)
+    pub tool_http_client: Option<reqwest::Client>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -401,6 +409,8 @@ impl std::fmt::Debug for ToolContext {
             .field("wallet_provider", &self.wallet_provider.is_some())
             .field("platform_chat_id", &self.platform_chat_id)
             .field("api_keys", &self.api_keys.read().ok().map(|m| m.len()))
+            .field("proxy_url", &self.proxy_url)
+            .field("tool_http_client", &self.tool_http_client.is_some())
             .finish()
     }
 }
@@ -429,6 +439,8 @@ impl Default for ToolContext {
             wallet_provider: None,
             platform_chat_id: None,
             api_keys: Arc::new(RwLock::new(HashMap::new())),
+            proxy_url: None,
+            tool_http_client: None,
         }
     }
 }
@@ -631,6 +643,32 @@ impl ToolContext {
     pub fn with_memory_store(mut self, store: Arc<MemoryStore>) -> Self {
         self.memory_store = Some(store);
         self
+    }
+
+    /// Set an HTTP proxy URL for tool requests. Builds a proxy-configured HTTP client.
+    /// Does not affect AI model API calls (those use the global shared client directly).
+    pub fn with_proxy_url(mut self, url: String) -> Self {
+        match crate::http::build_proxy_client(&url) {
+            Ok(client) => {
+                log::info!("Tool HTTP proxy configured: {}", url);
+                self.tool_http_client = Some(client);
+                self.proxy_url = Some(url);
+            }
+            Err(e) => {
+                log::error!("Failed to build proxy client for '{}': {}. Tools will connect directly.", url, e);
+            }
+        }
+        self
+    }
+
+    /// Returns an HTTP client for tool use. If a proxy is configured, returns the proxy client;
+    /// otherwise falls back to the global shared client.
+    pub fn http_client(&self) -> reqwest::Client {
+        if let Some(ref client) = self.tool_http_client {
+            client.clone()
+        } else {
+            crate::http::shared_client().clone()
+        }
     }
 
     /// Add a WalletProvider to the context (for x402 payments in Flash mode)

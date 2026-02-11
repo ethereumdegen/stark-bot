@@ -27,6 +27,7 @@ impl GithubUserTool {
                     required: vec![],
                 },
                 group: ToolGroup::Development,
+                hidden: false,
             },
         }
     }

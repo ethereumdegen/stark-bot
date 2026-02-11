@@ -110,6 +110,7 @@ impl ManageSkillsTool {
                     required: vec!["action".to_string()],
                 },
                 group: ToolGroup::System,
+                hidden: false,
             },
         }
     }
@@ -206,7 +207,7 @@ impl Tool for ManageSkillsTool {
                 // Install from URL or markdown content
                 let markdown_content = if let Some(url) = params.url {
                     // Fetch markdown from URL
-                    match fetch_markdown_from_url(&url).await {
+                    match fetch_markdown_from_url(&url, &context.http_client()).await {
                         Ok(content) => content,
                         Err(e) => return ToolResult::error(format!("Failed to fetch skill from URL: {}", e)),
                     }
@@ -333,13 +334,11 @@ impl Tool for ManageSkillsTool {
 }
 
 /// Fetch markdown content from a URL
-async fn fetch_markdown_from_url(url: &str) -> Result<String, String> {
+async fn fetch_markdown_from_url(url: &str, client: &reqwest::Client) -> Result<String, String> {
     // Validate URL
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err("URL must start with http:// or https://".to_string());
     }
-
-    let client = crate::http::shared_client();
 
     let response = client
         .get(url)

@@ -178,6 +178,7 @@ impl DeployTool {
                     required: vec!["operation".to_string()],
                 },
                 group: ToolGroup::Development,
+                hidden: false,
             },
         }
     }

@@ -368,6 +368,7 @@ async fn restore_backup_data(
             None,
             Some(settings.guest_dashboard_enabled),
             settings.theme_accent.as_deref(),
+            None, // Don't restore proxy_url - it's infrastructure config
         ) {
             Ok(_) => log::info!("[Keystore] Restored bot settings"),
             Err(e) => log::warn!("[Keystore] Failed to restore bot settings: {}", e),
@@ -555,6 +556,148 @@ async fn restore_backup_data(
     }
     if restored_x402_limits > 0 {
         log::info!("[Keystore] Restored {} x402 payment limits", restored_x402_limits);
+    }
+
+    // Restore on-chain agent identity registration if present and no local row exists
+    if let Some(ref ai) = backup_data.agent_identity {
+        let conn = db.conn();
+        let existing: i64 = conn
+            .query_row("SELECT COUNT(*) FROM agent_identity", [], |r| r.get(0))
+            .unwrap_or(0);
+        if existing == 0 {
+            match conn.execute(
+                "INSERT INTO agent_identity (agent_id, agent_registry, chain_id) \
+                 VALUES (?1, ?2, ?3)",
+                rusqlite::params![ai.agent_id, ai.agent_registry, ai.chain_id],
+            ) {
+                Ok(_) => {
+                    log::info!(
+                        "[Keystore] Restored agent identity (agent_id={}) from backup",
+                        ai.agent_id
+                    );
+                }
+                Err(e) => {
+                    log::warn!("[Keystore] Failed to restore agent identity: {}", e);
+                }
+            }
+        } else {
+            log::info!("[Keystore] Agent identity already exists locally, skipping restore from backup");
+        }
+    }
+
+    // Restore discord registrations
+    let mut restored_discord_registrations = 0;
+    if !backup_data.discord_registrations.is_empty() {
+        match discord_hooks::db::clear_registrations_for_restore(db) {
+            Ok(deleted) => {
+                log::info!("[Keystore] Cleared {} discord registrations for restore", deleted);
+            }
+            Err(e) => {
+                log::warn!("[Keystore] Failed to clear discord registrations for restore: {}", e);
+            }
+        }
+
+        for reg in &backup_data.discord_registrations {
+            let username = reg.discord_username.as_deref().unwrap_or("unknown");
+            match discord_hooks::db::get_or_create_profile(db, &reg.discord_user_id, username) {
+                Ok(_) => {
+                    if let Err(e) = discord_hooks::db::register_address(db, &reg.discord_user_id, &reg.public_address) {
+                        log::warn!("[Keystore] Failed to restore discord registration for {}: {}", reg.discord_user_id, e);
+                    } else {
+                        restored_discord_registrations += 1;
+                    }
+                }
+                Err(e) => {
+                    log::warn!("[Keystore] Failed to create discord profile for {}: {}", reg.discord_user_id, e);
+                }
+            }
+        }
+    }
+    if restored_discord_registrations > 0 {
+        log::info!("[Keystore] Restored {} discord registrations", restored_discord_registrations);
+    }
+
+    // Restore skills
+    let mut restored_skills = 0;
+    for skill_entry in &backup_data.skills {
+        let now = chrono::Utc::now().to_rfc3339();
+        let arguments: std::collections::HashMap<String, skills::types::SkillArgument> =
+            serde_json::from_str(&skill_entry.arguments).unwrap_or_default();
+
+        let db_skill = skills::DbSkill {
+            id: None,
+            name: skill_entry.name.clone(),
+            description: skill_entry.description.clone(),
+            body: skill_entry.body.clone(),
+            version: skill_entry.version.clone(),
+            author: skill_entry.author.clone(),
+            homepage: skill_entry.homepage.clone(),
+            metadata: skill_entry.metadata.clone(),
+            enabled: skill_entry.enabled,
+            requires_tools: skill_entry.requires_tools.clone(),
+            requires_binaries: skill_entry.requires_binaries.clone(),
+            arguments,
+            tags: skill_entry.tags.clone(),
+            subagent_type: skill_entry.subagent_type.clone(),
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+
+        match db.create_skill_force(&db_skill) {
+            Ok(skill_id) => {
+                for script in &skill_entry.scripts {
+                    let db_script = skills::DbSkillScript {
+                        id: None,
+                        skill_id,
+                        name: script.name.clone(),
+                        code: script.code.clone(),
+                        language: script.language.clone(),
+                        created_at: now.clone(),
+                    };
+                    if let Err(e) = db.create_skill_script(&db_script) {
+                        log::warn!("[Keystore] Failed to restore script '{}' for skill '{}': {}", script.name, skill_entry.name, e);
+                    }
+                }
+                restored_skills += 1;
+            }
+            Err(e) => {
+                log::warn!("[Keystore] Failed to restore skill '{}': {}", skill_entry.name, e);
+            }
+        }
+    }
+    if restored_skills > 0 {
+        log::info!("[Keystore] Restored {} skills", restored_skills);
+    }
+
+    // Restore agent settings (AI model configurations)
+    let mut restored_agent_settings = 0;
+    if !backup_data.agent_settings.is_empty() {
+        if let Err(e) = db.disable_agent_settings() {
+            log::warn!("[Keystore] Failed to disable existing agent settings for restore: {}", e);
+        }
+        for entry in &backup_data.agent_settings {
+            match db.save_agent_settings(
+                &entry.endpoint,
+                &entry.model_archetype,
+                entry.max_response_tokens,
+                entry.max_context_tokens,
+                entry.secret_key.as_deref(),
+            ) {
+                Ok(saved) => {
+                    if !entry.enabled {
+                        let _ = db.disable_agent_settings();
+                    }
+                    restored_agent_settings += 1;
+                    log::info!("[Keystore] Restored agent settings: {} ({})", saved.endpoint, saved.model_archetype);
+                }
+                Err(e) => {
+                    log::warn!("[Keystore] Failed to restore agent settings for {}: {}", entry.endpoint, e);
+                }
+            }
+        }
+    }
+    if restored_agent_settings > 0 {
+        log::info!("[Keystore] Restored {} agent settings", restored_agent_settings);
     }
 
     log::info!("[Keystore] Restore complete");

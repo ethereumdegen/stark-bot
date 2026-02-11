@@ -82,6 +82,7 @@ impl AskUserTool {
                     required: vec!["question".to_string()],
                 },
                 group: ToolGroup::System,
+                hidden: false,
             },
         }
     }

@@ -66,7 +66,11 @@ impl ToolRegistry {
     pub fn get_allowed_tools(&self, config: &ToolConfig) -> Vec<Arc<dyn Tool>> {
         self.tools
             .values()
-            .filter(|tool| config.is_tool_allowed(&tool.definition().name, tool.group()))
+            .filter(|tool| {
+                let def = tool.definition();
+                // Hidden tools are skill-only — excluded from normal lists
+                !def.hidden && config.is_tool_allowed(&def.name, tool.group())
+            })
             .cloned()
             .collect()
     }
@@ -82,12 +86,17 @@ impl ToolRegistry {
         self.tools
             .values()
             .filter(|tool| {
+                let def = tool.definition();
+                // Hidden tools are skill-only — excluded from normal lists
+                if def.hidden {
+                    return false;
+                }
                 let group = tool.group();
                 // System tools are always available
                 let group_allowed =
                     group == ToolGroup::System || allowed_groups.contains(&group);
                 // Also check against the tool config
-                group_allowed && config.is_tool_allowed(&tool.definition().name, group)
+                group_allowed && config.is_tool_allowed(&def.name, group)
             })
             .cloned()
             .collect()
@@ -236,6 +245,7 @@ mod tests {
                     description: format!("Mock {} tool", name),
                     input_schema: ToolInputSchema::default(),
                     group,
+                    hidden: false,
                 },
             }
         }

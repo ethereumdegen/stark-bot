@@ -160,6 +160,7 @@ impl CommitterTool {
                     required: vec!["message".to_string(), "files".to_string()],
                 },
                 group: ToolGroup::Development,
+                hidden: false,
             },
         }
     }

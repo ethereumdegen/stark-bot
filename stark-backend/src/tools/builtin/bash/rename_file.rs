@@ -59,6 +59,7 @@ impl RenameFileTool {
                     required: vec!["source".to_string(), "destination".to_string()],
                 },
                 group: ToolGroup::Development,
+                hidden: false,
             },
         }
     }

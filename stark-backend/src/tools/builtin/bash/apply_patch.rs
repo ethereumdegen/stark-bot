@@ -51,6 +51,7 @@ impl ApplyPatchTool {
                     required: vec!["patch".to_string()],
                 },
                 group: ToolGroup::Development,
+                hidden: false,
             },
         }
     }

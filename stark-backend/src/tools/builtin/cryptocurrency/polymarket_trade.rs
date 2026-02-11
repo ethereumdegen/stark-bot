@@ -226,6 +226,7 @@ impl PolymarketTradeTool {
                     required: vec!["action".to_string()],
                 },
                 group: ToolGroup::Finance,
+                hidden: false,
             },
             client_cache: Arc::new(Mutex::new(None)),
         }
@@ -531,7 +532,7 @@ impl PolymarketTradeTool {
         };
 
         // Fetch positions from Data API
-        let http_client = crate::http::shared_client().clone();
+        let http_client = context.http_client();
         let url = format!("https://data-api.polymarket.com/positions?user={}", wallet_address);
 
         match http_client.get(&url).send().await {
@@ -594,13 +595,13 @@ impl PolymarketTradeTool {
     // ==================== DISCOVERY METHODS ====================
 
     /// Search markets by keyword (lightweight summaries only)
-    async fn search_markets(&self, params: &PolymarketParams) -> ToolResult {
+    async fn search_markets(&self, params: &PolymarketParams, context: &ToolContext) -> ToolResult {
         let query = params.query.as_deref().unwrap_or("");
         let limit = params.limit.unwrap_or(10).min(20);
         let offset = params.offset.unwrap_or(0);
         let tag = params.tag.as_deref();
 
-        let http_client = crate::http::shared_client().clone();
+        let http_client = context.http_client();
 
         // Build URL with query params
         let mut url = format!(
@@ -643,12 +644,12 @@ impl PolymarketTradeTool {
     }
 
     /// Get trending/popular markets (lightweight summaries only)
-    async fn trending_markets(&self, params: &PolymarketParams) -> ToolResult {
+    async fn trending_markets(&self, params: &PolymarketParams, context: &ToolContext) -> ToolResult {
         let limit = params.limit.unwrap_or(10).min(20);
         let offset = params.offset.unwrap_or(0);
         let tag = params.tag.as_deref();
 
-        let http_client = crate::http::shared_client().clone();
+        let http_client = context.http_client();
 
         // Get markets sorted by volume (trending)
         let mut url = format!(
@@ -687,13 +688,13 @@ impl PolymarketTradeTool {
     }
 
     /// Get market details by slug
-    async fn get_market(&self, params: &PolymarketParams) -> ToolResult {
+    async fn get_market(&self, params: &PolymarketParams, context: &ToolContext) -> ToolResult {
         let slug = match &params.slug {
             Some(s) => s,
             None => return ToolResult::error("slug is required for get_market (e.g., 'will-bitcoin-hit-100k')"),
         };
 
-        let http_client = crate::http::shared_client().clone();
+        let http_client = context.http_client();
         let url = format!("https://gamma-api.polymarket.com/events?slug={}", slug);
 
         match http_client.get(&url).send().await {
@@ -722,13 +723,13 @@ impl PolymarketTradeTool {
     }
 
     /// Get current price and orderbook for a token
-    async fn get_price(&self, params: &PolymarketParams) -> ToolResult {
+    async fn get_price(&self, params: &PolymarketParams, context: &ToolContext) -> ToolResult {
         let token_id = match &params.token_id {
             Some(t) => t,
             None => return ToolResult::error("token_id is required for get_price"),
         };
 
-        let http_client = crate::http::shared_client().clone();
+        let http_client = context.http_client();
 
         // Fetch midpoint, spread, and orderbook in parallel
         let midpoint_url = format!("https://clob.polymarket.com/midpoint?token_id={}", token_id);
@@ -920,10 +921,10 @@ impl Tool for PolymarketTradeTool {
 
         match params.action.as_str() {
             // Discovery actions (no auth required)
-            "search_markets" => self.search_markets(&params).await,
-            "trending_markets" => self.trending_markets(&params).await,
-            "get_market" => self.get_market(&params).await,
-            "get_price" => self.get_price(&params).await,
+            "search_markets" => self.search_markets(&params, context).await,
+            "trending_markets" => self.trending_markets(&params, context).await,
+            "get_market" => self.get_market(&params, context).await,
+            "get_price" => self.get_price(&params, context).await,
             // Trading actions (require wallet)
             "place_order" => self.place_order(&params).await,
             "cancel_order" => self.cancel_order(&params).await,

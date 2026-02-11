@@ -57,6 +57,7 @@ impl SayToUserTool {
                     required: vec!["message".to_string()],
                 },
                 group: ToolGroup::System,
+                hidden: false,
             },
         }
     }

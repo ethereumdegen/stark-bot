@@ -38,6 +38,7 @@ pub fn define_tasks_tool() -> ToolDefinition {
             required: vec!["tasks".to_string()],
         },
         group: ToolGroup::System,
+                hidden: false,
     }
 }
 

@@ -69,6 +69,7 @@ Use this tool when users ask to "show a chart", "price chart", or want to visual
                     required: vec!["query".to_string()],
                 },
                 group: ToolGroup::Finance,
+                hidden: false,
             },
         }
     }
@@ -243,7 +244,7 @@ impl Tool for GeckoTerminalTool {
             return ToolResult::error("'query' is required (token symbol, name, or address)");
         }
 
-        let client = crate::http::shared_client();
+        let client = context.http_client();
 
         // Build search URL
         let mut url = format!(

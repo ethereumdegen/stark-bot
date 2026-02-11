@@ -1,5 +1,5 @@
 import { useState, useEffect, FormEvent } from 'react';
-import { Save, Bot, Server, Shield, Cloud, AlertTriangle, CheckCircle, Info, XCircle, Copy, Check, Wallet, Brain, Palette } from 'lucide-react';
+import { Save, Bot, Server, Shield, Cloud, AlertTriangle, CheckCircle, Info, XCircle, Copy, Check, Wallet, Brain, Palette, Globe } from 'lucide-react';
 import Card, { CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -33,6 +33,7 @@ export default function BotSettings() {
   const [walletAddress, setWalletAddress] = useState<string>('');
   const [walletMode, setWalletMode] = useState<string>('');
   const [walletCopied, setWalletCopied] = useState(false);
+  const [proxyUrl, setProxyUrl] = useState('');
   const [themeAccent, setThemeAccent] = useState(() => localStorage.getItem('theme-accent') || '');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -100,6 +101,7 @@ export default function BotSettings() {
       setKeystoreUrl(data.keystore_url || '');
       setChatSessionMemoryGeneration(data.chat_session_memory_generation ?? true);
       setGuestDashboardEnabled(data.guest_dashboard_enabled ?? false);
+      setProxyUrl(data.proxy_url || '');
       // Sync theme from backend (backend is source of truth, update localStorage to match)
       const serverTheme = data.theme_accent || '';
       setThemeAccent(serverTheme);
@@ -153,6 +155,7 @@ export default function BotSettings() {
         chat_session_memory_generation: chatSessionMemoryGeneration,
         guest_dashboard_enabled: guestDashboardEnabled,
         theme_accent: themeAccent || '',
+        proxy_url: proxyUrl,
       });
       setSettings(updated);
       setMessage({ type: 'success', text: 'Settings saved successfully' });
@@ -512,6 +515,28 @@ export default function BotSettings() {
             <p className="text-xs text-slate-500 -mt-2">
               Custom keystore server URL for cloud backups. Leave empty to use the default server
               (https://keystore.defirelay.com). Requires x402 payment support.
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* HTTP Proxy Section */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Globe className="w-5 h-5 text-stark-400" />
+              HTTP Proxy
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Input
+              label="Proxy URL"
+              value={proxyUrl}
+              onChange={(e) => setProxyUrl(e.target.value)}
+              placeholder="http://proxy:8080"
+            />
+            <p className="text-xs text-slate-500 -mt-2">
+              Optional HTTP proxy URL for tool requests (e.g. http://proxy:8080).
+              Leave empty to connect directly. Does not affect AI model API calls.
             </p>
           </CardContent>
         </Card>

@@ -67,6 +67,7 @@ impl Web3PresetFunctionCallTool {
                     required: vec!["preset".to_string()],
                 },
                 group: ToolGroup::Finance,
+                hidden: false,
             },
         }
     }

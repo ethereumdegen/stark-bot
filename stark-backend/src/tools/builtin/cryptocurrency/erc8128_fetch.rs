@@ -112,6 +112,7 @@ impl Erc8128FetchTool {
                     required: vec!["url".to_string()],
                 },
                 group: ToolGroup::Finance,
+                hidden: true, // Only available when a skill requires it
             },
         }
     }
@@ -214,7 +215,7 @@ impl Tool for Erc8128FetchTool {
         };
 
         // Build the HTTP request
-        let client = crate::http::shared_client().clone();
+        let client = context.http_client();
         let mut req = match method.as_str() {
             "GET" => client.get(&params.url),
             "POST" => client.post(&params.url),

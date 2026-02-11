@@ -57,6 +57,7 @@ impl AddTaskTool {
                     required: vec!["description".to_string()],
                 },
                 group: ToolGroup::System,
+                hidden: false,
             },
         }
     }

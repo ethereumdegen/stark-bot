@@ -59,6 +59,7 @@ impl BroadcastWeb3TxTool {
                     required: vec![],
                 },
                 group: ToolGroup::Finance,
+                hidden: false,
             },
         }
     }

@@ -77,6 +77,7 @@ impl TelegramReadTool {
                     required: vec!["action".to_string()],
                 },
                 group: ToolGroup::Messaging,
+                hidden: false,
             },
         }
     }
@@ -143,8 +144,7 @@ impl TelegramReadTool {
         }
     }
 
-    async fn telegram_api_call(token: &str, method: &str, params: &Value) -> Result<Value, ToolResult> {
-        let client = crate::http::shared_client().clone();
+    async fn telegram_api_call(token: &str, method: &str, params: &Value, client: &reqwest::Client) -> Result<Value, ToolResult> {
         let url = format!("https://api.telegram.org/bot{}/{}", token, method);
 
         let response = client
@@ -187,7 +187,8 @@ impl TelegramReadTool {
             Err(e) => return e,
         };
 
-        let result = match Self::telegram_api_call(&token, "getChat", &json!({"chat_id": chat_id})).await {
+        let client = context.http_client();
+        let result = match Self::telegram_api_call(&token, "getChat", &json!({"chat_id": chat_id}), &client).await {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -255,10 +256,11 @@ impl TelegramReadTool {
             Err(e) => return e,
         };
 
+        let client = context.http_client();
         let result = match Self::telegram_api_call(&token, "getChatMember", &json!({
             "chat_id": chat_id,
             "user_id": user_id
-        })).await {
+        }), &client).await {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -316,7 +318,8 @@ impl TelegramReadTool {
             Err(e) => return e,
         };
 
-        let result = match Self::telegram_api_call(&token, "getChatAdministrators", &json!({"chat_id": chat_id})).await {
+        let client = context.http_client();
+        let result = match Self::telegram_api_call(&token, "getChatAdministrators", &json!({"chat_id": chat_id}), &client).await {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -370,7 +373,8 @@ impl TelegramReadTool {
             Err(e) => return e,
         };
 
-        let result = match Self::telegram_api_call(&token, "getChatMemberCount", &json!({"chat_id": chat_id})).await {
+        let client = context.http_client();
+        let result = match Self::telegram_api_call(&token, "getChatMemberCount", &json!({"chat_id": chat_id}), &client).await {
             Ok(r) => r,
             Err(e) => return e,
         };

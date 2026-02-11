@@ -76,6 +76,7 @@ impl QmdMemoryReadTool {
                     required: vec![],
                 },
                 group: ToolGroup::Memory,
+                hidden: false,
             },
         }
     }

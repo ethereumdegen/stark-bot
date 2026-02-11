@@ -72,6 +72,7 @@ impl ProcessStatusTool {
                     required: vec!["operation".to_string()],
                 },
                 group: ToolGroup::Exec,
+                hidden: false,
             },
         }
     }

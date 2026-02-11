@@ -142,6 +142,7 @@ impl SubagentTool {
                     required: vec!["task".to_string()],
                 },
                 group: ToolGroup::System,
+                hidden: false,
             },
         }
     }
@@ -565,6 +566,7 @@ impl SubagentStatusTool {
                     required: vec![],
                 },
                 group: ToolGroup::System,
+                hidden: false,
             },
         }
     }

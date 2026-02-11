@@ -81,6 +81,7 @@ impl EditFileTool {
                     ],
                 },
                 group: ToolGroup::Development,
+                hidden: false,
             },
         }
     }

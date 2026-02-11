@@ -33,6 +33,8 @@ pub struct BotSettings {
     pub guest_dashboard_enabled: bool,
     /// Dashboard theme accent color (e.g. "blue"). None = default orange.
     pub theme_accent: Option<String>,
+    /// Optional HTTP proxy URL for tool requests (does not affect AI model API calls)
+    pub proxy_url: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -53,6 +55,7 @@ impl Default for BotSettings {
             chat_session_memory_generation: true,
             guest_dashboard_enabled: false,
             theme_accent: None,
+            proxy_url: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -75,4 +78,6 @@ pub struct UpdateBotSettingsRequest {
     pub chat_session_memory_generation: Option<bool>,
     pub guest_dashboard_enabled: Option<bool>,
     pub theme_accent: Option<String>,
+    /// Optional HTTP proxy URL for tool requests (empty string or null = direct connection)
+    pub proxy_url: Option<String>,
 }

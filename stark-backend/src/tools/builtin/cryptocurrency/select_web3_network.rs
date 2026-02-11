@@ -71,6 +71,7 @@ impl SelectWeb3NetworkTool {
                     required: vec!["network".to_string()],
                 },
                 group: ToolGroup::Finance,
+                hidden: false,
             },
         }
     }

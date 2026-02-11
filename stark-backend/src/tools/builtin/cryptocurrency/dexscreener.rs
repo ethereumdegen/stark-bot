@@ -104,6 +104,7 @@ TIP: Low liquidity (<$10K) means high slippage risk. Same token name can exist o
                     required: vec!["action".to_string()],
                 },
                 group: ToolGroup::Finance,
+                hidden: false,
             },
         }
     }
@@ -268,13 +269,13 @@ impl Tool for DexScreenerTool {
         self.definition.clone()
     }
 
-    async fn execute(&self, params: Value, _context: &ToolContext) -> ToolResult {
+    async fn execute(&self, params: Value, context: &ToolContext) -> ToolResult {
         let params: Params = match serde_json::from_value(params) {
             Ok(p) => p,
             Err(e) => return ToolResult::error(format!("Invalid parameters: {}", e)),
         };
 
-        let client = crate::http::shared_client();
+        let client = context.http_client();
 
         match params.action.as_str() {
             "search" => {

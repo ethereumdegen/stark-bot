@@ -1594,6 +1594,7 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
             None,
             Some(settings.guest_dashboard_enabled),
             settings.theme_accent.as_deref(),
+            None, // Don't restore proxy_url - it's infrastructure config
         ) {
             log::warn!("Failed to restore bot settings: {}", e);
         }

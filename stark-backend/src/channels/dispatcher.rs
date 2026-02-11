@@ -866,6 +866,13 @@ impl MessageDispatcher {
                 "rogue_mode_enabled".to_string(),
                 serde_json::json!(bot_settings.rogue_mode_enabled),
             );
+
+            // Configure HTTP proxy for tool requests if set
+            if let Some(ref url) = bot_settings.proxy_url {
+                if !url.is_empty() {
+                    tool_context = tool_context.with_proxy_url(url.clone());
+                }
+            }
         }
 
         // Store original user message for verify_intent safety checks
@@ -1370,6 +1377,7 @@ impl MessageDispatcher {
                 required: vec!["skill_name".to_string(), "input".to_string()],
             },
             group: ToolGroup::System,
+                hidden: false,
         })
     }
 

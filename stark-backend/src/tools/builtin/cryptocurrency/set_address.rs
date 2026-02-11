@@ -59,6 +59,7 @@ impl SetAddressTool {
                     required: vec!["register".to_string(), "address".to_string()],
                 },
                 group: ToolGroup::Finance,
+                hidden: false,
             },
         }
     }

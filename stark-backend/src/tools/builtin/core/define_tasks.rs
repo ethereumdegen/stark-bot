@@ -47,6 +47,7 @@ impl DefineTasksTool {
                     required: vec!["tasks".to_string()],
                 },
                 group: ToolGroup::System,
+                hidden: false,
             },
         }
     }

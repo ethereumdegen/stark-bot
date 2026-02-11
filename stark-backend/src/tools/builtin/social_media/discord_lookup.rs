@@ -64,6 +64,7 @@ impl DiscordLookupTool {
                     required: vec!["action".to_string()],
                 },
                 group: ToolGroup::Messaging,
+                hidden: false,
             },
         }
     }
@@ -163,7 +164,7 @@ impl DiscordLookupTool {
     /// Fetch all guilds the bot is in, handling pagination
     async fn fetch_all_guilds(&self, context: &ToolContext) -> Result<Vec<DiscordGuild>, ToolResult> {
         let bot_token = Self::get_bot_token(context)?;
-        let client = crate::http::shared_client().clone();
+        let client = context.http_client();
         let mut all_guilds = Vec::new();
         let mut after: Option<String> = None;
 
@@ -351,7 +352,7 @@ impl DiscordLookupTool {
 
     async fn fetch_channels(&self, server_id: &str, context: &ToolContext) -> Result<Vec<DiscordChannel>, ToolResult> {
         let bot_token = Self::get_bot_token(context)?;
-        let client = crate::http::shared_client().clone();
+        let client = context.http_client();
 
         let url = format!("https://discord.com/api/v10/guilds/{}/channels", server_id);
 

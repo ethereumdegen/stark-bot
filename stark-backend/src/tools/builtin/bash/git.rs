@@ -183,6 +183,7 @@ impl GitTool {
                     required: vec!["operation".to_string()],
                 },
                 group: ToolGroup::Development,
+                hidden: false,
             },
         }
     }

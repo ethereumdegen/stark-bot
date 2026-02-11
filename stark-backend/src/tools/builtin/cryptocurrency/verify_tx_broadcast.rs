@@ -53,6 +53,7 @@ impl VerifyTxBroadcastTool {
                     required: vec![],
                 },
                 group: ToolGroup::Finance,
+                hidden: false,
             },
         }
     }

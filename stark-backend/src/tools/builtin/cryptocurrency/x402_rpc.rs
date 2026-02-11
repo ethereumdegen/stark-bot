@@ -93,6 +93,7 @@ impl X402RpcTool {
                     required: vec!["preset".to_string()],
                 },
                 group: ToolGroup::Finance,
+                hidden: false,
             },
             client: Arc::new(RwLock::new(None)),
         }

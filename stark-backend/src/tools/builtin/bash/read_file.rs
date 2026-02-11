@@ -68,6 +68,7 @@ impl ReadFileTool {
                     required: vec!["path".to_string()],
                 },
                 group: ToolGroup::Filesystem,
+                hidden: false,
             },
         }
     }

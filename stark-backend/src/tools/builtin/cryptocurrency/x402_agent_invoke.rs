@@ -77,6 +77,7 @@ impl X402AgentInvokeTool {
                     required: vec!["agent_url".to_string(), "entrypoint".to_string()],
                 },
                 group: ToolGroup::Finance,
+                hidden: false,
             },
         }
     }
@@ -235,7 +236,7 @@ impl Tool for X402AgentInvokeTool {
 
         log::info!("[x402_agent] Invoking {} with input: {:?}", url, params.input);
 
-        let client = crate::http::shared_client();
+        let client = context.http_client();
 
         // Make initial request
         let initial_response = match client

@@ -156,6 +156,7 @@ impl PrQualityTool {
                     required: vec![],
                 },
                 group: ToolGroup::Development,
+                hidden: false,
             },
         }
     }

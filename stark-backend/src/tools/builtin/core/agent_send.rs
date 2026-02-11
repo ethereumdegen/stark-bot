@@ -74,6 +74,7 @@ impl AgentSendTool {
                     required: vec!["channel".to_string(), "message".to_string()],
                 },
                 group: ToolGroup::Messaging,
+                hidden: false,
             },
         }
     }
@@ -177,7 +178,7 @@ impl AgentSendTool {
         }
 
         // Send the request
-        let client = crate::http::shared_client().clone();
+        let client = context.http_client();
         match client.post(&url).json(&body).send().await {
             Ok(response) => {
                 let status = response.status();
@@ -232,7 +233,7 @@ impl AgentSendTool {
         }
 
         // Send the request
-        let client = crate::http::shared_client().clone();
+        let client = context.http_client();
         match client
             .post(&url)
             .header("Authorization", format!("Bot {}", bot_token))
@@ -290,7 +291,7 @@ impl AgentSendTool {
         }
 
         // Send the request
-        let client = crate::http::shared_client().clone();
+        let client = context.http_client();
         match client
             .post(url)
             .header("Authorization", format!("Bearer {}", bot_token))
