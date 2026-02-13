@@ -186,7 +186,19 @@ impl Orchestrator {
     fn build_system_prompt(&self, base_prompt: &str) -> String {
         let mut prompt = String::new();
 
-        // CURRENT TASK goes FIRST — highest priority for the AI to see
+        // ACTIVE SKILL goes FIRST — when pre-activated, it overrides base prompt instructions
+        if let Some(ref skill) = self.context.active_skill {
+            prompt.push_str("# >>> ACTIVE SKILL — FOLLOW THESE INSTRUCTIONS <<<\n\n");
+            prompt.push_str(&format!(
+                "**Skill `{}` is already loaded.** Do NOT call `set_agent_subtype` or `use_skill` — \
+                 skip straight to the skill instructions below. Execute immediately, do not narrate or ask questions.\n\n",
+                skill.name
+            ));
+            prompt.push_str(&skill.instructions);
+            prompt.push_str("\n\n---\n\n");
+        }
+
+        // CURRENT TASK goes NEXT — highest priority for the AI to see
         if let Some(task) = self.context.task_queue.current_task() {
             let total = self.context.task_queue.total();
             let completed = self.context.task_queue.completed_count();
@@ -322,14 +334,11 @@ impl Orchestrator {
             summary.push('\n');
         }
 
-        // Add active skill context
+        // Active skill is now injected at the TOP of the system prompt (build_system_prompt)
+        // so it takes priority over the base prompt. Only add a brief reminder here.
         if let Some(ref skill) = self.context.active_skill {
-            summary.push_str("### Active Skill (FOLLOW THESE INSTRUCTIONS)\n\n");
-            summary.push_str(&format!("**Skill**: {}\n\n", skill.name));
-            summary.push_str("**Instructions**:\n");
-            summary.push_str(&skill.instructions);
-            summary.push_str("\n\n");
-            summary.push_str("**IMPORTANT**: Call the actual tools mentioned above. Do NOT call `use_skill` again.\n\n");
+            summary.push_str(&format!("### Active Skill: `{}`\n\n", skill.name));
+            summary.push_str("Skill instructions are at the top of this prompt. Follow them.\n\n");
         }
 
         // Add scratchpad if not empty (truncated)

@@ -1,7 +1,7 @@
 ---
 name: discord_tipping
 description: "Tip Discord users with tokens. Resolves Discord mentions to wallet addresses and executes ERC20 transfers."
-version: 2.3.0
+version: 2.4.0
 author: starkbot
 metadata: {"clawdbot":{"emoji":"💸"}}
 tags: [discord, tipping, crypto, transfer, erc20]
@@ -17,11 +17,13 @@ Send tokens to Discord users by resolving their mention to a registered wallet a
 
 ## CRITICAL RULES
 
-1. **ONE TASK AT A TIME.** Only do the work described in the CURRENT task. Do NOT work ahead.
-2. **Do NOT call `say_to_user` with `finished_task: true` until the current task is truly done.** Using `finished_task: true` advances the task queue — if you use it prematurely, tasks get skipped.
-3. **Use `say_to_user` WITHOUT `finished_task`** for progress updates. Only set `finished_task: true` OR call `task_fully_completed` when ALL steps in the current task are done.
-4. **Sequential tool calls only.** Never call two tools in parallel when the second depends on the first.
-5. **Register pattern prevents hallucination.** Never pass raw addresses/amounts directly — always use registers set by the tools.
+1. **EXECUTE IMMEDIATELY.** Do NOT ask the user for confirmation. Do NOT narrate what you plan to do. Call `define_tasks` as your VERY FIRST action, then execute each task by calling the prescribed tools. Never output a text response before starting the tool flow.
+2. **ONE TASK AT A TIME.** Only do the work described in the CURRENT task. Do NOT work ahead.
+3. **Do NOT call `say_to_user` with `finished_task: true` until the current task is truly done.** Using `finished_task: true` advances the task queue — if you use it prematurely, tasks get skipped.
+4. **Use `say_to_user` WITHOUT `finished_task`** for progress updates. Only set `finished_task: true` OR call `task_fully_completed` when ALL steps in the current task are done.
+5. **Sequential tool calls only.** Never call two tools in parallel when the second depends on the first.
+6. **Register pattern prevents hallucination.** Never pass raw addresses/amounts directly — always use registers set by the tools.
+7. **Ignore chat context for addresses.** Even if you see an address in recent chat history, you MUST call `discord_resolve_user` to resolve it properly. Never skip tool calls because you think you already know the answer.
 
 ## Step 1: Define the seven tasks
 
