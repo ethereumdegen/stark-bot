@@ -6,10 +6,11 @@
 //! - Reindexing when files change
 
 use super::file_ops;
+use crate::disk_quota::DiskQuotaManager;
 use chrono::{Local, NaiveDate};
 use rusqlite::{params, Connection, Result as SqliteResult};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// Search result from the memory store
 #[derive(Debug, Clone)]
@@ -28,6 +29,8 @@ pub struct MemoryStore {
     memory_dir: PathBuf,
     /// SQLite connection for FTS5 index
     conn: Mutex<Connection>,
+    /// Optional disk quota manager for enforcing limits
+    disk_quota: Mutex<Option<Arc<DiskQuotaManager>>>,
 }
 
 impl MemoryStore {
@@ -52,6 +55,7 @@ impl MemoryStore {
         let store = Self {
             memory_dir,
             conn: Mutex::new(conn),
+            disk_quota: Mutex::new(None),
         };
 
         // Initial reindex
@@ -77,10 +81,18 @@ impl MemoryStore {
         let store = Self {
             memory_dir,
             conn: Mutex::new(conn),
+            disk_quota: Mutex::new(None),
         };
 
         store.reindex()?;
         Ok(store)
+    }
+
+    /// Set the disk quota manager for enforcing memory write limits
+    pub fn set_disk_quota(&self, dq: Arc<DiskQuotaManager>) {
+        if let Ok(mut guard) = self.disk_quota.lock() {
+            *guard = Some(dq);
+        }
     }
 
     /// Get the memory directory path
@@ -155,6 +167,26 @@ impl MemoryStore {
         content: &str,
         identity_id: Option<&str>,
     ) -> std::io::Result<()> {
+        // Per-append size cap (100KB)
+        if content.len() > crate::disk_quota::MAX_MEMORY_APPEND_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "Memory append rejected: content size ({} bytes) exceeds the per-append limit of 100KB.",
+                    content.len()
+                ),
+            ));
+        }
+
+        // Check disk quota
+        if let Ok(guard) = self.disk_quota.lock() {
+            if let Some(ref dq) = *guard {
+                if let Err(e) = dq.check_quota(content.len() as u64) {
+                    return Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
+                }
+            }
+        }
+
         let today = Local::now().date_naive();
         let path = file_ops::daily_log_path(&self.memory_dir, today, identity_id);
 
@@ -163,6 +195,13 @@ impl MemoryStore {
 
         // Append with timestamp
         file_ops::append_to_file(&path, content)?;
+
+        // Record write with disk quota
+        if let Ok(guard) = self.disk_quota.lock() {
+            if let Some(ref dq) = *guard {
+                dq.record_write(content.len() as u64);
+            }
+        }
 
         // Update index for this file
         self.index_file(&path).ok();
@@ -176,6 +215,26 @@ impl MemoryStore {
         content: &str,
         identity_id: Option<&str>,
     ) -> std::io::Result<()> {
+        // Per-append size cap (100KB)
+        if content.len() > crate::disk_quota::MAX_MEMORY_APPEND_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "Memory append rejected: content size ({} bytes) exceeds the per-append limit of 100KB.",
+                    content.len()
+                ),
+            ));
+        }
+
+        // Check disk quota
+        if let Ok(guard) = self.disk_quota.lock() {
+            if let Some(ref dq) = *guard {
+                if let Err(e) = dq.check_quota(content.len() as u64) {
+                    return Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
+                }
+            }
+        }
+
         let path = file_ops::long_term_path(&self.memory_dir, identity_id);
 
         // Ensure directory exists
@@ -183,6 +242,13 @@ impl MemoryStore {
 
         // Append with timestamp
         file_ops::append_to_file(&path, content)?;
+
+        // Record write with disk quota
+        if let Ok(guard) = self.disk_quota.lock() {
+            if let Some(ref dq) = *guard {
+                dq.record_write(content.len() as u64);
+            }
+        }
 
         // Update index for this file
         self.index_file(&path).ok();

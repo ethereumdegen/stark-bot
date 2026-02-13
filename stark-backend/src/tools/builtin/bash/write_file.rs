@@ -105,6 +105,20 @@ impl Tool for WriteFileTool {
         let append = params.append.unwrap_or(false);
         let create_dirs = params.create_dirs.unwrap_or(true);
 
+        // Per-write size cap (5MB)
+        if params.content.len() > crate::disk_quota::MAX_WRITE_BYTES {
+            return ToolResult::error(format!(
+                "Write rejected: content size ({} bytes) exceeds the per-write limit of 5MB. \
+                 Split into smaller writes or remove unnecessary content.",
+                params.content.len()
+            ));
+        }
+
+        // Check disk quota before writing
+        if let Err(e) = context.check_disk_quota(params.content.len()) {
+            return ToolResult::error(e);
+        }
+
         // Get workspace directory from context or use current directory
         let workspace = context
             .workspace_dir
@@ -215,6 +229,7 @@ impl Tool for WriteFileTool {
         match result {
             Ok(_) => {
                 let bytes_written = params.content.len();
+                context.record_disk_write(bytes_written);
                 let lines_written = params.content.lines().count();
                 let mode = if append { "appended to" } else { "written to" };
 

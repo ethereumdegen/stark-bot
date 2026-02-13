@@ -250,6 +250,57 @@ pub fn is_x402_endpoint(url: &str) -> bool {
     url.contains("defirelay.com") || url.contains("defirelay.io")
 }
 
+/// Check USDC balance on Base for a wallet address.
+/// Returns the balance in raw units (6 decimals for USDC).
+/// Used to detect insufficient funds after an x402 payment failure.
+pub async fn check_usdc_balance(wallet_address: &str) -> Result<ethers::types::U256, String> {
+    let address: ethers::types::Address = wallet_address
+        .parse()
+        .map_err(|e| format!("Invalid wallet address: {}", e))?;
+
+    let usdc_address: ethers::types::Address = super::types::USDC_ADDRESS
+        .parse()
+        .map_err(|e| format!("Invalid USDC address: {}", e))?;
+
+    let call_data = super::erc20::encode_balance_of(address);
+
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_call",
+        "params": [{
+            "to": format!("{:?}", usdc_address),
+            "data": format!("0x{}", hex::encode(&call_data))
+        }, "latest"],
+        "id": 1
+    });
+
+    let client = crate::http::shared_client();
+    let response = client
+        .post("https://mainnet.base.org")
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| format!("RPC request failed: {}", e))?;
+
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse RPC response: {}", e))?;
+
+    let result = body
+        .get("result")
+        .and_then(|r| r.as_str())
+        .ok_or_else(|| {
+            let error = body.get("error").map(|e| e.to_string()).unwrap_or_default();
+            format!("RPC error: {}", error)
+        })?;
+
+    let bytes = hex::decode(result.trim_start_matches("0x"))
+        .map_err(|e| format!("Failed to decode balance hex: {}", e))?;
+
+    super::erc20::decode_balance(&bytes)
+}
+
 /// Parse a 402 response and sign an x402 payment, returning the X-PAYMENT header value.
 ///
 /// Tries to parse payment requirements from:

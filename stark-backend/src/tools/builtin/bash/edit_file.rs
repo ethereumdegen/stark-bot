@@ -363,9 +363,22 @@ impl Tool for EditFileTool {
             }
         };
 
+        // Check disk quota for net size increase
+        let size_increase = new_content.len().saturating_sub(content.len());
+        if size_increase > 0 {
+            if let Err(e) = context.check_disk_quota(size_increase) {
+                return ToolResult::error(e);
+            }
+        }
+
         // Write the file
         if let Err(e) = tokio::fs::write(&canonical_path, &new_content).await {
             return ToolResult::error(format!("Failed to write file: {}", e));
+        }
+
+        // Record the net size increase with disk quota manager
+        if size_increase > 0 {
+            context.record_disk_write(size_increase);
         }
 
         // Generate output

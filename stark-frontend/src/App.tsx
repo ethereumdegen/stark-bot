@@ -19,6 +19,7 @@ import SystemFiles from '@/pages/SystemFiles';
 import Journal from '@/pages/Journal';
 import Logs from '@/pages/Logs';
 import Debug from '@/pages/Debug';
+import System from '@/pages/System';
 import ApiKeys from '@/pages/ApiKeys';
 import CloudBackup from '@/pages/CloudBackup';
 import Payments from '@/pages/Payments';
@@ -59,6 +60,7 @@ function App() {
         <Route path="/system-files" element={<SystemFiles />} />
         <Route path="/journal" element={<Journal />} />
         <Route path="/logs" element={<Logs />} />
+        <Route path="/system" element={<System />} />
         <Route path="/debug" element={<Debug />} />
         <Route path="/payments" element={<Payments />} />
         <Route path="/eip8004" element={<EIP8004 />} />

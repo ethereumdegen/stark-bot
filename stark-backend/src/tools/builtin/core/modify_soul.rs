@@ -87,7 +87,7 @@ impl Tool for ModifySoulTool {
         self.definition.clone()
     }
 
-    async fn execute(&self, params: Value, _context: &ToolContext) -> ToolResult {
+    async fn execute(&self, params: Value, context: &ToolContext) -> ToolResult {
         let params: ModifySoulParams = match serde_json::from_value(params) {
             Ok(p) => p,
             Err(e) => return ToolResult::error(format!("Invalid parameters: {}", e)),
@@ -118,6 +118,11 @@ impl Tool for ModifySoulTool {
                     Err(e) => return ToolResult::error(format!("Failed to read SOUL.md: {}", e)),
                 };
 
+                // Check disk quota for the new content
+                if let Err(e) = context.check_disk_quota(content.len()) {
+                    return ToolResult::error(e);
+                }
+
                 // Append with proper spacing
                 let new_content = if current.ends_with('\n') {
                     format!("{}\n{}", current, content)
@@ -127,6 +132,7 @@ impl Tool for ModifySoulTool {
 
                 match tokio::fs::write(&path, &new_content).await {
                     Ok(_) => {
+                        context.record_disk_write(content.len());
                         log::info!("Soul document updated (append)");
                         ToolResult::success("Successfully appended content to soul document").with_metadata(json!({
                             "action": "append",
@@ -209,8 +215,19 @@ impl Tool for ModifySoulTool {
 
                 let new_content = new_lines.join("\n");
 
+                // Check disk quota for net size increase
+                let size_increase = new_content.len().saturating_sub(current.len());
+                if size_increase > 0 {
+                    if let Err(e) = context.check_disk_quota(size_increase) {
+                        return ToolResult::error(e);
+                    }
+                }
+
                 match tokio::fs::write(&path, &new_content).await {
                     Ok(_) => {
+                        if size_increase > 0 {
+                            context.record_disk_write(size_increase);
+                        }
                         log::info!("Soul document updated (replace_section: {})", section);
                         ToolResult::success(format!("Successfully replaced section '{}' in soul document", section)).with_metadata(json!({
                             "action": "replace_section",

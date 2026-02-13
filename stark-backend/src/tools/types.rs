@@ -1,6 +1,7 @@
 use crate::ai::multi_agent::SubAgentManager;
 use crate::controllers::api_keys::ApiKeyId;
 use crate::db::Database;
+use crate::disk_quota::DiskQuotaManager;
 use crate::execution::ProcessManager;
 use crate::gateway::events::EventBroadcaster;
 use crate::gateway::protocol::GatewayEvent;
@@ -412,6 +413,8 @@ pub struct ToolContext {
     pub proxy_url: Option<String>,
     /// Pre-built HTTP client configured with the proxy (if proxy_url is set)
     pub tool_http_client: Option<reqwest::Client>,
+    /// Disk quota manager for enforcing disk usage limits
+    pub disk_quota: Option<Arc<DiskQuotaManager>>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -439,6 +442,7 @@ impl std::fmt::Debug for ToolContext {
             .field("api_keys", &self.api_keys.read().ok().map(|m| m.len()))
             .field("proxy_url", &self.proxy_url)
             .field("tool_http_client", &self.tool_http_client.is_some())
+            .field("disk_quota", &self.disk_quota.is_some())
             .finish()
     }
 }
@@ -469,6 +473,7 @@ impl Default for ToolContext {
             api_keys: Arc::new(RwLock::new(HashMap::new())),
             proxy_url: None,
             tool_http_client: None,
+            disk_quota: None,
         }
     }
 }
@@ -671,6 +676,28 @@ impl ToolContext {
     pub fn with_memory_store(mut self, store: Arc<MemoryStore>) -> Self {
         self.memory_store = Some(store);
         self
+    }
+
+    /// Add a DiskQuotaManager to the context (for enforcing disk usage limits)
+    pub fn with_disk_quota(mut self, dq: Arc<DiskQuotaManager>) -> Self {
+        self.disk_quota = Some(dq);
+        self
+    }
+
+    /// Check disk quota before a write. Returns Ok(()) or a human-readable error string.
+    pub fn check_disk_quota(&self, bytes: usize) -> Result<(), String> {
+        if let Some(ref dq) = self.disk_quota {
+            dq.check_quota(bytes as u64).map_err(|e| e.to_string())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Record a successful write with the disk quota manager.
+    pub fn record_disk_write(&self, bytes: usize) {
+        if let Some(ref dq) = self.disk_quota {
+            dq.record_write(bytes as u64);
+        }
     }
 
     /// Set an HTTP proxy URL for tool requests. Builds a proxy-configured HTTP client.

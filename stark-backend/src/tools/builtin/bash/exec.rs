@@ -699,6 +699,16 @@ impl Tool for ExecTool {
             }
         }
 
+        // Best-effort disk quota warning: if usage is >90%, append warning so AI sees it
+        if let Some(ref dq) = context.disk_quota {
+            if dq.is_enabled() && dq.usage_percentage() > 90 {
+                result_text.push_str(&format!(
+                    "\n\n⚠️ DISK QUOTA WARNING: {} — consider cleaning up unused files.",
+                    dq.status_line()
+                ));
+            }
+        }
+
         let result = if success {
             ToolResult::success(result_text)
         } else {

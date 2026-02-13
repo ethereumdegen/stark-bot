@@ -12,6 +12,7 @@ mod config;
 mod context;
 mod controllers;
 mod db;
+mod disk_quota;
 mod discord_hooks;
 mod domain_types;
 mod execution;
@@ -68,9 +69,13 @@ pub struct AppState {
     /// Either EnvWalletProvider (Standard mode) or FlashWalletProvider (Flash mode)
     /// None if no wallet is configured (graceful degradation - shows warning on login page)
     pub wallet_provider: Option<Arc<dyn WalletProvider>>,
+    /// Disk quota manager for application-level disk usage enforcement
+    pub disk_quota: Option<Arc<disk_quota::DiskQuotaManager>>,
     /// Handles for module background workers (keyed by module name).
     /// Used for hot-reload: abort old worker, spawn new one without restart.
     pub module_workers: Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
+    /// Server start time for uptime calculation
+    pub started_at: std::time::Instant,
     /// Telemetry store for querying execution spans and reward stats
     pub telemetry_store: Arc<telemetry::TelemetryStore>,
     /// Resource manager for versioned prompts and configs
@@ -799,6 +804,30 @@ async fn main() -> std::io::Result<()> {
         log::error!("Failed to initialize workspace: {}", e);
     }
 
+    // Initialize disk quota manager
+    let disk_quota_mb = config::disk_quota_mb();
+    let disk_quota: Option<Arc<disk_quota::DiskQuotaManager>> = if disk_quota_mb > 0 {
+        let tracked_dirs = vec![
+            std::path::PathBuf::from(config::workspace_dir()),
+            std::path::PathBuf::from(config::journal_dir()),
+            std::path::PathBuf::from(config::memory_config().memory_dir),
+            std::path::PathBuf::from(config::soul_dir()),
+            // Include the database directory
+            {
+                let db_url = std::env::var("DATABASE_URL")
+                    .unwrap_or_else(|_| config::defaults::DATABASE_URL.to_string());
+                let db_path = std::path::PathBuf::from(&db_url);
+                db_path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| config::backend_dir().join(".db"))
+            },
+        ];
+        let manager = Arc::new(disk_quota::DiskQuotaManager::new(Some(disk_quota_mb), tracked_dirs));
+        log::info!("{}", manager.status_line());
+        Some(manager)
+    } else {
+        log::info!("Disk quota: disabled");
+        None
+    };
+
     log::info!("Initializing database at {}", config.database_url);
     let db = Database::new(&config.database_url).expect("Failed to initialize database");
     let db = Arc::new(db);
@@ -996,8 +1025,7 @@ async fn main() -> std::io::Result<()> {
 
     // Create the shared MessageDispatcher for all message processing
     log::info!("Initializing message dispatcher");
-    let dispatcher = Arc::new(
-        MessageDispatcher::new_with_wallet_and_skills(
+    let mut dispatcher_builder = MessageDispatcher::new_with_wallet_and_skills(
             db.clone(),
             gateway.broadcaster().clone(),
             tool_registry.clone(),
@@ -1006,8 +1034,15 @@ async fn main() -> std::io::Result<()> {
             Some(skill_registry.clone()),
         ).with_hook_manager(hook_manager.clone())
          .with_validator_registry(validator_registry.clone())
-         .with_tx_queue(tx_queue.clone())
-    );
+         .with_tx_queue(tx_queue.clone());
+    if let Some(ref dq) = disk_quota {
+        dispatcher_builder = dispatcher_builder.with_disk_quota(dq.clone());
+        // Also wire disk quota into the MemoryStore for memory append limits
+        if let Some(ref store) = dispatcher_builder.memory_store() {
+            store.set_disk_quota(dq.clone());
+        }
+    }
+    let dispatcher = Arc::new(dispatcher_builder);
 
     // Get broadcaster and channel_manager for the /ws route
     let broadcaster = gateway.broadcaster();
@@ -1035,6 +1070,67 @@ async fn main() -> std::io::Result<()> {
     tokio::spawn(async move {
         scheduler_handle.start(scheduler_shutdown_rx).await;
     });
+
+    // Spawn disk quota background scan task (re-scan every 60s, broadcast warnings via gateway)
+    if let Some(ref dq) = disk_quota {
+        let dq_clone = dq.clone();
+        let bc_clone = broadcaster.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            interval.tick().await; // skip immediate tick
+            // Hysteresis: track last broadcast level to avoid spamming
+            let mut last_level: Option<String> = None;
+            loop {
+                interval.tick().await;
+                let _usage = dq_clone.refresh();
+                let pct = dq_clone.usage_percentage();
+                let used = dq_clone.usage_bytes();
+                let quota = dq_clone.quota_bytes();
+                let remaining = dq_clone.remaining_bytes();
+
+                let (level, message) = if pct >= 95 {
+                    ("critical", "Storage is critically full. Clean up now to avoid write failures.")
+                } else if pct >= 85 {
+                    ("high", "Storage is 85% full. Writes may start failing soon.")
+                } else if pct >= 70 {
+                    ("warning", "Storage is 70% full. Consider cleaning up old files.")
+                } else {
+                    ("ok", "")
+                };
+
+                // Log at appropriate levels
+                match level {
+                    "critical" => log::error!("[DISK_QUOTA] CRITICAL: {} — consider cleaning up files", dq_clone.status_line()),
+                    "high" => log::warn!("[DISK_QUOTA] HIGH: {}", dq_clone.status_line()),
+                    "warning" => log::warn!("[DISK_QUOTA] WARNING: {}", dq_clone.status_line()),
+                    _ => log::debug!("[DISK_QUOTA] {}", dq_clone.status_line()),
+                }
+
+                // Only broadcast when crossing a new threshold (hysteresis)
+                let should_broadcast = match (&last_level, level) {
+                    (None, "ok") => false, // Don't broadcast ok on first tick if already fine
+                    (None, _) => true,     // First time crossing a threshold
+                    (Some(prev), curr) => prev.as_str() != curr, // Level changed
+                };
+
+                if should_broadcast {
+                    let event_data = serde_json::json!({
+                        "percentage": pct,
+                        "used_bytes": used,
+                        "quota_bytes": quota,
+                        "remaining_bytes": remaining,
+                        "level": level,
+                        "message": message,
+                    });
+                    bc_clone.broadcast(crate::gateway::protocol::GatewayEvent::custom(
+                        "disk_quota.warning",
+                        event_data,
+                    ));
+                    last_level = Some(level.to_string());
+                }
+            }
+        });
+    }
 
     // Spawn workers for installed & enabled modules (track handles for hot-reload)
     let module_workers = Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::<String, tokio::task::JoinHandle<()>>::new()));
@@ -1093,6 +1189,7 @@ async fn main() -> std::io::Result<()> {
     let tx_q = tx_queue.clone();
     let safe_mode_rl = safe_mode_rate_limiter.clone();
     let wallet_prov = wallet_provider.clone();
+    let disk_q = disk_quota.clone();
     let mod_workers = module_workers.clone();
     let frontend_dist = frontend_dist.to_string();
     let dev_mode = dev_mode;
@@ -1120,7 +1217,9 @@ async fn main() -> std::io::Result<()> {
                 tx_queue: Arc::clone(&tx_q),
                 safe_mode_rate_limiter: safe_mode_rl.clone(),
                 wallet_provider: wallet_prov.clone(),
+                disk_quota: disk_q.clone(),
                 module_workers: Arc::clone(&mod_workers),
+                started_at: std::time::Instant::now(),
                 telemetry_store: Arc::new(telemetry::TelemetryStore::new(Arc::clone(&db))),
                 resource_manager: Arc::new(telemetry::ResourceManager::new(Arc::clone(&db))),
             }))
@@ -1157,6 +1256,7 @@ async fn main() -> std::io::Result<()> {
             .configure(controllers::kanban::config)
             .configure(controllers::modules::config)
             .configure(controllers::memory::config)
+            .configure(controllers::system::config)
             .configure(controllers::well_known::config)
             .configure(controllers::x402_limits::config)
             .configure(controllers::telemetry::config)

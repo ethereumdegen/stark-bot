@@ -117,6 +117,8 @@ pub struct MessageDispatcher {
     validator_registry: Option<Arc<crate::tool_validators::ValidatorRegistry>>,
     /// Transaction queue manager for queued web3 transactions
     tx_queue: Option<Arc<crate::tx_queue::TxQueueManager>>,
+    /// Disk quota manager for enforcing disk usage limits
+    disk_quota: Option<Arc<crate::disk_quota::DiskQuotaManager>>,
     /// Telemetry store for persisting execution spans
     telemetry_store: Arc<TelemetryStore>,
     /// Rollout manager for retry lifecycle
@@ -222,6 +224,7 @@ impl MessageDispatcher {
             hook_manager: None,
             validator_registry: None,
             tx_queue: None,
+            disk_quota: None,
             telemetry_store,
             rollout_manager,
             resource_manager,
@@ -229,6 +232,12 @@ impl MessageDispatcher {
             #[cfg(test)]
             mock_ai_client: None,
         }
+    }
+
+    /// Set the disk quota manager for enforcing disk usage limits
+    pub fn with_disk_quota(mut self, dq: Arc<crate::disk_quota::DiskQuotaManager>) -> Self {
+        self.disk_quota = Some(dq);
+        self
     }
 
     /// Set the hook manager for lifecycle events
@@ -299,6 +308,7 @@ impl MessageDispatcher {
             hook_manager: None,     // No hooks without explicit setup
             validator_registry: None, // No validators without explicit setup
             tx_queue: None,         // No tx queue without explicit setup
+            disk_quota: None,       // No disk quota without explicit setup
             telemetry_store,
             rollout_manager,
             resource_manager,
@@ -895,6 +905,12 @@ impl MessageDispatcher {
             log::debug!("[DISPATCH] MemoryStore attached to tool context");
         }
 
+        // Add DiskQuotaManager for enforcing disk usage limits
+        if let Some(ref dq) = self.disk_quota {
+            tool_context = tool_context.with_disk_quota(dq.clone());
+            log::debug!("[DISPATCH] DiskQuotaManager attached to tool context");
+        }
+
         // Pass safe mode flag to tool context so tools can sandbox themselves
         if is_safe_mode {
             tool_context.extra.insert(
@@ -1215,8 +1231,32 @@ impl MessageDispatcher {
                 DispatchResult::success(response)
             }
             Err(e) => {
-                let error = format!("AI generation error ({}): {}", archetype_id, e);
+                let mut error = format!("AI generation error ({}): {}", archetype_id, e);
                 log::error!("{}", error);
+
+                // If this is an x402 endpoint failure, check if it's due to insufficient USDC
+                if crate::x402::is_x402_endpoint(&settings.endpoint) {
+                    if let Some(ref wp) = self.wallet_provider {
+                        let wallet_addr = wp.get_address();
+                        match crate::x402::check_usdc_balance(&wallet_addr).await {
+                            Ok(balance) => {
+                                // 10000 raw units = 0.01 USDC (6 decimals)
+                                if balance < ethers::types::U256::from(10000u64) {
+                                    log::warn!(
+                                        "[X402] AI call failed and USDC balance is near zero ({}) for {}",
+                                        balance, wallet_addr
+                                    );
+                                    error = "Insufficient USDC balance for AI model payments. \
+                                             Please add USDC on Base to your wallet to continue using this AI model."
+                                        .to_string();
+                                }
+                            }
+                            Err(rpc_err) => {
+                                log::warn!("[X402] Failed to check USDC balance: {}", rpc_err);
+                            }
+                        }
+                    }
+                }
 
                 // Store error as assistant message so it's visible in the session
                 if let Err(db_err) = self.db.add_session_message(

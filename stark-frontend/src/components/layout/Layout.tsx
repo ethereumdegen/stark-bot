@@ -1,6 +1,7 @@
 import { Outlet, Navigate } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import BottomNav from './BottomNav';
+import DiskQuotaBanner from './DiskQuotaBanner';
 import { useAuth } from '@/hooks/useAuth';
 
 export default function Layout() {
@@ -25,6 +26,7 @@ export default function Layout() {
     <div className="h-screen flex overflow-hidden">
       <Sidebar />
       <main className="flex-1 overflow-y-auto pb-16 md:pb-0">
+        <DiskQuotaBanner />
         <Outlet />
       </main>
       <BottomNav />

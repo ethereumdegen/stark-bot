@@ -13,6 +13,8 @@ pub mod env_vars {
     pub const SKILLS_DIR: &str = "STARK_SKILLS_DIR";
     pub const JOURNAL_DIR: &str = "STARK_JOURNAL_DIR";
     pub const SOUL_DIR: &str = "STARK_SOUL_DIR";
+    // Disk quota (0 = disabled)
+    pub const DISK_QUOTA_MB: &str = "STARK_DISK_QUOTA_MB";
     // QMD Memory configuration (simplified file-based memory system)
     pub const MEMORY_DIR: &str = "STARK_MEMORY_DIR";
     pub const MEMORY_REINDEX_INTERVAL_SECS: &str = "STARK_MEMORY_REINDEX_INTERVAL_SECS";
@@ -31,6 +33,7 @@ pub mod defaults {
     pub const JOURNAL_DIR: &str = "journal";
     pub const SOUL_DIR: &str = "soul";
     pub const MEMORY_DIR: &str = "memory";
+    pub const DISK_QUOTA_MB: u64 = 256;
 }
 
 /// Returns the absolute path to the stark-backend directory.
@@ -79,6 +82,14 @@ pub fn journal_dir() -> String {
 /// Get the soul directory from environment or default
 pub fn soul_dir() -> String {
     resolve_backend_dir(env_vars::SOUL_DIR, defaults::SOUL_DIR)
+}
+
+/// Get the disk quota in megabytes (0 = disabled)
+pub fn disk_quota_mb() -> u64 {
+    env::var(env_vars::DISK_QUOTA_MB)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(defaults::DISK_QUOTA_MB)
 }
 
 /// Get the burner wallet private key from environment (for tools)

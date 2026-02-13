@@ -1,26 +1,27 @@
 import { useState, useEffect } from 'react';
-import { Bug, Wifi, WifiOff, Server } from 'lucide-react';
+import { Bug, Wifi, WifiOff, Server, HardDrive } from 'lucide-react';
 import Card, { CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import { useGateway } from '@/hooks/useGateway';
+import { useApi } from '@/hooks/useApi';
 
-interface DebugInfo {
-  version?: string;
-  uptime?: number;
-  memory?: {
-    used: number;
-    total: number;
+interface SystemInfo {
+  disk: {
+    enabled: boolean;
+    used_bytes: number;
+    quota_bytes: number;
+    remaining_bytes: number;
+    percentage: number;
+    breakdown: Record<string, number>;
   };
-  database?: {
-    connected: boolean;
-    size?: number;
-  };
+  uptime_secs: number;
+  version: string;
 }
 
 export default function Debug() {
   const { connected, gateway, connect, disconnect } = useGateway();
   const [events, setEvents] = useState<Array<{ event: string; data: unknown; time: Date }>>([]);
-  const [debugInfo] = useState<DebugInfo>({});
+  const { data: sysInfo } = useApi<SystemInfo>('/system/info');
 
   useEffect(() => {
     const handleEvent = (payload: unknown) => {
@@ -53,7 +54,8 @@ export default function Debug() {
   };
 
   const formatBytes = (bytes?: number) => {
-    if (!bytes) return 'N/A';
+    if (bytes === undefined || bytes === null) return 'N/A';
+    if (bytes === 0) return '0 B';
     const units = ['B', 'KB', 'MB', 'GB'];
     let value = bytes;
     let unitIndex = 0;
@@ -63,6 +65,8 @@ export default function Debug() {
     }
     return `${value.toFixed(1)} ${units[unitIndex]}`;
   };
+
+  const diskPct = sysInfo?.disk.percentage ?? 0;
 
   return (
     <div className="p-8">
@@ -125,21 +129,34 @@ export default function Debug() {
               <div className="flex items-center justify-between p-3 rounded-lg bg-slate-700/50">
                 <span className="text-slate-300">Version</span>
                 <span className="text-white font-mono">
-                  {debugInfo.version || '0.1.0'}
+                  {sysInfo?.version ?? '...'}
                 </span>
               </div>
               <div className="flex items-center justify-between p-3 rounded-lg bg-slate-700/50">
                 <span className="text-slate-300">Uptime</span>
                 <span className="text-white">
-                  {formatUptime(debugInfo.uptime)}
+                  {formatUptime(sysInfo?.uptime_secs)}
                 </span>
               </div>
               <div className="flex items-center justify-between p-3 rounded-lg bg-slate-700/50">
-                <span className="text-slate-300">Memory</span>
-                <span className="text-white">
-                  {formatBytes(debugInfo.memory?.used)} /{' '}
-                  {formatBytes(debugInfo.memory?.total)}
+                <span className="text-slate-300 flex items-center gap-2">
+                  <HardDrive className="w-4 h-4" />
+                  Disk Quota
                 </span>
+                <div className="flex items-center gap-3">
+                  <span className="text-white text-sm">
+                    {formatBytes(sysInfo?.disk.used_bytes)} / {formatBytes(sysInfo?.disk.quota_bytes)}
+                  </span>
+                  <div className="w-20 h-2 bg-slate-600 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${
+                        diskPct >= 90 ? 'bg-red-500' : diskPct >= 70 ? 'bg-amber-500' : 'bg-blue-500'
+                      }`}
+                      style={{ width: `${Math.min(diskPct, 100)}%` }}
+                    />
+                  </div>
+                  <span className="text-slate-400 text-xs w-8 text-right">{diskPct}%</span>
+                </div>
               </div>
             </div>
           </CardContent>

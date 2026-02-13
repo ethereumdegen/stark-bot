@@ -394,6 +394,18 @@ async fn upload_skill(
         });
     }
 
+    // Reject uploads larger than 10MB (ZIP bomb protection)
+    if file_data.len() > crate::disk_quota::MAX_SKILL_ZIP_BYTES {
+        return HttpResponse::BadRequest().json(UploadResponse {
+            success: false,
+            skill: None,
+            error: Some(format!(
+                "Upload rejected: file size ({} bytes) exceeds the 10MB limit for skill uploads.",
+                file_data.len()
+            )),
+        });
+    }
+
     // Determine file type from filename or content
     let is_markdown = filename
         .as_ref()

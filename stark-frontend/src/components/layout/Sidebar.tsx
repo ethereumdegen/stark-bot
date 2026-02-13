@@ -27,6 +27,7 @@ import {
   Cloud,
   Columns,
   Package,
+  HardDrive,
 } from 'lucide-react';
 import HeartbeatIcon from '@/components/HeartbeatIcon';
 import NavItem from './NavItem';
@@ -133,6 +134,7 @@ export default function Sidebar() {
             Developer
           </p>
           <NavItem to="/logs" icon={ScrollText} label="Live Logs" />
+          <NavItem to="/system" icon={HardDrive} label="System" />
           <NavItem to="/debug" icon={Bug} label="Debug" />
           <NavItem to="/payments" icon={DollarSign} label="Payments" />
           <NavItem to="/eip8004" icon={Shield} label="EIP-8004" />

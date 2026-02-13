@@ -19,6 +19,6 @@ pub mod erc20;
 pub mod payment_limits;
 
 pub use types::*;
-pub use client::{X402Client, X402Response, X402RetryResult, is_x402_endpoint, sign_402_payment, retry_with_x402_payment};
+pub use client::{X402Client, X402Response, X402RetryResult, is_x402_endpoint, sign_402_payment, retry_with_x402_payment, check_usdc_balance};
 pub use signer::X402Signer;
 pub use evm_rpc::{TxLog, X402EvmRpc};

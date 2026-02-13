@@ -46,9 +46,28 @@ impl ParsedScript {
 
 /// Parse a ZIP file containing a skill package
 pub fn parse_skill_zip(data: &[u8]) -> Result<ParsedSkill, String> {
+    // ZIP bomb protection: reject compressed data > 10MB
+    const MAX_ZIP_BYTES: usize = crate::disk_quota::MAX_SKILL_ZIP_BYTES;
+
     let cursor = Cursor::new(data);
     let mut archive = ZipArchive::new(cursor)
         .map_err(|e| format!("Failed to read ZIP file: {}", e))?;
+
+    // Pre-check: sum of uncompressed sizes declared in the archive
+    {
+        let mut total_uncompressed: u64 = 0;
+        for i in 0..archive.len() {
+            if let Ok(file) = archive.by_index(i) {
+                total_uncompressed += file.size();
+            }
+        }
+        if total_uncompressed > MAX_ZIP_BYTES as u64 {
+            return Err(format!(
+                "ZIP bomb protection: total uncompressed size ({} bytes) exceeds the 10MB limit.",
+                total_uncompressed,
+            ));
+        }
+    }
 
     let mut scripts: Vec<ParsedScript> = Vec::new();
     let mut skill_md_path: Option<String> = None;
