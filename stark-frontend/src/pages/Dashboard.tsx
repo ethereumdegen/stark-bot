@@ -45,6 +45,28 @@ export default function Dashboard() {
         <p className="text-slate-400">Overview of your StarkBot instance</p>
       </div>
 
+      <div className="mb-8 p-6 bg-slate-800/50 rounded-lg border border-slate-700">
+        <h2 className="text-xl font-semibold text-white mb-4">Getting Started</h2>
+        <ul className="space-y-2 text-slate-300">
+          <li className="flex items-start gap-2">
+            <span className="text-stark-400 mt-1">•</span>
+            <span>USDC on Base is needed to use the default AI model relay</span>
+          </li>
+          <li className="flex items-start gap-2">
+            <span className="text-stark-400 mt-1">•</span>
+            <span>A custom AI model endpoint can be configured in Agent Settings as an alternative</span>
+          </li>
+          <li className="flex items-start gap-2">
+            <span className="text-stark-400 mt-1">•</span>
+            <span>StarkBot is stateless so the encrypted backup store must be used to maintain state such as API keys and memories</span>
+          </li>
+          <li className="flex items-start gap-2">
+            <span className="text-stark-400 mt-1">•</span>
+            <span>To setup automation, configure a heartbeat and the mindmap or set up scheduled cron jobs</span>
+          </li>
+        </ul>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {stats.map((stat) => (
           <Card key={stat.label}>
