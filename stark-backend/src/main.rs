@@ -968,15 +968,15 @@ async fn main() -> std::io::Result<()> {
     log::info!("Initializing tool registry");
     let mut tool_registry_mut = tools::create_default_registry();
 
-    // Register tools from installed & enabled modules
-    let installed_modules = db.list_installed_modules().unwrap_or_default();
-    for module_entry in &installed_modules {
-        if module_entry.enabled {
-            if let Some(module) = module_registry.get(&module_entry.module_name) {
-                for tool in module.create_tools() {
-                    log::info!("[MODULE] Registered tool: {} (from {})", tool.name(), module_entry.module_name);
-                    tool_registry_mut.register(tool);
-                }
+    // Register tools from ALL built-in modules unconditionally.
+    // Tool visibility is controlled by subtype groups + skill requires_tools,
+    // not by module install/enable state. This prevents skills from silently
+    // failing when they reference a module tool that isn't installed yet.
+    for module in module_registry.available_modules() {
+        if module.has_tools() {
+            for tool in module.create_tools() {
+                log::info!("[MODULE] Registered tool: {} (from {})", tool.name(), module.name());
+                tool_registry_mut.register(tool);
             }
         }
     }

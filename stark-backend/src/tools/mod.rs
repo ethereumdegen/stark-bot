@@ -110,8 +110,8 @@ fn register_all_tools(registry: &mut ToolRegistry) {
     registry.register(Arc::new(builtin::TwitterPostTool::new()));
     registry.register(Arc::new(builtin::TelegramReadTool::new()));
 
-    // NOTE: discord_resolve_user is now provided by the discord_tipping module.
-    // It gets registered when the module is installed/enabled.
+    // NOTE: discord_resolve_user is registered via module system (see main.rs).
+    // All built-in module tools are registered unconditionally at startup.
 }
 
 /// Create a new ToolRegistry with all built-in tools registered
