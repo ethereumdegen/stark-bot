@@ -34,7 +34,7 @@ async fn main() {
     let poll_interval_secs: u64 = std::env::var("WALLET_MONITOR_POLL_INTERVAL")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(60);
+        .unwrap_or(10);
 
     log::info!("Opening database at: {}", db_path);
     let database = Arc::new(
