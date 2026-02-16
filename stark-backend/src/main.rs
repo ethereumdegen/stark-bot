@@ -735,6 +735,7 @@ async fn restore_backup_data(
     for entry in &backup_data.agent_subtypes {
         let tool_groups: Vec<String> = serde_json::from_str(&entry.tool_groups_json).unwrap_or_default();
         let skill_tags: Vec<String> = serde_json::from_str(&entry.skill_tags_json).unwrap_or_default();
+        let additional_tools: Vec<String> = serde_json::from_str(&entry.additional_tools_json).unwrap_or_default();
         let config = ai::multi_agent::types::AgentSubtypeConfig {
             key: entry.key.clone(),
             label: entry.label.clone(),
@@ -742,6 +743,7 @@ async fn restore_backup_data(
             description: entry.description.clone(),
             tool_groups,
             skill_tags,
+            additional_tools,
             prompt: entry.prompt.clone(),
             sort_order: entry.sort_order,
             enabled: entry.enabled,
@@ -955,16 +957,14 @@ async fn main() -> std::io::Result<()> {
         Err(e) => log::warn!("Failed to load x402 payment limits from DB: {}", e),
     }
 
-    // Load agent subtypes (DB > defaultagents.ron)
+    // Load agent subtypes — always upsert from RON so config changes take effect.
+    // Cloud backup restore can still overwrite later (it runs after this).
     {
-        let subtype_count = db.count_agent_subtypes().unwrap_or(0);
-        if subtype_count == 0 {
-            let configs = ai::multi_agent::types::load_default_agent_subtypes_from_file(config_dir);
-            for config in &configs {
-                let _ = db.upsert_agent_subtype(config);
-            }
-            log::info!("Seeded {} default agent subtypes from config", configs.len());
+        let configs = ai::multi_agent::types::load_default_agent_subtypes_from_file(config_dir);
+        for config in &configs {
+            let _ = db.upsert_agent_subtype(config);
         }
+        log::info!("Synced {} agent subtypes from defaultagents.ron", configs.len());
         let subtypes = db.list_agent_subtypes().unwrap_or_default();
         ai::multi_agent::types::load_subtype_registry(subtypes);
     }

@@ -1372,6 +1372,7 @@ impl Database {
                 description TEXT NOT NULL DEFAULT '',
                 tool_groups_json TEXT NOT NULL DEFAULT '[]',
                 skill_tags_json TEXT NOT NULL DEFAULT '[]',
+                additional_tools_json TEXT NOT NULL DEFAULT '[]',
                 prompt TEXT NOT NULL DEFAULT '',
                 sort_order INTEGER NOT NULL DEFAULT 0,
                 enabled INTEGER NOT NULL DEFAULT 1,
@@ -1385,6 +1386,12 @@ impl Database {
         // Migration: add max_iterations column to existing agent_subtypes tables
         let _ = conn.execute(
             "ALTER TABLE agent_subtypes ADD COLUMN max_iterations INTEGER NOT NULL DEFAULT 90",
+            [],
+        );
+
+        // Migration: add additional_tools_json column (explicit tool allowlist for orchestrator subtypes)
+        let _ = conn.execute(
+            "ALTER TABLE agent_subtypes ADD COLUMN additional_tools_json TEXT NOT NULL DEFAULT '[]'",
             [],
         );
 

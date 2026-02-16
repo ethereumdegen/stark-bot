@@ -102,7 +102,7 @@ impl ToolRegistry {
     }
 
     /// Get tools that are allowed by a configuration
-    pub fn get_allowed_tools(&self, config: &ToolConfig) -> Vec<Arc<dyn Tool>> {
+    pub fn get_additional_tools(&self, config: &ToolConfig) -> Vec<Arc<dyn Tool>> {
         self.tools
             .read()
             .values()
@@ -116,18 +116,22 @@ impl ToolRegistry {
     }
 
     /// Get tools that are allowed for a specific agent subtype.
-    /// If the subtype config has an explicit `allowed_tools` list, only those tools
-    /// are included (overrides group-based filtering). Otherwise, System tools are
-    /// always included plus tools from the subtype's allowed groups.
+    /// Tools come from two sources (additive):
+    /// 1. `tool_groups` — tools whose group is in the subtype's allowed groups
+    /// 2. `additional_tools` — explicitly named tools added on top (regardless of group)
+    ///
+    /// When `additional_tools` is set, the automatic System/Web/Filesystem injection
+    /// is skipped (the subtype must declare everything it needs explicitly).
+    /// When `additional_tools` is empty, System tools are auto-included for convenience.
     pub fn get_allowed_tools_for_subtype(
         &self,
         config: &ToolConfig,
         subtype: AgentSubtype,
     ) -> Vec<Arc<dyn Tool>> {
-        // Check if this subtype has an explicit tool allowlist (e.g. Director)
-        let explicit_allowlist: Option<Vec<String>> = get_subtype_config(subtype.as_str())
-            .filter(|c| !c.allowed_tools.is_empty())
-            .map(|c| c.allowed_tools);
+        let additional: Vec<String> = get_subtype_config(subtype.as_str())
+            .map(|c| c.additional_tools)
+            .unwrap_or_default();
+        let has_additional = !additional.is_empty();
 
         let allowed_groups = subtype.allowed_tool_groups();
         self.tools
@@ -135,23 +139,31 @@ impl ToolRegistry {
             .values()
             .filter(|tool| {
                 let def = tool.definition();
-                // Hidden tools are skill-only — excluded from normal lists
                 if def.hidden {
                     return false;
                 }
-
-                // If the subtype has an explicit allowlist, use it exclusively
-                if let Some(ref allowlist) = explicit_allowlist {
-                    return allowlist.iter().any(|name| name == &def.name)
-                        && config.is_tool_allowed(&def.name, tool.group());
+                if !config.is_tool_allowed(&def.name, tool.group()) {
+                    return false;
                 }
 
                 let group = tool.group();
-                // System tools are always available (when no explicit allowlist)
-                let group_allowed =
-                    group == ToolGroup::System || allowed_groups.contains(&group);
-                // Also check against the tool config
-                group_allowed && config.is_tool_allowed(&def.name, group)
+
+                // Tool is allowed if its group is in the subtype's allowed groups
+                if allowed_groups.contains(&group) {
+                    return true;
+                }
+
+                // Tool is allowed if it's explicitly named in additional_tools
+                if additional.iter().any(|name| name == &def.name) {
+                    return true;
+                }
+
+                // Auto-include System tools only when there's no explicit additional_tools
+                if !has_additional && group == ToolGroup::System {
+                    return true;
+                }
+
+                false
             })
             .cloned()
             .collect()
@@ -225,7 +237,7 @@ impl ToolRegistry {
 
     /// Get tool definitions for allowed tools (for sending to AI)
     pub fn get_tool_definitions(&self, config: &ToolConfig) -> Vec<ToolDefinition> {
-        self.get_allowed_tools(config)
+        self.get_additional_tools(config)
             .iter()
             .map(|tool| tool.definition())
             .collect()
@@ -450,10 +462,10 @@ mod tests {
     }
 
     #[test]
-    fn test_safe_mode_get_allowed_tools_excludes_dangerous() {
+    fn test_safe_mode_get_additional_tools_excludes_dangerous() {
         let registry = build_all_groups_registry();
         let config = ToolConfig::safe_mode();
-        let allowed = registry.get_allowed_tools(&config);
+        let allowed = registry.get_additional_tools(&config);
         let allowed_names: Vec<String> = allowed.iter().map(|t| t.definition().name.clone()).collect();
 
         // twitter_post must NOT be in the list
@@ -613,7 +625,7 @@ mod tests {
         let registry = crate::tools::create_default_registry();
         let config = ToolConfig::safe_mode();
 
-        let allowed = registry.get_allowed_tools(&config);
+        let allowed = registry.get_additional_tools(&config);
         let allowed_names: Vec<String> = allowed.iter().map(|t| t.definition().name.clone()).collect();
 
         // Every allowed tool must be EITHER in the allow list OR in the Web group
@@ -637,7 +649,7 @@ mod tests {
         let registry = crate::tools::create_default_registry();
         let config = ToolConfig::safe_mode();
 
-        let allowed = registry.get_allowed_tools(&config);
+        let allowed = registry.get_additional_tools(&config);
         let allowed_names: Vec<String> = allowed.iter().map(|t| t.definition().name.clone()).collect();
 
         assert!(

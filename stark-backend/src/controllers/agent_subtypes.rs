@@ -99,6 +99,8 @@ struct CreateSubtypeRequest {
     description: String,
     tool_groups: Vec<String>,
     skill_tags: Vec<String>,
+    #[serde(default)]
+    additional_tools: Vec<String>,
     prompt: String,
     #[serde(default)]
     sort_order: i32,
@@ -152,6 +154,7 @@ async fn create_subtype(
         description: body.description.clone(),
         tool_groups: body.tool_groups.clone(),
         skill_tags: body.skill_tags.clone(),
+        additional_tools: body.additional_tools.clone(),
         prompt: body.prompt.clone(),
         sort_order: body.sort_order,
         enabled: body.enabled,
@@ -184,6 +187,8 @@ struct UpdateSubtypeRequest {
     tool_groups: Option<Vec<String>>,
     #[serde(default)]
     skill_tags: Option<Vec<String>>,
+    #[serde(default)]
+    additional_tools: Option<Vec<String>>,
     #[serde(default)]
     prompt: Option<String>,
     #[serde(default)]
@@ -230,6 +235,7 @@ async fn update_subtype(
         description: body.description.clone().unwrap_or(existing.description),
         tool_groups: body.tool_groups.clone().unwrap_or(existing.tool_groups),
         skill_tags: body.skill_tags.clone().unwrap_or(existing.skill_tags),
+        additional_tools: body.additional_tools.clone().unwrap_or(existing.additional_tools),
         prompt: body.prompt.clone().unwrap_or(existing.prompt),
         sort_order: body.sort_order.unwrap_or(existing.sort_order),
         enabled: body.enabled.unwrap_or(existing.enabled),

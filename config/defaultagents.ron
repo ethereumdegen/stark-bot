@@ -6,7 +6,7 @@
         description: "Orchestrate tasks by spawning and coordinating sub-agents",
         tool_groups: ["subagent"],
         skill_tags: [],
-        allowed_tools: [
+        additional_tools: [
             "spawn_subagent",
             "subagent_status",
             "say_to_user",

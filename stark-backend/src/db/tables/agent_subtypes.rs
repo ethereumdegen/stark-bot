@@ -11,7 +11,7 @@ impl Database {
     pub fn list_agent_subtypes(&self) -> SqliteResult<Vec<AgentSubtypeConfig>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT key, label, emoji, description, tool_groups_json, skill_tags_json, prompt, sort_order, enabled, max_iterations
+            "SELECT key, label, emoji, description, tool_groups_json, skill_tags_json, prompt, sort_order, enabled, max_iterations, additional_tools_json
              FROM agent_subtypes ORDER BY sort_order, key"
         )?;
 
@@ -19,6 +19,7 @@ impl Database {
             .query_map([], |row| {
                 let tool_groups_str: String = row.get(4)?;
                 let skill_tags_str: String = row.get(5)?;
+                let additional_tools_str: String = row.get::<_, String>(10).unwrap_or_else(|_| "[]".to_string());
                 Ok(AgentSubtypeConfig {
                     key: row.get(0)?,
                     label: row.get(1)?,
@@ -26,6 +27,7 @@ impl Database {
                     description: row.get(3)?,
                     tool_groups: serde_json::from_str(&tool_groups_str).unwrap_or_default(),
                     skill_tags: serde_json::from_str(&skill_tags_str).unwrap_or_default(),
+                    additional_tools: serde_json::from_str(&additional_tools_str).unwrap_or_default(),
                     prompt: row.get(6)?,
                     sort_order: row.get(7)?,
                     enabled: row.get::<_, i32>(8)? != 0,
@@ -42,12 +44,13 @@ impl Database {
     pub fn get_agent_subtype(&self, key: &str) -> SqliteResult<Option<AgentSubtypeConfig>> {
         let conn = self.conn();
         let result = conn.query_row(
-            "SELECT key, label, emoji, description, tool_groups_json, skill_tags_json, prompt, sort_order, enabled, max_iterations
+            "SELECT key, label, emoji, description, tool_groups_json, skill_tags_json, prompt, sort_order, enabled, max_iterations, additional_tools_json
              FROM agent_subtypes WHERE key = ?1",
             [key],
             |row| {
                 let tool_groups_str: String = row.get(4)?;
                 let skill_tags_str: String = row.get(5)?;
+                let additional_tools_str: String = row.get::<_, String>(10).unwrap_or_else(|_| "[]".to_string());
                 Ok(AgentSubtypeConfig {
                     key: row.get(0)?,
                     label: row.get(1)?,
@@ -55,6 +58,7 @@ impl Database {
                     description: row.get(3)?,
                     tool_groups: serde_json::from_str(&tool_groups_str).unwrap_or_default(),
                     skill_tags: serde_json::from_str(&skill_tags_str).unwrap_or_default(),
+                    additional_tools: serde_json::from_str(&additional_tools_str).unwrap_or_default(),
                     prompt: row.get(6)?,
                     sort_order: row.get(7)?,
                     enabled: row.get::<_, i32>(8)? != 0,
@@ -75,16 +79,18 @@ impl Database {
         let now = Utc::now().to_rfc3339();
         let tool_groups_json = serde_json::to_string(&config.tool_groups).unwrap_or_else(|_| "[]".to_string());
         let skill_tags_json = serde_json::to_string(&config.skill_tags).unwrap_or_else(|_| "[]".to_string());
+        let additional_tools_json = serde_json::to_string(&config.additional_tools).unwrap_or_else(|_| "[]".to_string());
 
         conn.execute(
-            "INSERT INTO agent_subtypes (key, label, emoji, description, tool_groups_json, skill_tags_json, prompt, sort_order, enabled, max_iterations, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)
+            "INSERT INTO agent_subtypes (key, label, emoji, description, tool_groups_json, skill_tags_json, additional_tools_json, prompt, sort_order, enabled, max_iterations, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)
              ON CONFLICT(key) DO UPDATE SET
                 label = excluded.label,
                 emoji = excluded.emoji,
                 description = excluded.description,
                 tool_groups_json = excluded.tool_groups_json,
                 skill_tags_json = excluded.skill_tags_json,
+                additional_tools_json = excluded.additional_tools_json,
                 prompt = excluded.prompt,
                 sort_order = excluded.sort_order,
                 enabled = excluded.enabled,
@@ -97,6 +103,7 @@ impl Database {
                 config.description,
                 tool_groups_json,
                 skill_tags_json,
+                additional_tools_json,
                 config.prompt,
                 config.sort_order,
                 config.enabled as i32,

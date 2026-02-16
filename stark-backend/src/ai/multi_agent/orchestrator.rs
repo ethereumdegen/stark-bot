@@ -221,6 +221,37 @@ impl Orchestrator {
                 String::new()
             };
 
+            // Detect "Spawn <subtype> sub-agent: <task>" and inject spawn_subagent instruction
+            let spawn_instruction = if let Some(start) = task.description.find("Spawn ") {
+                let rest = &task.description[start + 6..];
+                // Extract subtype (word before " sub-agent")
+                if let Some(sa_pos) = rest.find(" sub-agent") {
+                    let subtype = rest[..sa_pos].trim().to_lowercase().replace(' ', "_");
+                    // Extract the task description after "sub-agent: " or "sub-agent — "
+                    let after_sa = &rest[sa_pos + 10..];
+                    let spawn_task = after_sa
+                        .strip_prefix(": ")
+                        .or_else(|| after_sa.strip_prefix(" — "))
+                        .or_else(|| after_sa.strip_prefix(" - "))
+                        .unwrap_or(after_sa)
+                        .trim();
+                    let task_text = if spawn_task.is_empty() {
+                        task.description.clone()
+                    } else {
+                        spawn_task.to_string()
+                    };
+                    format!(
+                        "\n\n**⚡ ACTION REQUIRED:** Call `spawn_subagent(task=\"{}\", label=\"{}\", wait=true)` immediately. Do NOT call set_agent_subtype or any other tool first.",
+                        task_text.replace('"', "\\\""),
+                        subtype,
+                    )
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            };
+
             let auto_complete_hint = if let Some(ref tool_name) = task.auto_complete_tool {
                 format!(
                     "\n\n**Note:** This task will auto-complete when `{}` succeeds. \
@@ -232,13 +263,14 @@ impl Orchestrator {
             };
 
             prompt.push_str(&format!(
-                "# >>> CURRENT TASK ({}/{}) <<<\n\n{}{}{}\n\n\
+                "# >>> CURRENT TASK ({}/{}) <<<\n\n{}{}{}{}\n\n\
                  **YOU MUST**: Complete ONLY this task. Do NOT skip ahead. \
                  When done, call `say_to_user` with `finished_task: true` or `task_fully_completed` with a summary.\n\n---\n\n",
                 completed + 1,
                 total,
                 task.description,
                 skill_instruction,
+                spawn_instruction,
                 auto_complete_hint,
             ));
         }

@@ -1634,14 +1634,21 @@ impl MessageDispatcher {
                 .get_tool_definitions_for_subtype(tool_config, subtype)
         };
 
-        if let Some(skill_tool) = self.create_skill_tool_definition_for_subtype(subtype) {
-            tools.push(skill_tool);
+        // Only inject use_skill if the subtype has skill access (non-empty skill_tags)
+        if !subtype.allowed_skill_tags().is_empty() {
+            if let Some(skill_tool) = self.create_skill_tool_definition_for_subtype(subtype) {
+                tools.push(skill_tool);
+            }
         }
 
         tools.extend(orchestrator.get_mode_tools());
 
+        // Strip define_tasks unless a skill requires it or the subtype explicitly includes it
         let skill_requires_define_tasks = requires_tools.iter().any(|t| t == "define_tasks");
-        if !skill_requires_define_tasks {
+        let subtype_has_define_tasks = crate::ai::multi_agent::types::get_subtype_config(subtype.as_str())
+            .map(|c| c.additional_tools.iter().any(|t| t == "define_tasks"))
+            .unwrap_or(false);
+        if !skill_requires_define_tasks && !subtype_has_define_tasks {
             tools.retain(|t| t.name != "define_tasks");
         }
 

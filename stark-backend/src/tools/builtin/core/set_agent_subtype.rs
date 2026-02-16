@@ -194,7 +194,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_subtype_finance() {
         // Load built-in defaults so registry is populated
-        types::load_subtype_registry(types::builtin_default_subtypes());
+        types::load_subtype_registry(types::load_test_subtypes());
 
         let tool = SetAgentSubtypeTool::new();
         let context = ToolContext::new();
@@ -209,7 +209,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_subtype_code_engineer() {
-        types::load_subtype_registry(types::builtin_default_subtypes());
+        types::load_subtype_registry(types::load_test_subtypes());
 
         let tool = SetAgentSubtypeTool::new();
         let context = ToolContext::new();
@@ -224,7 +224,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_subtype_secretary() {
-        types::load_subtype_registry(types::builtin_default_subtypes());
+        types::load_subtype_registry(types::load_test_subtypes());
 
         let tool = SetAgentSubtypeTool::new();
         let context = ToolContext::new();
@@ -239,7 +239,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_subtype() {
-        types::load_subtype_registry(types::builtin_default_subtypes());
+        types::load_subtype_registry(types::load_test_subtypes());
 
         let tool = SetAgentSubtypeTool::new();
         let context = ToolContext::new();

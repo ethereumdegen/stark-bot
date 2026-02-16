@@ -23,7 +23,7 @@ pub struct AgentSubtypeConfig {
     /// Explicit tool allowlist. When non-empty, ONLY these tools are available
     /// (overrides group-based filtering). Used to lock down orchestrator-only subtypes.
     #[serde(default)]
-    pub allowed_tools: Vec<String>,
+    pub additional_tools: Vec<String>,
     /// The prompt text returned when this subtype is activated
     pub prompt: String,
     pub sort_order: i32,
@@ -79,98 +79,26 @@ pub fn subtype_registry_loaded() -> bool {
     SUBTYPE_REGISTRY.get().map(|r| !r.read().is_empty()).unwrap_or(false)
 }
 
-/// Load default agent subtypes from `config/defaultagents.ron`.
+/// Load agent subtypes from `config/defaultagents.ron`.
+/// Panics if the file is missing or malformed — the RON config is required.
 pub fn load_default_agent_subtypes_from_file(config_dir: &std::path::Path) -> Vec<AgentSubtypeConfig> {
     let path = config_dir.join("defaultagents.ron");
-    match std::fs::read_to_string(&path) {
-        Ok(content) => match ron::from_str::<Vec<AgentSubtypeConfig>>(&content) {
-            Ok(configs) => {
-                log::info!("[SUBTYPE] Loaded {} default subtypes from {}", configs.len(), path.display());
-                configs
-            }
-            Err(e) => {
-                log::error!("[SUBTYPE] Failed to parse {}: {}", path.display(), e);
-                builtin_default_subtypes()
-            }
-        },
-        Err(e) => {
-            log::warn!("[SUBTYPE] Could not read {}: {} — using built-in defaults", path.display(), e);
-            builtin_default_subtypes()
-        }
-    }
+    let content = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("[SUBTYPE] config/defaultagents.ron is required but could not be read: {}", e));
+    let configs: Vec<AgentSubtypeConfig> = ron::from_str(&content)
+        .unwrap_or_else(|e| panic!("[SUBTYPE] Failed to parse {}: {}", path.display(), e));
+    log::info!("[SUBTYPE] Loaded {} subtypes from {}", configs.len(), path.display());
+    configs
 }
 
-/// Hard-coded fallback defaults (used if RON file is missing).
-pub fn builtin_default_subtypes() -> Vec<AgentSubtypeConfig> {
-    vec![
-        AgentSubtypeConfig {
-            key: "director".to_string(),
-            label: "Director".to_string(),
-            emoji: "🎬".to_string(),
-            description: "Orchestrate tasks by spawning and coordinating sub-agents".to_string(),
-            tool_groups: vec!["subagent".to_string()],
-            skill_tags: vec![],
-            allowed_tools: vec![
-                "spawn_subagent", "subagent_status", "say_to_user",
-                "ask_user", "define_tasks", "add_task", "task_fully_completed",
-            ].into_iter().map(String::from).collect(),
-            prompt: "🎬 Director toolbox activated.\n\nYou are a pure orchestrator. Delegate ALL work to sub-agents.\n\n## Tools\n• spawn_subagent — Spawn a sub-agent with a specific subtype and task\n• subagent_status — Check progress of running sub-agents\n\n## Strategy\n1. Break the request into subtasks\n2. Spawn sub-agents with appropriate subtypes (finance, code_engineer, secretary)\n3. Poll subagent_status and synthesize results".to_string(),
-            sort_order: -1,
-            enabled: true,
-            max_iterations: 90,
-        },
-        AgentSubtypeConfig {
-            key: "finance".to_string(),
-            label: "Finance".to_string(),
-            emoji: "💰".to_string(),
-            description: "Crypto swaps, transfers, DeFi operations, token lookups".to_string(),
-            tool_groups: vec!["finance".to_string()],
-            skill_tags: vec![
-                "crypto", "defi", "transfer", "swap", "finance", "wallet", "token",
-                "bridge", "lending", "yield", "dex", "payments", "x402", "transaction",
-                "polymarket", "prediction-markets", "trading", "price", "discord", "tipping",
-            ].into_iter().map(String::from).collect(),
-            allowed_tools: vec![],
-            prompt: "💰 Finance toolbox activated.".to_string(),
-            sort_order: 0,
-            enabled: true,
-            max_iterations: 90,
-        },
-        AgentSubtypeConfig {
-            key: "code_engineer".to_string(),
-            label: "CodeEngineer".to_string(),
-            emoji: "🛠️".to_string(),
-            description: "Code editing, git operations, testing, debugging".to_string(),
-            tool_groups: vec!["development".to_string(), "exec".to_string()],
-            skill_tags: vec![
-                "development", "git", "testing", "debugging", "review", "code", "github",
-                "devops", "deployment", "infrastructure", "workflow", "discussions", "ci-cd",
-                "skills", "project", "scaffold",
-            ].into_iter().map(String::from).collect(),
-            allowed_tools: vec![],
-            prompt: "🛠️ CodeEngineer toolbox activated.".to_string(),
-            sort_order: 1,
-            enabled: true,
-            max_iterations: 90,
-        },
-        AgentSubtypeConfig {
-            key: "secretary".to_string(),
-            label: "Secretary".to_string(),
-            emoji: "📱".to_string(),
-            description: "Social media, messaging, scheduling, marketing".to_string(),
-            tool_groups: vec!["messaging".to_string(), "social".to_string(), "memory".to_string(), "exec".to_string()],
-            skill_tags: vec![
-                "social", "marketing", "messaging", "moltx", "scheduling", "communication",
-                "social-media", "secretary", "journal", "discord", "telegram", "twitter", "4claw",
-                "x402", "cron", "moltbook", "publishing", "content",
-            ].into_iter().map(String::from).collect(),
-            allowed_tools: vec![],
-            prompt: "📱 Secretary toolbox activated.".to_string(),
-            sort_order: 2,
-            enabled: true,
-            max_iterations: 90,
-        },
-    ]
+/// Load subtypes from the repo's config/defaultagents.ron (for tests).
+/// Walks up from CARGO_MANIFEST_DIR to find the config directory.
+#[cfg(test)]
+pub fn load_test_subtypes() -> Vec<AgentSubtypeConfig> {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    // config/ is at the repo root, one level above stark-backend/
+    let config_dir = manifest_dir.parent().unwrap().join("config");
+    load_default_agent_subtypes_from_file(&config_dir)
 }
 
 // =====================================================
@@ -636,10 +564,10 @@ impl AgentSubtype {
             return vec![ToolGroup::System];
         }
 
-        // If the config has an explicit allowed_tools list, skip group-based access
+        // If the config has an explicit additional_tools list, skip group-based access
         // (the registry will use the allowlist directly instead)
         if let Some(config) = get_subtype_config(self.as_str()) {
-            if !config.allowed_tools.is_empty() {
+            if !config.additional_tools.is_empty() {
                 // Return only the declared tool_groups (for metadata/UI)
                 return config.tool_groups.iter()
                     .filter_map(|g| ToolGroup::from_str(g))
@@ -697,10 +625,10 @@ impl AgentSubtype {
             return vec![];
         }
 
-        // If the config has an explicit allowed_tools list AND empty skill_tags,
+        // If the config has an explicit additional_tools list AND empty skill_tags,
         // this subtype gets no skills (pure orchestrator pattern)
         if let Some(config) = get_subtype_config(self.as_str()) {
-            if !config.allowed_tools.is_empty() && config.skill_tags.is_empty() {
+            if !config.additional_tools.is_empty() && config.skill_tags.is_empty() {
                 return vec![];
             }
         }
@@ -722,9 +650,7 @@ impl AgentSubtype {
 
         // Hardcoded fallback
         let extra: Vec<&str> = match self {
-            AgentSubtype::Director => vec![
-                "orchestration", "research", "delegation", "general",
-            ],
+            AgentSubtype::Director => vec![],
             AgentSubtype::Finance => vec![
                 "crypto", "defi", "transfer", "swap", "finance", "wallet", "token",
                 "bridge", "lending", "yield", "dex", "payments", "x402", "transaction",
