@@ -182,8 +182,9 @@ impl Tool for SpawnSubagentsTool {
         let overall_timeout = params.timeout.unwrap_or(600).min(3600);
 
         // Check if we have a real SubAgentManager with valid context
+        // Note: channel_id 0 is valid (web channel), so we just check is_some()
         let has_valid_context = context.session_id.map(|id| id > 0).unwrap_or(false)
-            && context.channel_id.map(|id| id > 0).unwrap_or(false);
+            && context.channel_id.is_some();
 
         if let Some(manager) = &context.subagent_manager {
             if has_valid_context {
