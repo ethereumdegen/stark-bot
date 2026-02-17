@@ -13,6 +13,8 @@ use crate::gateway::events::EventBroadcaster;
 use crate::gateway::protocol::GatewayEvent;
 use crate::models::{AgentSettings, MessageRole as DbMessageRole, SessionScope};
 use crate::tools::{ToolContext, ToolDefinition, ToolRegistry};
+use crate::skills::SkillRegistry;
+use crate::memory::qmd::MemoryStore;
 use dashmap::DashMap;
 use serde_json::json;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -56,6 +58,10 @@ pub struct SubAgentManager {
     /// Encapsulates both Standard mode (EnvWalletProvider with raw private key)
     /// and Flash mode (FlashWalletProvider with Privy proxy)
     wallet_provider: Option<Arc<dyn crate::wallet::WalletProvider>>,
+    /// Skill registry for sub-agent tool context
+    skill_registry: Option<Arc<SkillRegistry>>,
+    /// QMD memory store for sub-agent tool context
+    memory_store: Option<Arc<MemoryStore>>,
 }
 
 impl SubAgentManager {
@@ -88,7 +94,19 @@ impl SubAgentManager {
             last_activity: Arc::new(DashMap::new()),
             config,
             wallet_provider,
+            skill_registry: None,
+            memory_store: None,
         }
+    }
+
+    /// Set the skill registry for sub-agent tool contexts
+    pub fn set_skill_registry(&mut self, registry: Arc<SkillRegistry>) {
+        self.skill_registry = Some(registry);
+    }
+
+    /// Set the memory store for sub-agent tool contexts
+    pub fn set_memory_store(&mut self, store: Arc<MemoryStore>) {
+        self.memory_store = Some(store);
     }
 
     /// Generate a unique sub-agent ID
@@ -131,6 +149,7 @@ impl SubAgentManager {
             context.parent_subagent_id.as_deref(),
             context.depth,
             context.parent_session_id,
+            context.agent_subtype.as_deref(),
         ));
 
         log::info!(
@@ -158,6 +177,8 @@ impl SubAgentManager {
         let total_sem = self.total_semaphore.clone();
         let channel_sem = self.get_channel_semaphore(context.parent_channel_id);
         let wallet_provider = self.wallet_provider.clone();
+        let skill_registry = self.skill_registry.clone();
+        let memory_store = self.memory_store.clone();
         let active_agents = self.active_agents.clone();
         let last_activity = self.last_activity.clone();
         let subagent_id_for_cleanup = subagent_id.clone();
@@ -187,6 +208,8 @@ impl SubAgentManager {
                 tool_registry.clone(),
                 context.clone(),
                 wallet_provider,
+                skill_registry,
+                memory_store,
                 last_activity.clone(),
             );
 
@@ -273,6 +296,8 @@ impl SubAgentManager {
         tool_registry: Arc<ToolRegistry>,
         mut context: SubAgentContext,
         wallet_provider: Option<Arc<dyn crate::wallet::WalletProvider>>,
+        skill_registry: Option<Arc<SkillRegistry>>,
+        memory_store: Option<Arc<MemoryStore>>,
         last_activity: Arc<DashMap<String, chrono::DateTime<chrono::Utc>>>,
     ) -> Result<String, String> {
         log::info!("[SUBAGENT] Starting execution for {}", context.id);
@@ -387,7 +412,19 @@ impl SubAgentManager {
             .with_session(session.id)
             .with_workspace(workspace_dir)
             .with_broadcaster(broadcaster.clone())
+            .with_database(db.clone())
             .with_subagent_identity(context.id.clone(), context.depth);
+
+        // Attach optional stores so sub-agent tools (use_skill, manage_skills, memory_search, etc.) work
+        if let Some(ref registry) = skill_registry {
+            tool_context = tool_context.with_skill_registry(registry.clone());
+        }
+        if let Some(ref store) = memory_store {
+            tool_context = tool_context.with_memory_store(store.clone());
+        }
+        if let Some(ref wp) = wallet_provider {
+            tool_context = tool_context.with_wallet_provider(wp.clone());
+        }
 
         // SECURITY: Pass safe_mode flag to tool context so memory tools sandbox to safemode/
         if parent_channel_safe_mode {
@@ -922,6 +959,7 @@ impl GatewayEvent {
         parent_subagent_id: Option<&str>,
         depth: u32,
         session_id: i64,
+        agent_subtype: Option<&str>,
     ) -> Self {
         Self::new(
             "subagent.spawned",
@@ -933,6 +971,7 @@ impl GatewayEvent {
                 "parent_subagent_id": parent_subagent_id,
                 "depth": depth,
                 "session_id": session_id,
+                "agent_subtype": agent_subtype,
                 "timestamp": chrono::Utc::now().to_rfc3339()
             }),
         )

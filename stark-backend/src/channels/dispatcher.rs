@@ -172,17 +172,7 @@ impl MessageDispatcher {
     ) -> Self {
         let memory_config = MemoryConfig::from_env();
 
-        // Create SubAgentManager for spawning background AI agents
-        let subagent_manager = Arc::new(SubAgentManager::new_with_config(
-            db.clone(),
-            broadcaster.clone(),
-            tool_registry.clone(),
-            Default::default(),
-            wallet_provider.clone(),
-        ));
-        log::info!("[DISPATCHER] SubAgentManager initialized");
-
-        // Create QMD memory store
+        // Create QMD memory store (before SubAgentManager so we can pass it through)
         let memory_dir = std::path::PathBuf::from(memory_config.memory_dir.clone());
         let memory_store = match MemoryStore::new(memory_dir, &memory_config.memory_db_path()) {
             Ok(store) => {
@@ -194,6 +184,24 @@ impl MessageDispatcher {
                 None
             }
         };
+
+        // Create SubAgentManager for spawning background AI agents
+        // Pass through skill_registry and memory_store so sub-agent ToolContexts have them
+        let mut subagent_mgr = SubAgentManager::new_with_config(
+            db.clone(),
+            broadcaster.clone(),
+            tool_registry.clone(),
+            Default::default(),
+            wallet_provider.clone(),
+        );
+        if let Some(ref registry) = skill_registry {
+            subagent_mgr.set_skill_registry(registry.clone());
+        }
+        if let Some(ref store) = memory_store {
+            subagent_mgr.set_memory_store(store.clone());
+        }
+        let subagent_manager = Arc::new(subagent_mgr);
+        log::info!("[DISPATCHER] SubAgentManager initialized");
 
         // Create context manager and link memory store to it
         let mut context_manager = ContextManager::new(db.clone())

@@ -858,8 +858,8 @@ export default function AgentChat() {
       // Filter out events from other channels/sessions
       if (!isCurrentSessionEvent(data, dbSessionId)) return;
 
-      const event = data as { subagent_id: string; label: string; task: string; timestamp: string; parent_subagent_id?: string; depth?: number };
-      console.log('[Subagent] Spawned:', event.label, 'depth:', event.depth ?? 0);
+      const event = data as { subagent_id: string; label: string; task: string; timestamp: string; parent_subagent_id?: string; depth?: number; agent_subtype?: string };
+      console.log('[Subagent] Spawned:', event.label, 'subtype:', event.agent_subtype ?? 'none', 'depth:', event.depth ?? 0);
       setSubagents((prev) => [
         ...prev.filter(s => s.id !== event.subagent_id),
         {
@@ -877,10 +877,11 @@ export default function AgentChat() {
       const taskPreview = event.task.length > 120 ? `${event.task.slice(0, 120)}...` : event.task;
       const msgId = crypto.randomUUID();
       subagentSpawnMsgIds.current.set(event.subagent_id, msgId);
+      const subtypeTag = event.agent_subtype ? ` \`${event.agent_subtype}\`` : '';
       const message: ChatMessageType = {
         id: msgId,
         role: 'system' as MessageRole,
-        content: `🚀 **Subagent spawned:** ${event.label}\n${taskPreview}`,
+        content: `🚀 **Subagent spawned:** ${event.label}${subtypeTag}\n${taskPreview}`,
         timestamp: new Date(),
         sessionId,
         subagentLabel: event.label,
