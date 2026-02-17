@@ -505,6 +505,17 @@ export default function SpecialRoles() {
           When an assigned user messages a safe-mode channel, the dispatcher appends the role's extra tools to their allow list. Unassigned users get vanilla safe mode. Sessions with enriched permissions show a badge in the session list.
         </p>
       </div>
+
+      {/* Warning */}
+      <div className="mt-4 p-4 bg-amber-500/10 border border-amber-500/40 rounded-lg text-sm flex items-start gap-3">
+        <span className="text-amber-400 text-lg leading-none mt-0.5">&#9888;</span>
+        <div>
+          <p className="text-amber-300 font-semibold mb-1">Warning</p>
+          <p className="text-amber-200/80">
+            Enabling tools for external users can be extremely hazardous. Granting write-capable tools (posting, transactions, file operations) to an outside user means their messages can trigger real-world actions through the agent. Only grant special roles if you know exactly what you are doing.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
