@@ -9,6 +9,7 @@ pub mod execution;
 pub mod identity;
 pub mod session;
 pub mod session_message;
+pub mod special_role;
 
 pub use agent_settings::{AgentSettings, AgentSettingsResponse, UpdateAgentSettingsRequest, MIN_CONTEXT_TOKENS, DEFAULT_CONTEXT_TOKENS};
 pub use bot_settings::{BotSettings, UpdateBotSettingsRequest, DEFAULT_MAX_TOOL_ITERATIONS, DEFAULT_SAFE_MODE_MAX_QUERIES_PER_10MIN};
@@ -35,3 +36,4 @@ pub use cron_job::{
     UpdateHeartbeatConfigRequest,
 };
 pub use execution::{ExecutionTask, TaskMetrics, TaskStatus, TaskType};
+pub use special_role::{SpecialRole, SpecialRoleAssignment, SpecialRoleGrants};

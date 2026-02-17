@@ -25,3 +25,4 @@ pub mod x402_payment_limits; // x402_payment_limits (per-call max amounts per to
 pub mod kanban;          // kanban_items (kanban board task management)
 pub mod modules;         // installed_modules (plugin system registry)
 pub mod telemetry;       // execution_spans, rollouts, attempts, resource_versions
+pub mod special_roles;   // special_roles, special_role_assignments (enriched safe mode)

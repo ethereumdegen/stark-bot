@@ -765,6 +765,41 @@ async fn restore_backup_data(
         }
     }
 
+    // Restore special roles
+    let mut restored_special_roles = 0;
+    for entry in &backup_data.special_roles {
+        let role = models::SpecialRole {
+            name: entry.name.clone(),
+            allowed_tools: serde_json::from_str(&entry.allowed_tools_json).unwrap_or_default(),
+            allowed_skills: serde_json::from_str(&entry.allowed_skills_json).unwrap_or_default(),
+            description: entry.description.clone(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        match db.upsert_special_role(&role) {
+            Ok(_) => restored_special_roles += 1,
+            Err(e) => log::warn!("[Keystore] Failed to restore special role '{}': {}", entry.name, e),
+        }
+    }
+    if restored_special_roles > 0 {
+        log::info!("[Keystore] Restored {} special roles", restored_special_roles);
+    }
+
+    // Restore special role assignments (roles must exist first)
+    let mut restored_assignments = 0;
+    for entry in &backup_data.special_role_assignments {
+        match db.create_special_role_assignment(&entry.channel_type, &entry.user_id, &entry.special_role_name) {
+            Ok(_) => restored_assignments += 1,
+            Err(e) => log::warn!(
+                "[Keystore] Failed to restore special role assignment ({}/{} -> {}): {}",
+                entry.channel_type, entry.user_id, entry.special_role_name, e
+            ),
+        }
+    }
+    if restored_assignments > 0 {
+        log::info!("[Keystore] Restored {} special role assignments", restored_assignments);
+    }
+
     // Restore tool config directories (gog CLI tokens, etc.)
     restore_tool_configs(&backup_data);
 
@@ -1445,6 +1480,7 @@ async fn main() -> std::io::Result<()> {
             .configure(controllers::x402_limits::config)
             .configure(controllers::telemetry::config)
             .configure(controllers::agent_subtypes::config)
+            .configure(controllers::special_roles::config)
             .configure(controllers::external_channel::config)
             // WebSocket Gateway route (same port as HTTP, required for single-port platforms)
             .route("/ws", web::get().to(gateway::actix_ws::ws_handler));

@@ -30,6 +30,7 @@ import Modules from '@/pages/Modules';
 import ModuleDashboard from '@/pages/ModuleDashboard';
 import GuestDashboard from '@/pages/GuestDashboard';
 import AgentSubtypes from '@/pages/AgentSubtypes';
+import SpecialRoles from '@/pages/SpecialRoles';
 
 function App() {
   return (
@@ -65,6 +66,7 @@ function App() {
         <Route path="/eip8004" element={<EIP8004 />} />
         <Route path="/crypto-transactions" element={<CryptoTransactions />} />
         <Route path="/agent-subtypes" element={<AgentSubtypes />} />
+        <Route path="/special-roles" element={<SpecialRoles />} />
         <Route path="/modules" element={<Modules />} />
         <Route path="/modules/:name" element={<ModuleDashboard />} />
       </Route>

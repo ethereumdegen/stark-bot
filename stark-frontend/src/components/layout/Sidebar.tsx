@@ -28,6 +28,7 @@ import {
   Package,
   HardDrive,
   Shapes,
+  ShieldCheck,
 } from 'lucide-react';
 import HeartbeatIcon from '@/components/HeartbeatIcon';
 import NavItem from './NavItem';
@@ -131,6 +132,7 @@ export default function Sidebar() {
           <p className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">
             Developer
           </p>
+          <NavItem to="/special-roles" icon={ShieldCheck} label="Special Roles" />
           <NavItem to="/tools" icon={Wrench} label="Tools" />
           <NavItem to="/skills" icon={Zap} label="Skills" />
           <NavItem to="/modules" icon={Package} label="Modules" />

@@ -27,5 +27,6 @@ pub mod tools;
 pub mod tx_queue;
 pub mod well_known;
 pub mod system;
+pub mod special_roles;
 pub mod telemetry;
 pub mod x402_limits;

@@ -125,7 +125,7 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT id, session_key, agent_id, scope, channel_type, channel_id, platform_chat_id,
              is_active, reset_policy, idle_timeout_minutes, daily_reset_hour,
-             created_at, updated_at, last_activity_at, expires_at, context_tokens, max_context_tokens, compaction_id, completion_status, safe_mode
+             created_at, updated_at, last_activity_at, expires_at, context_tokens, max_context_tokens, compaction_id, completion_status, safe_mode, special_role_name
              FROM chat_sessions WHERE id = ?1",
         )?;
 
@@ -143,7 +143,7 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT id, session_key, agent_id, scope, channel_type, channel_id, platform_chat_id,
              is_active, reset_policy, idle_timeout_minutes, daily_reset_hour,
-             created_at, updated_at, last_activity_at, expires_at, context_tokens, max_context_tokens, compaction_id, completion_status, safe_mode
+             created_at, updated_at, last_activity_at, expires_at, context_tokens, max_context_tokens, compaction_id, completion_status, safe_mode, special_role_name
              FROM chat_sessions ORDER BY last_activity_at DESC LIMIT 100",
         )?;
 
@@ -162,7 +162,7 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT id, session_key, agent_id, scope, channel_type, channel_id, platform_chat_id,
              is_active, reset_policy, idle_timeout_minutes, daily_reset_hour,
-             created_at, updated_at, last_activity_at, expires_at, context_tokens, max_context_tokens, compaction_id, completion_status, safe_mode
+             created_at, updated_at, last_activity_at, expires_at, context_tokens, max_context_tokens, compaction_id, completion_status, safe_mode, special_role_name
              FROM chat_sessions WHERE session_key = ?1 AND is_active = 1",
         )?;
 
@@ -185,7 +185,7 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT id, session_key, agent_id, scope, channel_type, channel_id, platform_chat_id,
              is_active, reset_policy, idle_timeout_minutes, daily_reset_hour,
-             created_at, updated_at, last_activity_at, expires_at, context_tokens, max_context_tokens, compaction_id, completion_status, safe_mode
+             created_at, updated_at, last_activity_at, expires_at, context_tokens, max_context_tokens, compaction_id, completion_status, safe_mode, special_role_name
              FROM chat_sessions
              WHERE channel_type = ?1 AND channel_id = ?2 AND is_active = 1
              ORDER BY last_activity_at DESC LIMIT 1",
@@ -395,6 +395,16 @@ impl Database {
         Ok(())
     }
 
+    /// Set the special_role_name on a session (called when special role enrichment is applied)
+    pub fn set_session_special_role(&self, id: i64, role_name: &str) -> SqliteResult<()> {
+        let conn = self.conn();
+        conn.execute(
+            "UPDATE chat_sessions SET special_role_name = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![role_name, Utc::now().to_rfc3339(), id],
+        )?;
+        Ok(())
+    }
+
     fn row_to_chat_session(row: &rusqlite::Row) -> rusqlite::Result<ChatSession> {
         let created_at_str: String = row.get(11)?;
         let updated_at_str: String = row.get(12)?;
@@ -437,6 +447,7 @@ impl Database {
                 CompletionStatus::from_str(&status_str).unwrap_or_default()
             },
             safe_mode: row.get::<_, i32>(19).unwrap_or(0) != 0,
+            special_role_name: row.get::<_, Option<String>>(20).unwrap_or(None),
         })
     }
 
@@ -594,7 +605,7 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT id, session_key, agent_id, scope, channel_type, channel_id, platform_chat_id,
              is_active, reset_policy, idle_timeout_minutes, daily_reset_hour,
-             created_at, updated_at, last_activity_at, expires_at, context_tokens, max_context_tokens, compaction_id, completion_status, safe_mode
+             created_at, updated_at, last_activity_at, expires_at, context_tokens, max_context_tokens, compaction_id, completion_status, safe_mode, special_role_name
              FROM chat_sessions
              WHERE channel_type = 'heartbeat'
              ORDER BY created_at DESC

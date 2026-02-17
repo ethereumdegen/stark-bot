@@ -162,6 +162,9 @@ pub struct ChatSession {
     /// Whether this session was used in safe mode context
     #[serde(default)]
     pub safe_mode: bool,
+    /// Special role name if this safe-mode session has enriched permissions
+    #[serde(default)]
+    pub special_role_name: Option<String>,
 }
 
 /// Request to get or create a chat session
@@ -213,6 +216,9 @@ pub struct ChatSessionResponse {
     // Safe mode - from the channel settings
     #[serde(skip_serializing_if = "Option::is_none")]
     pub safe_mode: Option<bool>,
+    // Special role name if this safe-mode session has enriched permissions
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub special_role_name: Option<String>,
 }
 
 impl From<ChatSession> for ChatSessionResponse {
@@ -239,6 +245,7 @@ impl From<ChatSession> for ChatSessionResponse {
             completion_status: session.completion_status,
             initial_query: None,
             safe_mode: if session.safe_mode { Some(true) } else { None },
+            special_role_name: session.special_role_name,
         }
     }
 }

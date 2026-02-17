@@ -199,7 +199,7 @@ impl Database {
             "SELECT DISTINCT cs.id, cs.session_key, cs.agent_id, cs.scope, cs.channel_type, cs.channel_id,
                     cs.platform_chat_id, cs.is_active, cs.reset_policy, cs.idle_timeout_minutes,
                     cs.daily_reset_hour, cs.created_at, cs.updated_at, cs.last_activity_at, cs.expires_at,
-                    cs.context_tokens, cs.max_context_tokens, cs.compaction_id, cs.completion_status, cs.safe_mode
+                    cs.context_tokens, cs.max_context_tokens, cs.compaction_id, cs.completion_status, cs.safe_mode, cs.special_role_name
              FROM chat_sessions cs
              INNER JOIN session_messages sm ON sm.session_id = cs.id
              WHERE sm.user_id IN ({})
@@ -255,6 +255,7 @@ impl Database {
                         CompletionStatus::from_str(&status_str).unwrap_or_default()
                     },
                     safe_mode: row.get::<_, i32>(19).unwrap_or(0) != 0,
+                    special_role_name: row.get::<_, Option<String>>(20).unwrap_or(None),
                 })
             })?
             .filter_map(|r| r.ok())

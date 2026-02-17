@@ -19,6 +19,7 @@ interface Session {
   completion_status?: string;
   initial_query?: string;
   safe_mode?: boolean;
+  special_role_name?: string;
 }
 
 function isValidStatus(status: string | undefined): status is CompletionStatus {
@@ -460,6 +461,11 @@ export default function Sessions() {
                     Safe Mode
                   </span>
                 )}
+                {selectedSession.special_role_name && (
+                  <span className="text-xs px-2 py-1 bg-cyan-500/20 text-cyan-400 rounded-full flex items-center gap-1">
+                    {selectedSession.special_role_name}
+                  </span>
+                )}
               </div>
               {selectedSession.channel_type === 'cron' && (() => {
                 const jobId = getCronJobId(selectedSession.platform_chat_id);
@@ -723,6 +729,12 @@ export default function Sessions() {
                           <span className="text-xs px-1.5 sm:px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded-full flex items-center gap-1">
                             <AlertCircle className="w-3 h-3" />
                             <span className="hidden sm:inline">Safe Mode</span>
+                          </span>
+                        )}
+                        {session.special_role_name && (
+                          <span className="text-xs px-1.5 sm:px-2 py-0.5 bg-cyan-500/20 text-cyan-400 rounded-full flex items-center gap-1">
+                            <span className="hidden sm:inline">{session.special_role_name}</span>
+                            <span className="sm:hidden">SR</span>
                           </span>
                         )}
                       </div>

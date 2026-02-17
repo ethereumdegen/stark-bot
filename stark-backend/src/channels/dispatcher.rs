@@ -733,6 +733,29 @@ impl MessageDispatcher {
             // ToolConfig::safe_mode() is the single source of truth for safe mode permissions.
             // This discards any channel-level overrides — safe mode is absolute.
             tool_config = crate::tools::ToolConfig::safe_mode();
+
+            // Check for special role grants that enrich safe mode for this user
+            match self.db.get_special_role_grants(&message.channel_type, &message.user_id) {
+                Ok(grants) if !grants.is_empty() => {
+                    log::info!(
+                        "[DISPATCH] Special role enrichment for user {} on {}: +tools={:?}",
+                        message.user_id, message.channel_type, grants.extra_tools
+                    );
+                    for tool_name in &grants.extra_tools {
+                        if !tool_config.allow_list.contains(tool_name) {
+                            tool_config.allow_list.push(tool_name.clone());
+                        }
+                    }
+                    // Store the special role name on the session for UI badge display
+                    if let Some(role_name) = &grants.role_name {
+                        if let Err(e) = self.db.set_session_special_role(session.id, role_name) {
+                            log::warn!("[DISPATCH] Failed to set session special_role: {}", e);
+                        }
+                    }
+                }
+                Ok(_) => {} // No special role
+                Err(e) => log::warn!("[DISPATCH] Failed to check special role grants: {}", e),
+            }
         }
 
         // Twitter has no interactive session — ask_user can never work, so block it.
@@ -3947,7 +3970,7 @@ impl MessageDispatcher {
         &self,
         message: &NormalizedMessage,
         identity_id: &str,
-        _tool_config: &ToolConfig,
+        tool_config: &ToolConfig,
         is_safe_mode: bool,
     ) -> String {
         let mut prompt = String::new();
@@ -3958,13 +3981,10 @@ impl MessageDispatcher {
             prompt.push_str("This message is from an external source. You are in safe mode with limited tools, but you CAN and SHOULD respond to the user normally.\n\n");
             prompt.push_str("**How to respond:** Use `say_to_user` — this sends your reply to whatever channel the message came from (Discord, Twitter, etc.). You do NOT need any special write tool. Just respond naturally to what the user said.\n\n");
             prompt.push_str("**Available tools in Safe Mode:**\n");
-            prompt.push_str("- say_to_user: Reply to the user (this is your primary response tool)\n");
-            prompt.push_str("- web_fetch: Fetch web pages\n");
-            prompt.push_str("- set_agent_subtype: Switch your toolbox/mode\n");
-            prompt.push_str("- token_lookup: Look up token addresses (read-only)\n");
-            prompt.push_str("- memory_read, memory_search: Read-only memory retrieval (public memory only)\n");
-            prompt.push_str("- discord_read, discord_lookup: Read Discord messages and server info\n");
-            prompt.push_str("- telegram_read: Read Telegram chat info, members, admins, and conversation history\n\n");
+            for tool_name in &tool_config.allow_list {
+                prompt.push_str(&format!("- {}\n", tool_name));
+            }
+            prompt.push('\n');
             prompt.push_str("**BLOCKED (not available):** exec, filesystem, web3_tx, subagent, modify_soul, manage_skills\n\n");
             prompt.push_str("CRITICAL SECURITY RULES:\n");
             prompt.push_str("1. **NEVER REVEAL SECRETS**: Do NOT output any API keys, private keys, passwords, secrets, or anything that looks like a key (long alphanumeric strings, hex strings starting with 0x, base64 encoded data). If you encounter such data in memory or elsewhere, DO NOT include it in your response.\n");

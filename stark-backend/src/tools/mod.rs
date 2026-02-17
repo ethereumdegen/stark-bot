@@ -43,6 +43,9 @@ fn register_all_tools(registry: &mut ToolRegistry) {
     registry.register(Arc::new(builtin::HeartbeatConfigTool::new()));
     registry.register(Arc::new(builtin::MindmapManageTool::new()));
 
+    // Special roles (enriched safe mode management)
+    registry.register(Arc::new(builtin::ModifySpecialRoleTool::new()));
+
     // Meta tools (self-management)
     registry.register(Arc::new(builtin::CloudBackupTool::new()));
     registry.register(Arc::new(builtin::SetThemeAccentTool::new()));

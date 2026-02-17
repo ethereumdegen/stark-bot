@@ -75,6 +75,10 @@ pub struct BackupData {
     pub kanban_items: Vec<KanbanItemEntry>,
     /// Agent subtypes (configurable toolboxes)
     pub agent_subtypes: Vec<AgentSubtypeEntry>,
+    /// Special roles (enriched safe mode)
+    pub special_roles: Vec<SpecialRoleEntry>,
+    /// Special role assignments (user→role mappings)
+    pub special_role_assignments: Vec<SpecialRoleAssignmentEntry>,
     /// Tool config directories (e.g. gog CLI auth tokens)
     /// Maps a logical name (e.g. "gogcli") to a list of files with base64-encoded contents.
     pub tool_configs: HashMap<String, Vec<ToolConfigFileEntry>>,
@@ -106,6 +110,8 @@ impl Default for BackupData {
             x402_payment_limits: Vec::new(),
             kanban_items: Vec::new(),
             agent_subtypes: Vec::new(),
+            special_roles: Vec::new(),
+            special_role_assignments: Vec::new(),
             tool_configs: HashMap::new(),
         }
     }
@@ -148,6 +154,8 @@ impl BackupData {
             + self.x402_payment_limits.len()
             + self.kanban_items.len()
             + self.agent_subtypes.len()
+            + self.special_roles.len()
+            + self.special_role_assignments.len()
     }
 }
 
@@ -386,6 +394,25 @@ pub struct AgentSubtypeEntry {
     pub max_iterations: Option<u32>,
     pub skip_task_planner: Option<bool>,
     pub aliases_json: String,
+}
+
+/// Special role entry in backup (enriched safe mode)
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SpecialRoleEntry {
+    pub name: String,
+    pub allowed_tools_json: String,
+    pub allowed_skills_json: String,
+    pub description: Option<String>,
+}
+
+/// Special role assignment entry in backup
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SpecialRoleAssignmentEntry {
+    pub channel_type: String,
+    pub user_id: String,
+    pub special_role_name: String,
 }
 
 /// A file from a tool's config directory, stored as base64
@@ -702,6 +729,31 @@ pub async fn collect_backup_data(
                 max_iterations: Some(s.max_iterations),
                 skip_task_planner: Some(s.skip_task_planner),
                 aliases_json: serde_json::to_string(&s.aliases).unwrap_or_else(|_| "[]".to_string()),
+            })
+            .collect();
+    }
+
+    // Special roles
+    if let Ok(roles) = db.list_special_roles() {
+        backup.special_roles = roles
+            .iter()
+            .map(|r| SpecialRoleEntry {
+                name: r.name.clone(),
+                allowed_tools_json: serde_json::to_string(&r.allowed_tools).unwrap_or_else(|_| "[]".to_string()),
+                allowed_skills_json: serde_json::to_string(&r.allowed_skills).unwrap_or_else(|_| "[]".to_string()),
+                description: r.description.clone(),
+            })
+            .collect();
+    }
+
+    // Special role assignments
+    if let Ok(assignments) = db.list_special_role_assignments(None) {
+        backup.special_role_assignments = assignments
+            .iter()
+            .map(|a| SpecialRoleAssignmentEntry {
+                channel_type: a.channel_type.clone(),
+                user_id: a.user_id.clone(),
+                special_role_name: a.special_role_name.clone(),
             })
             .collect();
     }

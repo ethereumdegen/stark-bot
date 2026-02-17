@@ -14,6 +14,7 @@ import {
   Users,
   FolderOpen,
   ScrollText,
+  ShieldCheck,
   Bug,
   LogOut,
   Key,
@@ -117,6 +118,7 @@ export default function MobileNavDrawer({ isOpen, onClose }: MobileNavDrawerProp
   ];
 
   const devItems = [
+    { to: '/special-roles', icon: ShieldCheck, label: 'Special Roles' },
     { to: '/tools', icon: Wrench, label: 'Tools' },
     { to: '/skills', icon: Zap, label: 'Skills' },
     { to: '/logs', icon: ScrollText, label: 'Live Logs' },

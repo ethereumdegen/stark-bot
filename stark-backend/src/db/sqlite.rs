@@ -478,6 +478,8 @@ impl Database {
         let _ = conn.execute("ALTER TABLE chat_sessions ADD COLUMN last_compaction_at TEXT", []);
         // Safe mode: Track if session was used in safe mode context
         let _ = conn.execute("ALTER TABLE chat_sessions ADD COLUMN safe_mode INTEGER NOT NULL DEFAULT 0", []);
+        // Special role: Track which special role (if any) enriched this safe-mode session
+        let _ = conn.execute("ALTER TABLE chat_sessions ADD COLUMN special_role_name TEXT", []);
 
         // Session messages table - conversation transcripts
         conn.execute(
@@ -1557,6 +1559,31 @@ impl Database {
             "CREATE INDEX IF NOT EXISTS idx_resource_versions_active ON resource_versions(is_active)",
             [],
         );
+
+        // Special roles (enriched safe mode)
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS special_roles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                allowed_tools TEXT NOT NULL DEFAULT '[]',
+                allowed_skills TEXT NOT NULL DEFAULT '[]',
+                description TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS special_role_assignments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel_type TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                special_role_name TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (special_role_name) REFERENCES special_roles(name) ON DELETE CASCADE,
+                UNIQUE(channel_type, user_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_sra_lookup ON special_role_assignments(channel_type, user_id);",
+        )?;
 
         Ok(())
     }
