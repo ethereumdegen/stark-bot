@@ -14,7 +14,7 @@ use crate::gateway::protocol::GatewayEvent;
 use crate::models::{AgentSettings, MessageRole as DbMessageRole, SessionScope};
 use crate::tools::{ToolContext, ToolDefinition, ToolRegistry};
 use crate::skills::SkillRegistry;
-use crate::memory::qmd::MemoryStore;
+use crate::qmd_memory::MemoryStore;
 use dashmap::DashMap;
 use serde_json::json;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -416,14 +416,14 @@ impl SubAgentManager {
             .with_subagent_identity(context.id.clone(), context.depth);
 
         // Attach optional stores so sub-agent tools (use_skill, manage_skills, memory_search, etc.) work
-        if let Some(ref registry) = skill_registry {
-            tool_context = tool_context.with_skill_registry(registry.clone());
+        if let Some(registry) = skill_registry.clone() {
+            tool_context = tool_context.with_skill_registry(registry);
         }
-        if let Some(ref store) = memory_store {
-            tool_context = tool_context.with_memory_store(store.clone());
+        if let Some(store) = memory_store.clone() {
+            tool_context = tool_context.with_memory_store(store);
         }
-        if let Some(ref wp) = wallet_provider {
-            tool_context = tool_context.with_wallet_provider(wp.clone());
+        if let Some(wp) = wallet_provider.clone() {
+            tool_context = tool_context.with_wallet_provider(wp);
         }
 
         // SECURITY: Pass safe_mode flag to tool context so memory tools sandbox to safemode/
