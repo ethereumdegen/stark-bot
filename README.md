@@ -426,7 +426,7 @@ The agent has access to 35+ built-in tools:
 
 **System**: `exec`, `process_status`, `task_complete`, `subagent`
 
-**Web**: `web_fetch`, `x402_fetch`, `x402_rpc`
+**Web**: `web_fetch`, `x402_preset_fetch`, `x402_rpc`
 
 ## AI Provider Configuration
 

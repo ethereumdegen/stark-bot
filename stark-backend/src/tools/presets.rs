@@ -14,7 +14,7 @@ static RPC_PRESETS: OnceLock<HashMap<String, RpcPreset>> = OnceLock::new();
 static WEB3_PRESETS: OnceLock<HashMap<String, Web3Preset>> = OnceLock::new();
 static NETWORKS: OnceLock<HashMap<String, NetworkConfig>> = OnceLock::new();
 
-/// x402_fetch preset configuration
+/// x402_preset_fetch preset configuration
 #[derive(Debug, Clone, Deserialize)]
 pub struct FetchPreset {
     pub base_url: String,

@@ -181,7 +181,7 @@ Common tools you can use in skills:
 | Tool | Purpose |
 |------|---------|
 | `web_fetch` | HTTP requests (GET, POST, etc.) |
-| `x402_fetch` | Paid API requests via x402 |
+| `x402_preset_fetch` | Paid API requests via x402 |
 
 ### Development
 | Tool | Purpose |

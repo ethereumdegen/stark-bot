@@ -212,11 +212,11 @@ Payment relay issues. Wait 30 seconds and retry.
 
 ## Other x402 Tools
 
-### x402_fetch (Preset-based)
+### x402_preset_fetch (Preset-based)
 
 For DEX/DeFi operations via DeFi Relay:
 
-```tool:x402_fetch
+```tool:x402_preset_fetch
 preset: swap_quote
 network: base
 cache_as: quote_result

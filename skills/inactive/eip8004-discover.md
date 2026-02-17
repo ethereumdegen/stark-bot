@@ -174,7 +174,7 @@ Ensure `getAgentWallet(agentId)` matches expected payment recipient.
 If agent has `x402Support: true`:
 
 1. Find service endpoint from registration
-2. Use `x402_fetch` or `x402_rpc` tool
+2. Use `x402_preset_fetch` or `x402_rpc` tool
 3. Payment handled automatically via EIP-3009
 4. Submit feedback after successful interaction
 
@@ -353,4 +353,4 @@ When `from == address(0)`, a new agent was registered:
 - `eip8004-register` - Register your own agent
 - `eip8004-reputation` - Manage reputation feedback
 - `swap` - Token swaps (common agent service)
-- `x402_fetch` - Make x402 API calls
+- `x402_preset_fetch` - Make x402 API calls

@@ -327,7 +327,7 @@ mod tests {
                 },
                 "buyAmount": "5000"
             }),
-            "x402_fetch",
+            "x402_preset_fetch",
         );
 
         assert_eq!(

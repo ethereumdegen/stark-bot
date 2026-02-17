@@ -5,7 +5,7 @@ version: 2.0.0
 author: starkbot
 homepage: https://superrouter.defirelay.com
 metadata: {"clawdbot":{"emoji":"🎨"}}
-requires_tools: [x402_fetch]
+requires_tools: [x402_post]
 arguments:
   prompt:
     description: "Text prompt describing the image or video to generate"
@@ -33,7 +33,7 @@ SuperRouter is an x402-enabled cloud service at **https://superrouter.defirelay.
 
 ## Routes & Quality Tiers
 
-There are 2 routes, each with 3 quality tiers selected via `?quality=low|medium|high`:
+There are 2 routes, each with 3 quality tiers:
 
 ### Images (`/generate_image`)
 
@@ -55,20 +55,25 @@ There are 2 routes, each with 3 quality tiers selected via `?quality=low|medium|
 
 ## How to Generate Media
 
-Use the `x402_fetch` tool to call the SuperRouter endpoints. The prompt and quality are passed as query parameters.
+Use the `x402_post` tool to call the SuperRouter endpoints. The prompt and quality are passed as a JSON body.
 
-**URL format:**
+**Tool call format:**
 ```
-https://superrouter.defirelay.com/generate_image?prompt=<url-encoded-prompt>&quality=<low|medium|high>
-https://superrouter.defirelay.com/generate_video?prompt=<url-encoded-prompt>&quality=<low|medium|high>
+x402_post(
+  url: "https://superrouter.defirelay.com/generate_image",
+  body: {"prompt": "a cute cat", "quality": "medium"}
+)
 ```
 
 **Examples:**
-- Medium image (default): `https://superrouter.defirelay.com/generate_image?prompt=a+cute+cat&quality=medium`
-- Cheap fast image: `https://superrouter.defirelay.com/generate_image?prompt=a+cute+cat&quality=low`
-- High quality video: `https://superrouter.defirelay.com/generate_video?prompt=a+cinematic+sunset&quality=high`
+- Medium image (default):
+  `x402_post(url: "https://superrouter.defirelay.com/generate_image", body: {"prompt": "a cute cat", "quality": "medium"})`
+- Cheap fast image:
+  `x402_post(url: "https://superrouter.defirelay.com/generate_image", body: {"prompt": "a cute cat", "quality": "low"})`
+- High quality video:
+  `x402_post(url: "https://superrouter.defirelay.com/generate_video", body: {"prompt": "a cinematic sunset", "quality": "high"})`
 
-The x402_fetch tool handles the x402 payment protocol automatically — it will sign and submit a STARKBOT permit payment when the server responds with HTTP 402.
+The `x402_post` tool handles the x402 payment protocol automatically — it will sign and submit a STARKBOT permit payment when the server responds with HTTP 402.
 
 ## Response Format
 
@@ -108,7 +113,7 @@ The service returns JSON:
 
 - **Network**: Base (Ethereum L2)
 - **Token**: STARKBOT (ERC-20) at `0x587Cd533F418825521f3A1daa7CCd1E7339A1B07`
-- **Payment**: Handled automatically by `x402_fetch` via EIP-2612 permit signatures (cost is set server-side per endpoint)
+- **Payment**: Handled automatically by `x402_post` via EIP-2612 permit signatures (cost is set server-side per endpoint)
 - **Facilitator**: x402.org
 
 ## Error Handling

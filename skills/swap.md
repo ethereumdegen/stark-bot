@@ -6,7 +6,7 @@ author: starkbot
 homepage: https://0x.org
 metadata: {"requires_auth": false, "clawdbot":{"emoji":"🔄"}}
 tags: [crypto, defi, swap, dex, base, trading, 0x]
-requires_tools: [token_lookup, to_raw_amount, decode_calldata, web3_preset_function_call, x402_fetch, x402_rpc, list_queued_web3_tx, broadcast_web3_tx, verify_tx_broadcast, select_web3_network, define_tasks]
+requires_tools: [token_lookup, to_raw_amount, decode_calldata, web3_preset_function_call, x402_preset_fetch, x402_rpc, list_queued_web3_tx, broadcast_web3_tx, verify_tx_broadcast, select_web3_network, define_tasks]
 ---
 
 # Token Swap Skill
@@ -28,7 +28,7 @@ Call `define_tasks` with all 7 tasks in order:
   "TASK 1 — Prepare: select network, look up sell+buy tokens, check AllowanceHolder allowance. See swap skill 'Task 1'.",
   "TASK 2 — Approve AllowanceHolder (SKIP if allowance sufficient): call erc20_approve_swap, broadcast, wait for confirmation. See swap skill 'Task 2'.",
   "TASK 3 — Convert amount: call to_raw_amount to convert sell amount to raw units. See swap skill 'Task 3'.",
-  "TASK 4 — Fetch quote: call x402_fetch with preset swap_quote. See swap skill 'Task 4'.",
+  "TASK 4 — Fetch quote: call x402_preset_fetch with preset swap_quote. See swap skill 'Task 4'.",
   "TASK 5 — Decode quote: call decode_calldata with calldata_register='swap_quote' and cache_as='swap'. This sets swap_contract. See swap skill 'Task 5'.",
   "TASK 6 — Execute swap: call swap_execute preset THEN broadcast_web3_tx. Do NOT call decode_calldata here. See swap skill 'Task 6'.",
   "TASK 7 — Verify the swap result and report to the user. See swap skill 'Task 7'."
@@ -119,7 +119,7 @@ After the approval is confirmed:
 **One tool call (auto-completes on success):**
 
 ```json
-{"tool": "x402_fetch", "preset": "swap_quote", "cache_as": "swap_quote", "network": "<network>"}
+{"tool": "x402_preset_fetch", "preset": "swap_quote", "cache_as": "swap_quote", "network": "<network>"}
 ```
 
 If this fails after retries, STOP and tell the user.

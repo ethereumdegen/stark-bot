@@ -1,6 +1,6 @@
 //! x402 Agent Invoke tool for making paid requests to x402-enabled AI agents
 //!
-//! Unlike x402_fetch (preset-based), this tool works with any x402 agent endpoint.
+//! Unlike x402_preset_fetch (preset-based), this tool works with any x402 agent endpoint.
 
 use crate::tools::registry::Tool;
 use crate::tools::types::{

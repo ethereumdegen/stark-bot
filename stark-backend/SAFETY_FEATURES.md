@@ -22,12 +22,12 @@ If this data passes through the agent's reasoning to be used by another tool, th
 Tools can write their outputs directly to named registers, and other tools can read from those registers - bypassing the agent entirely for critical data transfer.
 
 ```rust
-// Tool 1 (e.g., x402_fetch) caches its output
+// Tool 1 (e.g., x402_preset_fetch) caches its output
 context.registers.set("swap_quote", json!({
     "to": "0x...",
     "data": "0x...",
     "value": "1000000000000000"
-}), "x402_fetch");
+}), "x402_preset_fetch");
 
 // Tool 2 (e.g., web3_tx) reads from the register
 let quote = context.registers.get("swap_quote")?;

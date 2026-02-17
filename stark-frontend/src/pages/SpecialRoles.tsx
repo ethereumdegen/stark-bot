@@ -505,7 +505,7 @@ export default function SpecialRoles() {
           <strong className="text-slate-300">Allowed Tools</strong> are standalone tools added directly to the user's safe mode allow list (e.g. giving someone <code className="text-xs bg-slate-700 px-1 rounded">web_fetch</code> access without a specific skill).
         </p>
         <p>
-          <strong className="text-slate-300">Allowed Skills</strong> are granted by exact skill name. When a skill is granted, its required tools are <em>automatically</em> added to the allow list &mdash; you don't need to add them separately. For example, granting the <code className="text-xs bg-slate-700 px-1 rounded">super_router</code> skill auto-grants its required <code className="text-xs bg-slate-700 px-1 rounded">x402_fetch</code> tool.
+          <strong className="text-slate-300">Allowed Skills</strong> are granted by exact skill name. When a skill is granted, its required tools are <em>automatically</em> added to the allow list &mdash; you don't need to add them separately. For example, granting the <code className="text-xs bg-slate-700 px-1 rounded">super_router</code> skill auto-grants its required <code className="text-xs bg-slate-700 px-1 rounded">x402_preset_fetch</code> tool.
         </p>
         <p>
           When an assigned user messages a safe-mode channel, the dispatcher enriches their session with the role's tools and skills. Unassigned users get vanilla safe mode. Sessions with enriched permissions show a badge in the session list.

@@ -421,7 +421,7 @@ impl Scheduler {
         let normalized = NormalizedMessage {
             channel_id: cron_channel_id,
             channel_type: "cron".to_string(),
-            chat_id: format!("cron:{}", job.job_id),
+            chat_id: format!("cron:{}:{}", job.job_id, started_at.timestamp()),
             chat_name: None,
             user_id: "system".to_string(),
             user_name: format!("Cron: {}", job.name),

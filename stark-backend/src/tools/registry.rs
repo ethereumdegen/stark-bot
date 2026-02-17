@@ -153,11 +153,6 @@ impl ToolRegistry {
                     return true;
                 }
 
-                // Auto-include System tools for all subtypes
-                if group == ToolGroup::System {
-                    return true;
-                }
-
                 false
             })
             .cloned()

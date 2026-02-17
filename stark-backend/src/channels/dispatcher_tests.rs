@@ -607,7 +607,7 @@ async fn swap_flow_with_trace() {
                     "tasks": [
                         "TASK 1 — Prepare: select finance toolbox, load swap skill, select Base network, look up sell+buy tokens, check AllowanceHolder allowance.",
                         "TASK 2 — Approve AllowanceHolder (SKIP if allowance sufficient).",
-                        "TASK 3 — Convert amount and fetch quote: call to_raw_amount, x402_fetch, decode_calldata with cache_as 'swap'.",
+                        "TASK 3 — Convert amount and fetch quote: call to_raw_amount, x402_preset_fetch, decode_calldata with cache_as 'swap'.",
                         "TASK 4 — Execute: call swap_execute then broadcast_web3_tx.",
                         "TASK 5 — Verify: call verify_tx_broadcast, report result to user."
                     ]

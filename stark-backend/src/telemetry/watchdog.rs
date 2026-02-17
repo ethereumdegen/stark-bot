@@ -37,7 +37,7 @@ impl Default for WatchdogConfig {
         // web_fetch and exec can be slow
         tool_overrides.insert("web_fetch".to_string(), 120);
         tool_overrides.insert("exec".to_string(), 300);
-        tool_overrides.insert("x402_fetch".to_string(), 120);
+        tool_overrides.insert("x402_preset_fetch".to_string(), 120);
         tool_overrides.insert("deploy".to_string(), 600);
         tool_overrides.insert("spawn_subagents".to_string(), 3600);
 

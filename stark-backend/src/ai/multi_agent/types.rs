@@ -158,7 +158,7 @@ pub fn subtype_emoji(key: &str) -> String {
 
 /// Tool groups allowed for a subtype key. Always includes System.
 pub fn allowed_tool_groups_for_key(key: &str) -> Vec<ToolGroup> {
-    let mut groups = vec![ToolGroup::System];
+    let mut groups = Vec::new();
     if let Some(config) = get_subtype_config(key) {
         for g in &config.tool_groups {
             if let Some(tg) = ToolGroup::from_str(g) {

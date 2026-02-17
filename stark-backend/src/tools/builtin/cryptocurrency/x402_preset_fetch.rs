@@ -58,7 +58,7 @@ impl X402FetchTool {
 
         X402FetchTool {
             definition: ToolDefinition {
-                name: "x402_fetch".to_string(),
+                name: "x402_preset_fetch".to_string(),
                 description: "Fetch swap quotes from x402-enabled endpoints. Uses presets that automatically read from registers (sell_token, buy_token, sell_amount, wallet_address) to build the request. The response is stored internally in a register via cache_as — do NOT extract or copy hex/calldata from the response. After calling this, use decode_calldata to process the cached result.".to_string(),
                 input_schema: ToolInputSchema {
                     schema_type: "object".to_string(),
@@ -66,7 +66,7 @@ impl X402FetchTool {
                     required: vec!["preset".to_string()],
                 },
                 group: ToolGroup::Finance,
-                hidden: false,
+                hidden: true,
             },
         }
     }
@@ -228,10 +228,10 @@ impl Tool for X402FetchTool {
         // Store network info in registers for use by other tools
         let chain_id = get_chain_id(&params.network);
         let network_name = get_network_name(&params.network);
-        context.set_register("network_name", json!(&network_name), "x402_fetch");
-        context.set_register("chain_id", json!(&chain_id), "x402_fetch");
+        context.set_register("network_name", json!(&network_name), "x402_preset_fetch");
+        context.set_register("chain_id", json!(&chain_id), "x402_preset_fetch");
         log::info!(
-            "[x402_fetch] Stored network info: name={}, chain_id={}",
+            "[x402_preset_fetch] Stored network info: name={}, chain_id={}",
             network_name, chain_id
         );
 
@@ -261,7 +261,7 @@ impl Tool for X402FetchTool {
         }
 
         let url = format!("{}?{}", preset.base_url, url_params.join("&"));
-        log::info!("[x402_fetch] Preset '{}' built URL: {}", params.preset, url);
+        log::info!("[x402_preset_fetch] Preset '{}' built URL: {}", params.preset, url);
 
         // Validate URL is an x402 endpoint
         if !crate::x402::is_x402_endpoint(&url) {
@@ -289,7 +289,7 @@ impl Tool for X402FetchTool {
 
         for attempt in 1..=max_retries {
             if attempt > 1 {
-                log::info!("[x402_fetch] Retry attempt {}/{} for preset '{}' after {}s delay",
+                log::info!("[x402_preset_fetch] Retry attempt {}/{} for preset '{}' after {}s delay",
                     attempt, max_retries, params.preset, retry_delay_secs);
                 tokio::time::sleep(tokio::time::Duration::from_secs(retry_delay_secs)).await;
             }
@@ -314,7 +314,7 @@ impl Tool for X402FetchTool {
                          HttpRetryManager::is_retryable_status(status.as_u16()));
 
                     if should_retry && attempt < max_retries {
-                        log::warn!("[x402_fetch] Retryable error on attempt {}: {}", attempt, error_msg);
+                        log::warn!("[x402_preset_fetch] Retryable error on attempt {}: {}", attempt, error_msg);
                         last_error = Some(error_msg);
                         continue;
                     }
@@ -343,7 +343,7 @@ impl Tool for X402FetchTool {
                         HttpRetryManager::is_retryable_error(&error_msg);
 
                     if should_retry && attempt < max_retries {
-                        log::warn!("[x402_fetch] Retryable network error on attempt {}: {}", attempt, error_msg);
+                        log::warn!("[x402_preset_fetch] Retryable network error on attempt {}: {}", attempt, error_msg);
                         last_error = Some(error_msg);
                         continue;
                     }
@@ -394,9 +394,9 @@ impl Tool for X402FetchTool {
 
         // Cache result in register if cache_as is specified
         if let Some(ref register_name) = params.cache_as {
-            context.set_register(register_name, filtered.clone(), "x402_fetch");
+            context.set_register(register_name, filtered.clone(), "x402_preset_fetch");
             log::info!(
-                "[x402_fetch] Cached result in register '{}' (keys: {:?})",
+                "[x402_preset_fetch] Cached result in register '{}' (keys: {:?})",
                 register_name,
                 filtered.as_object().map(|o| o.keys().collect::<Vec<_>>())
             );
