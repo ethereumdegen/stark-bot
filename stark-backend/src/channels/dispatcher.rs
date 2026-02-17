@@ -186,21 +186,21 @@ impl MessageDispatcher {
         };
 
         // Create SubAgentManager for spawning background AI agents
-        // Pass through skill_registry and memory_store so sub-agent ToolContexts have them
-        let mut subagent_mgr = SubAgentManager::new_with_config(
+        // Uses OnceLock for late-bound fields (tx_queue, disk_quota set via with_* after construction)
+        let subagent_manager = Arc::new(SubAgentManager::new_with_config(
             db.clone(),
             broadcaster.clone(),
             tool_registry.clone(),
             Default::default(),
             wallet_provider.clone(),
-        );
+        ));
+        // Set stores that are available now; tx_queue/disk_quota will be set later via with_*
         if let Some(ref registry) = skill_registry {
-            subagent_mgr.set_skill_registry(registry.clone());
+            subagent_manager.set_skill_registry(registry.clone());
         }
         if let Some(ref store) = memory_store {
-            subagent_mgr.set_memory_store(store.clone());
+            subagent_manager.set_memory_store(store.clone());
         }
-        let subagent_manager = Arc::new(subagent_mgr);
         log::info!("[DISPATCHER] SubAgentManager initialized");
 
         // Create context manager and link memory store to it
@@ -247,6 +247,10 @@ impl MessageDispatcher {
 
     /// Set the disk quota manager for enforcing disk usage limits
     pub fn with_disk_quota(mut self, dq: Arc<crate::disk_quota::DiskQuotaManager>) -> Self {
+        // Also propagate to SubAgentManager so sub-agents have disk quota in their ToolContext
+        if let Some(ref mgr) = self.subagent_manager {
+            mgr.set_disk_quota(dq.clone());
+        }
         self.disk_quota = Some(dq);
         self
     }
@@ -265,6 +269,10 @@ impl MessageDispatcher {
 
     /// Set the transaction queue manager
     pub fn with_tx_queue(mut self, tx_queue: Arc<crate::tx_queue::TxQueueManager>) -> Self {
+        // Also propagate to SubAgentManager so sub-agents can queue web3 transactions
+        if let Some(ref mgr) = self.subagent_manager {
+            mgr.set_tx_queue(tx_queue.clone());
+        }
         self.tx_queue = Some(tx_queue);
         self
     }

@@ -1,6 +1,6 @@
 [package]
 name = "stark-backend"
-version = "0.5.49"
+version = "0.5.50"
 edition = "2024"
 default-run = "stark-backend"
 

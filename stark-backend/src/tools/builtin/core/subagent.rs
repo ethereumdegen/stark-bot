@@ -441,7 +441,10 @@ impl SpawnSubagentsTool {
             }
         }
 
-        let metadata = json!({
+        // When all subagents succeed, signal task_fully_completed to the parent loop.
+        // This prevents the parent from making a redundant AI iteration just to call
+        // say_to_user/task_fully_completed again (the subagent already communicated results).
+        let mut metadata = json!({
             "count": ids.len(),
             "all_succeeded": all_succeeded,
             "elapsed_secs": elapsed.as_secs_f64(),
@@ -449,6 +452,25 @@ impl SpawnSubagentsTool {
         });
 
         if all_succeeded {
+            // Build a concise summary from subagent results
+            let summary_parts: Vec<String> = ids.iter().zip(labels.iter()).filter_map(|(id, label)| {
+                if id.starts_with("FAILED_TO_SPAWN_") {
+                    return None;
+                }
+                manager.get_status(id).ok().flatten().and_then(|s| {
+                    s.result.map(|r| {
+                        let truncated = if r.len() > 200 { format!("{}...", &r[..200]) } else { r };
+                        format!("{}: {}", label, truncated)
+                    })
+                })
+            }).collect();
+            let summary = if summary_parts.is_empty() {
+                "All subagents completed successfully.".to_string()
+            } else {
+                summary_parts.join("\n")
+            };
+            metadata["task_fully_completed"] = json!(true);
+            metadata["summary"] = json!(summary);
             ToolResult::success(report).with_metadata(metadata)
         } else {
             // Still return success (not error) — we have partial results

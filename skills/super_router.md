@@ -1,7 +1,7 @@
 ---
 name: super_router
 description: "Generate AI images and videos from text prompts via the x402 SuperRouter cloud service at superrouter.defirelay.com. Pays with STARKBOT tokens using the x402 payment protocol."
-version: 2.0.0
+version: 2.1.0
 author: starkbot
 homepage: https://superrouter.defirelay.com
 metadata: {"clawdbot":{"emoji":"🎨"}}
@@ -28,14 +28,14 @@ SuperRouter is an x402-enabled cloud service at **https://superrouter.defirelay.
 ## Service Info
 
 - **Base URL**: `https://superrouter.defirelay.com`
-- **API info**: `GET https://superrouter.defirelay.com/api`
+- **API info**: `POST https://superrouter.defirelay.com/api`
 - **Health check**: `GET https://superrouter.defirelay.com/api/health`
 
 ## Routes & Quality Tiers
 
 There are 2 routes, each with 3 quality tiers:
 
-### Images (`/generate_image`)
+### Images (`/generate_image`) [POST]
 
 | Quality | Model | Cost |
 |---------|-------|------|
@@ -43,7 +43,7 @@ There are 2 routes, each with 3 quality tiers:
 | medium | Kling v3 | 5,000 STARKBOT |
 | high | Kling O3 | 10,000 STARKBOT |
 
-### Videos (`/generate_video`)
+### Videos (`/generate_video`) [POST]
 
 | Quality | Model | Cost |
 |---------|-------|------|

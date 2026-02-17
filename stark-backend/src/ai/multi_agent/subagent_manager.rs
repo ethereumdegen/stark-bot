@@ -19,6 +19,7 @@ use dashmap::DashMap;
 use serde_json::json;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::OnceLock;
 use tokio::sync::{oneshot, Semaphore};
 use tokio::time::{timeout, Duration};
 
@@ -55,13 +56,17 @@ pub struct SubAgentManager {
     /// Last activity timestamp per subagent (updated after each tool call result)
     last_activity: Arc<DashMap<String, chrono::DateTime<chrono::Utc>>>,
     /// Wallet provider for x402 payments and transaction signing
-    /// Encapsulates both Standard mode (EnvWalletProvider with raw private key)
-    /// and Flash mode (FlashWalletProvider with Privy proxy)
     wallet_provider: Option<Arc<dyn crate::wallet::WalletProvider>>,
     /// Skill registry for sub-agent tool context
-    skill_registry: Option<Arc<SkillRegistry>>,
+    skill_registry: OnceLock<Arc<SkillRegistry>>,
     /// QMD memory store for sub-agent tool context
-    memory_store: Option<Arc<MemoryStore>>,
+    memory_store: OnceLock<Arc<MemoryStore>>,
+    /// Transaction queue manager for web3 tx tools
+    tx_queue: OnceLock<Arc<crate::tx_queue::TxQueueManager>>,
+    /// Process manager for bash execution tracking
+    process_manager: OnceLock<Arc<crate::execution::ProcessManager>>,
+    /// Disk quota manager for usage limits
+    disk_quota: OnceLock<Arc<crate::disk_quota::DiskQuotaManager>>,
 }
 
 impl SubAgentManager {
@@ -94,19 +99,37 @@ impl SubAgentManager {
             last_activity: Arc::new(DashMap::new()),
             config,
             wallet_provider,
-            skill_registry: None,
-            memory_store: None,
+            skill_registry: OnceLock::new(),
+            memory_store: OnceLock::new(),
+            tx_queue: OnceLock::new(),
+            process_manager: OnceLock::new(),
+            disk_quota: OnceLock::new(),
         }
     }
 
-    /// Set the skill registry for sub-agent tool contexts
-    pub fn set_skill_registry(&mut self, registry: Arc<SkillRegistry>) {
-        self.skill_registry = Some(registry);
+    /// Set the skill registry for sub-agent tool contexts (can be called after Arc wrapping)
+    pub fn set_skill_registry(&self, registry: Arc<SkillRegistry>) {
+        let _ = self.skill_registry.set(registry);
     }
 
-    /// Set the memory store for sub-agent tool contexts
-    pub fn set_memory_store(&mut self, store: Arc<MemoryStore>) {
-        self.memory_store = Some(store);
+    /// Set the memory store for sub-agent tool contexts (can be called after Arc wrapping)
+    pub fn set_memory_store(&self, store: Arc<MemoryStore>) {
+        let _ = self.memory_store.set(store);
+    }
+
+    /// Set the tx queue manager for sub-agent tool contexts (can be called after Arc wrapping)
+    pub fn set_tx_queue(&self, tq: Arc<crate::tx_queue::TxQueueManager>) {
+        let _ = self.tx_queue.set(tq);
+    }
+
+    /// Set the process manager for sub-agent tool contexts (can be called after Arc wrapping)
+    pub fn set_process_manager(&self, pm: Arc<crate::execution::ProcessManager>) {
+        let _ = self.process_manager.set(pm);
+    }
+
+    /// Set the disk quota manager for sub-agent tool contexts (can be called after Arc wrapping)
+    pub fn set_disk_quota(&self, dq: Arc<crate::disk_quota::DiskQuotaManager>) {
+        let _ = self.disk_quota.set(dq);
     }
 
     /// Generate a unique sub-agent ID
@@ -177,8 +200,11 @@ impl SubAgentManager {
         let total_sem = self.total_semaphore.clone();
         let channel_sem = self.get_channel_semaphore(context.parent_channel_id);
         let wallet_provider = self.wallet_provider.clone();
-        let skill_registry = self.skill_registry.clone();
-        let memory_store = self.memory_store.clone();
+        let skill_registry = self.skill_registry.get().cloned();
+        let memory_store = self.memory_store.get().cloned();
+        let tx_queue = self.tx_queue.get().cloned();
+        let process_manager = self.process_manager.get().cloned();
+        let disk_quota = self.disk_quota.get().cloned();
         let active_agents = self.active_agents.clone();
         let last_activity = self.last_activity.clone();
         let subagent_id_for_cleanup = subagent_id.clone();
@@ -210,6 +236,9 @@ impl SubAgentManager {
                 wallet_provider,
                 skill_registry,
                 memory_store,
+                tx_queue,
+                process_manager,
+                disk_quota,
                 last_activity.clone(),
             );
 
@@ -298,6 +327,9 @@ impl SubAgentManager {
         wallet_provider: Option<Arc<dyn crate::wallet::WalletProvider>>,
         skill_registry: Option<Arc<SkillRegistry>>,
         memory_store: Option<Arc<MemoryStore>>,
+        tx_queue: Option<Arc<crate::tx_queue::TxQueueManager>>,
+        process_manager: Option<Arc<crate::execution::ProcessManager>>,
+        disk_quota: Option<Arc<crate::disk_quota::DiskQuotaManager>>,
         last_activity: Arc<DashMap<String, chrono::DateTime<chrono::Utc>>>,
     ) -> Result<String, String> {
         log::info!("[SUBAGENT] Starting execution for {}", context.id);
@@ -415,7 +447,7 @@ impl SubAgentManager {
             .with_database(db.clone())
             .with_subagent_identity(context.id.clone(), context.depth);
 
-        // Attach optional stores so sub-agent tools (use_skill, manage_skills, memory_search, etc.) work
+        // Attach optional stores so sub-agent tools work (use_skill, memory_search, web3_tx, etc.)
         if let Some(registry) = skill_registry.clone() {
             tool_context = tool_context.with_skill_registry(registry);
         }
@@ -424,6 +456,24 @@ impl SubAgentManager {
         }
         if let Some(wp) = wallet_provider.clone() {
             tool_context = tool_context.with_wallet_provider(wp);
+        }
+        if let Some(tq) = tx_queue {
+            tool_context = tool_context.with_tx_queue(tq);
+        }
+        if let Some(pm) = process_manager {
+            tool_context = tool_context.with_process_manager(pm);
+        }
+        if let Some(dq) = disk_quota {
+            tool_context = tool_context.with_disk_quota(dq);
+        }
+
+        // Load API keys from database so sub-agent tools can call external services
+        if !parent_channel_safe_mode {
+            if let Ok(keys) = db.list_api_keys() {
+                for key in keys {
+                    tool_context = tool_context.with_api_key(&key.service_name, key.api_key.clone());
+                }
+            }
         }
 
         // SECURITY: Pass safe_mode flag to tool context so memory tools sandbox to safemode/
