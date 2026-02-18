@@ -57,6 +57,60 @@ impl Default for SlidingWindowConfig {
     }
 }
 
+/// Compaction urgency level based on context fullness
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactionLevel {
+    /// No compaction needed
+    None,
+    /// Background compaction — >80% full, compact 30%
+    Background,
+    /// Aggressive compaction — >85% full, compact 50%
+    Aggressive,
+    /// Emergency compaction — >95% full, hard-drop 50% synchronously
+    Emergency,
+}
+
+impl std::fmt::Display for CompactionLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CompactionLevel::None => write!(f, "none"),
+            CompactionLevel::Background => write!(f, "background"),
+            CompactionLevel::Aggressive => write!(f, "aggressive"),
+            CompactionLevel::Emergency => write!(f, "emergency"),
+        }
+    }
+}
+
+/// Configuration for three-tier compaction thresholds
+#[derive(Debug, Clone)]
+pub struct ThreeTierCompactionConfig {
+    /// Trigger background compaction above this percentage (default: 0.80)
+    pub background_threshold: f64,
+    /// Trigger aggressive compaction above this percentage (default: 0.85)
+    pub aggressive_threshold: f64,
+    /// Trigger emergency compaction above this percentage (default: 0.95)
+    pub emergency_threshold: f64,
+    /// Fraction of context to compact in background mode (default: 0.30)
+    pub background_compact_ratio: f64,
+    /// Fraction of context to compact in aggressive mode (default: 0.50)
+    pub aggressive_compact_ratio: f64,
+    /// Fraction of context to hard-drop in emergency mode (default: 0.50)
+    pub emergency_drop_ratio: f64,
+}
+
+impl Default for ThreeTierCompactionConfig {
+    fn default() -> Self {
+        Self {
+            background_threshold: 0.80,
+            aggressive_threshold: 0.85,
+            emergency_threshold: 0.95,
+            background_compact_ratio: 0.30,
+            aggressive_compact_ratio: 0.50,
+            emergency_drop_ratio: 0.50,
+        }
+    }
+}
+
 /// Estimate token count for a string using content-aware estimation
 /// This provides more accurate estimates than simple character counting
 /// by considering content type (JSON, code, prose)
@@ -88,6 +142,8 @@ pub struct ContextManager {
     memory_store: Option<Arc<MemoryStore>>,
     /// Configuration for sliding window compaction
     sliding_window_config: SlidingWindowConfig,
+    /// Three-tier compaction thresholds (can be overridden from bot settings)
+    compaction_config: ThreeTierCompactionConfig,
 }
 
 impl ContextManager {
@@ -100,7 +156,13 @@ impl ContextManager {
             memory_config: MemoryConfig::from_env(),
             memory_store: None,
             sliding_window_config: SlidingWindowConfig::default(),
+            compaction_config: ThreeTierCompactionConfig::default(),
         }
+    }
+
+    pub fn with_compaction_config(mut self, config: ThreeTierCompactionConfig) -> Self {
+        self.compaction_config = config;
+        self
     }
 
     pub fn with_max_context(mut self, tokens: i32) -> Self {
@@ -721,6 +783,97 @@ impl ContextManager {
         };
 
         (messages, combined)
+    }
+
+    /// Check the compaction urgency level based on current token usage
+    pub fn check_compaction_level(&self, session_id: i64) -> CompactionLevel {
+        let config = &self.compaction_config;
+
+        let session = self.db.get_chat_session(session_id).ok().flatten();
+        let max_tokens = session.as_ref()
+            .map(|s| s.max_context_tokens)
+            .unwrap_or(self.max_context_tokens);
+        let available = max_tokens - self.reserve_tokens;
+        if available <= 0 {
+            return CompactionLevel::Emergency;
+        }
+
+        let current = session
+            .map(|s| s.context_tokens)
+            .unwrap_or(0);
+        let ratio = current as f64 / available as f64;
+
+        if ratio >= config.emergency_threshold {
+            CompactionLevel::Emergency
+        } else if ratio >= config.aggressive_threshold {
+            CompactionLevel::Aggressive
+        } else if ratio >= config.background_threshold {
+            CompactionLevel::Background
+        } else {
+            CompactionLevel::None
+        }
+    }
+
+    /// Emergency compaction: synchronously hard-drop oldest 50% of messages
+    pub fn compact_emergency(&self, session_id: i64) -> Result<usize, String> {
+        let messages = self.db.get_session_messages(session_id)
+            .map_err(|e| format!("Failed to get session messages: {}", e))?;
+
+        if messages.len() <= MIN_KEEP_RECENT_MESSAGES as usize {
+            return Ok(0);
+        }
+
+        let drop_count = ((messages.len() as f64 * self.compaction_config.emergency_drop_ratio) as usize)
+            .min(messages.len().saturating_sub(MIN_KEEP_RECENT_MESSAGES as usize));
+
+        if drop_count == 0 {
+            return Ok(0);
+        }
+
+        // Delete the oldest messages in one batch
+        let deleted = self.db.delete_oldest_messages(session_id, drop_count as i32)
+            .map_err(|e| format!("Failed to delete oldest messages: {}", e))?;
+
+        // Recalculate context_tokens from remaining messages
+        let remaining = self.db.get_session_messages(session_id)
+            .map_err(|e| format!("Failed to get remaining messages: {}", e))?;
+        let new_token_count = estimate_messages_tokens(&remaining);
+        let _ = self.db.update_session_context_tokens(session_id, new_token_count);
+
+        log::info!(
+            "[COMPACTION] Emergency: dropped {} of {} messages for session {} (tokens now {})",
+            deleted, messages.len(), session_id, new_token_count
+        );
+
+        Ok(deleted as usize)
+    }
+
+    /// Tiered compaction: determine level and apply appropriate strategy
+    pub async fn compact_tiered(
+        &self,
+        session_id: i64,
+        client: &crate::ai::AiClient,
+        identity_id: Option<&str>,
+    ) -> Result<CompactionLevel, String> {
+        let level = self.check_compaction_level(session_id);
+
+        match level {
+            CompactionLevel::None => Ok(CompactionLevel::None),
+            CompactionLevel::Emergency => {
+                self.compact_emergency(session_id)?;
+                Ok(CompactionLevel::Emergency)
+            }
+            CompactionLevel::Aggressive | CompactionLevel::Background => {
+                // Use existing compaction methods for non-emergency levels
+                if let Err(e) = self.compact_session(session_id, client, identity_id).await {
+                    log::error!("[COMPACTION] {} compaction failed: {}, trying emergency", level, e);
+                    self.compact_emergency(session_id)?;
+                    Ok(CompactionLevel::Emergency)
+                } else {
+                    Ok(level)
+                }
+            }
+        }
     }
 }
 

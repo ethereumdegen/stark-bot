@@ -900,4 +900,36 @@ impl Database {
             }
         })
     }
+
+    /// Get the number of messages in a session since the last branch was spawned
+    pub fn get_session_message_count_since_last_branch(&self, session_id: i64) -> Result<i64, rusqlite::Error> {
+        let conn = self.conn();
+
+        // Find the last branch message (system message containing "Branch Spawned" or "[branch]")
+        let last_branch_id: Option<i64> = conn.query_row(
+            "SELECT MAX(id) FROM session_messages
+             WHERE session_id = ?1 AND role = 'system' AND content LIKE '%branch%'",
+            rusqlite::params![session_id],
+            |row| row.get(0),
+        ).unwrap_or(None);
+
+        match last_branch_id {
+            Some(branch_id) => {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM session_messages
+                     WHERE session_id = ?1 AND id > ?2",
+                    rusqlite::params![session_id, branch_id],
+                    |row| row.get(0),
+                )
+            }
+            None => {
+                // No branch found, count all messages
+                conn.query_row(
+                    "SELECT COUNT(*) FROM session_messages WHERE session_id = ?1",
+                    rusqlite::params![session_id],
+                    |row| row.get(0),
+                )
+            }
+        }
+    }
 }

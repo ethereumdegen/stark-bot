@@ -21,6 +21,7 @@ mod modify_special_role;
 mod say_to_user;
 mod set_agent_subtype;
 mod subagent;
+mod branch;
 mod use_skill;
 mod task_complete;
 
@@ -50,6 +51,7 @@ pub use modify_special_role::ModifySpecialRoleTool;
 pub use say_to_user::SayToUserTool;
 pub use set_agent_subtype::SetAgentSubtypeTool;
 pub use subagent::{SubagentStatusTool, SpawnSubagentsTool};
+pub use branch::BranchTool;
 pub use use_skill::UseSkillTool;
 pub use task_complete::TaskFullyCompletedTool;
 

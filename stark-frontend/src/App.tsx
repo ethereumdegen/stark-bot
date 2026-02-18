@@ -25,6 +25,7 @@ import Payments from '@/pages/Payments';
 import EIP8004 from '@/pages/EIP8004';
 import CryptoTransactions from '@/pages/CryptoTransactions';
 import MindMap from '@/pages/MindMap';
+import MemoryGraph from '@/pages/MemoryGraph';
 import Workstream from '@/pages/Workstream';
 import Modules from '@/pages/Modules';
 import ModuleDashboard from '@/pages/ModuleDashboard';
@@ -54,6 +55,7 @@ function App() {
         <Route path="/sessions/:sessionId" element={<Sessions />} />
         <Route path="/memories" element={<MemoryBrowser />} />
         <Route path="/mindmap" element={<MindMap />} />
+        <Route path="/memory-graph" element={<MemoryGraph />} />
         <Route path="/workstream" element={<Workstream />} />
         <Route path="/identities" element={<Identities />} />
         <Route path="/identities/:identityId" element={<IdentityDetail />} />

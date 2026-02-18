@@ -83,6 +83,15 @@ pub enum EventType {
     TxQueueDenied,                // User denied, tx deleted
     // Context management events
     ContextCompacting,  // Session context is being compacted to reduce token usage
+    // Branch events (worker delegation)
+    BranchStarted,
+    BranchCompleted,
+    BranchFailed,
+    // Coalescing events
+    CoalesceBuffering,
+    CoalesceFlushed,
+    // Worker checkpoint events
+    WorkerCheckpoint,
     // Telemetry events
     SpanEmitted,        // A telemetry span was emitted (for real-time telemetry streaming)
     RolloutStatusChange, // Rollout lifecycle status changed
@@ -150,8 +159,87 @@ impl EventType {
             Self::TxQueueConfirmed => "tx_queue.confirmed",
             Self::TxQueueDenied => "tx_queue.denied",
             Self::ContextCompacting => "context.compacting",
+            Self::BranchStarted => "branch.started",
+            Self::BranchCompleted => "branch.completed",
+            Self::BranchFailed => "branch.failed",
+            Self::CoalesceBuffering => "coalesce.buffering",
+            Self::CoalesceFlushed => "coalesce.flushed",
+            Self::WorkerCheckpoint => "worker.checkpoint",
             Self::SpanEmitted => "telemetry.span_emitted",
             Self::RolloutStatusChange => "telemetry.rollout_status",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<EventType> {
+        match s {
+            "channel.started" => Some(EventType::ChannelStarted),
+            "channel.stopped" => Some(EventType::ChannelStopped),
+            "channel.error" => Some(EventType::ChannelError),
+            "channel.message" => Some(EventType::ChannelMessage),
+            "agent.response" => Some(EventType::AgentResponse),
+            "agent.tool_call" => Some(EventType::AgentToolCall),
+            "agent.mode_change" => Some(EventType::AgentModeChange),
+            "agent.subtype_change" => Some(EventType::AgentSubtypeChange),
+            "agent.thinking" => Some(EventType::AgentThinking),
+            "agent.error" => Some(EventType::AgentError),
+            "agent.warning" => Some(EventType::AgentWarning),
+            "tool.execution" => Some(EventType::ToolExecution),
+            "tool.result" => Some(EventType::ToolResult),
+            "tool.waiting" => Some(EventType::ToolWaiting),
+            "skill.invoked" => Some(EventType::SkillInvoked),
+            "execution.started" => Some(EventType::ExecutionStarted),
+            "execution.thinking" => Some(EventType::ExecutionThinking),
+            "execution.task_started" => Some(EventType::ExecutionTaskStarted),
+            "execution.task_updated" => Some(EventType::ExecutionTaskUpdated),
+            "execution.task_completed" => Some(EventType::ExecutionTaskCompleted),
+            "execution.completed" => Some(EventType::ExecutionCompleted),
+            "execution.stopped" => Some(EventType::ExecutionStopped),
+            "x402.payment" => Some(EventType::X402Payment),
+            "confirmation.required" => Some(EventType::ConfirmationRequired),
+            "confirmation.approved" => Some(EventType::ConfirmationApproved),
+            "confirmation.rejected" => Some(EventType::ConfirmationRejected),
+            "confirmation.expired" => Some(EventType::ConfirmationExpired),
+            "tx.pending" => Some(EventType::TxPending),
+            "tx.confirmed" => Some(EventType::TxConfirmed),
+            "register.update" => Some(EventType::RegisterUpdate),
+            "context_bank.update" => Some(EventType::ContextBankUpdate),
+            "agent.tasks_update" => Some(EventType::AgentTasksUpdate),
+            "agent.toolset_update" => Some(EventType::AgentToolsetUpdate),
+            "agent.context_update" => Some(EventType::AgentContextUpdate),
+            "subagent.spawned" => Some(EventType::SubagentSpawned),
+            "subagent.completed" => Some(EventType::SubagentCompleted),
+            "subagent.failed" => Some(EventType::SubagentFailed),
+            "stream.start" => Some(EventType::StreamStart),
+            "stream.content_delta" => Some(EventType::StreamContentDelta),
+            "stream.tool_start" => Some(EventType::StreamToolStart),
+            "stream.tool_delta" => Some(EventType::StreamToolDelta),
+            "stream.tool_complete" => Some(EventType::StreamToolComplete),
+            "stream.thinking_delta" => Some(EventType::StreamThinkingDelta),
+            "stream.end" => Some(EventType::StreamEnd),
+            "stream.error" => Some(EventType::StreamError),
+            "exec.output" => Some(EventType::ExecOutput),
+            "process.started" => Some(EventType::ProcessStarted),
+            "process.output" => Some(EventType::ProcessOutput),
+            "process.completed" => Some(EventType::ProcessCompleted),
+            "task.queue_update" => Some(EventType::TaskQueueUpdate),
+            "task.status_change" => Some(EventType::TaskStatusChange),
+            "session.complete" => Some(EventType::SessionComplete),
+            "cron.execution_started_on_channel" => Some(EventType::CronExecutionStartedOnChannel),
+            "cron.execution_stopped_on_channel" => Some(EventType::CronExecutionStoppedOnChannel),
+            "ai.retrying" => Some(EventType::AiRetrying),
+            "tx_queue.confirmation_required" => Some(EventType::TxQueueConfirmationRequired),
+            "tx_queue.confirmed" => Some(EventType::TxQueueConfirmed),
+            "tx_queue.denied" => Some(EventType::TxQueueDenied),
+            "context.compacting" => Some(EventType::ContextCompacting),
+            "branch.started" => Some(EventType::BranchStarted),
+            "branch.completed" => Some(EventType::BranchCompleted),
+            "branch.failed" => Some(EventType::BranchFailed),
+            "coalesce.buffering" => Some(EventType::CoalesceBuffering),
+            "coalesce.flushed" => Some(EventType::CoalesceFlushed),
+            "worker.checkpoint" => Some(EventType::WorkerCheckpoint),
+            "telemetry.span_emitted" => Some(EventType::SpanEmitted),
+            "telemetry.rollout_status" => Some(EventType::RolloutStatusChange),
+            _ => None,
         }
     }
 }
@@ -1250,6 +1338,63 @@ impl GatewayEvent {
                 "timestamp": chrono::Utc::now().to_rfc3339()
             }),
         )
+    }
+
+    // =====================================================
+    // Branch / Worker Delegation Events
+    // =====================================================
+
+    /// Branch started event
+    pub fn branch_started(channel_id: i64, branch_id: &str, label: &str, task: &str) -> Self {
+        Self::new(EventType::BranchStarted, serde_json::json!({
+            "channel_id": channel_id,
+            "branch_id": branch_id,
+            "label": label,
+            "task": task,
+        }))
+    }
+
+    /// Branch completed event
+    pub fn branch_completed(channel_id: i64, branch_id: &str, result_summary: &str) -> Self {
+        Self::new(EventType::BranchCompleted, serde_json::json!({
+            "channel_id": channel_id,
+            "branch_id": branch_id,
+            "result_summary": result_summary,
+        }))
+    }
+
+    /// Branch failed event
+    pub fn branch_failed(channel_id: i64, branch_id: &str, error: &str) -> Self {
+        Self::new(EventType::BranchFailed, serde_json::json!({
+            "channel_id": channel_id,
+            "branch_id": branch_id,
+            "error": error,
+        }))
+    }
+
+    /// Coalescing is buffering messages
+    pub fn coalesce_buffering(channel_id: i64, pending_count: usize) -> Self {
+        Self::new(EventType::CoalesceBuffering, serde_json::json!({
+            "channel_id": channel_id,
+            "pending_count": pending_count,
+        }))
+    }
+
+    /// Coalesced batch flushed
+    pub fn coalesce_flushed(channel_id: i64, message_count: usize) -> Self {
+        Self::new(EventType::CoalesceFlushed, serde_json::json!({
+            "channel_id": channel_id,
+            "message_count": message_count,
+        }))
+    }
+
+    /// Worker checkpoint saved
+    pub fn worker_checkpoint(channel_id: i64, subagent_id: &str, iteration: u32) -> Self {
+        Self::new(EventType::WorkerCheckpoint, serde_json::json!({
+            "channel_id": channel_id,
+            "subagent_id": subagent_id,
+            "iteration": iteration,
+        }))
     }
 
     /// A telemetry span was emitted

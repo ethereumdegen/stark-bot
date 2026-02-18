@@ -735,6 +735,58 @@ pub struct ModeTransition {
 // Sub-Agent System Types
 // =====================================================
 
+/// Sub-agent execution mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SubAgentMode {
+    /// Standard sub-agent — independent task execution
+    Standard,
+    /// Branch — inherits parent context, restricted to Memory+System tools
+    Branch,
+    /// Silent branch — auto-triggered for memory persistence, no user output
+    SilentBranch,
+}
+
+impl Default for SubAgentMode {
+    fn default() -> Self {
+        SubAgentMode::Standard
+    }
+}
+
+impl std::fmt::Display for SubAgentMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SubAgentMode::Standard => write!(f, "standard"),
+            SubAgentMode::Branch => write!(f, "branch"),
+            SubAgentMode::SilentBranch => write!(f, "silent_branch"),
+        }
+    }
+}
+
+impl std::str::FromStr for SubAgentMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "standard" => Ok(SubAgentMode::Standard),
+            "branch" => Ok(SubAgentMode::Branch),
+            "silent_branch" => Ok(SubAgentMode::SilentBranch),
+            _ => Ok(SubAgentMode::Standard), // default fallback
+        }
+    }
+}
+
+/// Checkpoint saved during long-running worker execution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkerCheckpoint {
+    /// Iteration number when checkpoint was saved
+    pub iteration: u32,
+    /// Summary of context at checkpoint time
+    pub context_snapshot: String,
+    /// When the checkpoint was created
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
 /// Status of a sub-agent execution
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -836,6 +888,15 @@ pub struct SubAgentContext {
     /// Agent subtype key (e.g. "superouter", "finance") — determines which tools/skills are available
     #[serde(default)]
     pub agent_subtype: Option<String>,
+    /// Sub-agent execution mode (Standard/Branch/SilentBranch)
+    #[serde(default)]
+    pub mode: SubAgentMode,
+    /// Parent context snapshot for branch mode (last 20 messages + compaction summary)
+    #[serde(default)]
+    pub parent_context_snapshot: Option<String>,
+    /// Worker checkpoints for overflow recovery
+    #[serde(default)]
+    pub checkpoints: Vec<WorkerCheckpoint>,
 }
 
 impl SubAgentContext {
@@ -868,6 +929,9 @@ impl SubAgentContext {
             parent_subagent_id: None,
             depth: 0,
             agent_subtype: None,
+            mode: SubAgentMode::Standard,
+            parent_context_snapshot: None,
+            checkpoints: Vec::new(),
         }
     }
 

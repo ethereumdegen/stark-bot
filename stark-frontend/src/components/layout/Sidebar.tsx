@@ -29,6 +29,7 @@ import {
   HardDrive,
   Shapes,
   ShieldCheck,
+  Share2,
 } from 'lucide-react';
 import HeartbeatIcon from '@/components/HeartbeatIcon';
 import NavItem from './NavItem';
@@ -120,6 +121,7 @@ export default function Sidebar() {
           </p>
           <NavItem to="/sessions" icon={Calendar} label="Chat Sessions" />
           <NavItem to="/memories" icon={Brain} label="Memory Browser" />
+          <NavItem to="/memory-graph" icon={Share2} label="Memory Graph" />
           <NavItem to="/identities" icon={Users} label="Identities" />
           <NavItem to="/files" icon={FolderOpen} label="Workspace Files" />
           <NavItem to="/crypto-transactions" icon={Wallet} label="Crypto Transactions" />

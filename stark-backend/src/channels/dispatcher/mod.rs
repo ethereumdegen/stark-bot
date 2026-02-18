@@ -53,6 +53,8 @@ pub struct MessageDispatcher {
     memory_config: MemoryConfig,
     /// QMD Memory store for file-based markdown memory system
     memory_store: Option<Arc<MemoryStore>>,
+    /// Hybrid search engine (FTS + vector + graph)
+    hybrid_search: Option<Arc<crate::memory::HybridSearchEngine>>,
     /// SubAgent manager for spawning background AI agents
     subagent_manager: Option<Arc<SubAgentManager>>,
     /// Skill registry for managing skills
@@ -73,6 +75,8 @@ pub struct MessageDispatcher {
     resource_manager: Arc<ResourceManager>,
     /// Watchdog configuration for timeout enforcement
     watchdog_config: WatchdogConfig,
+    /// Message coalescer for batching rapid-fire messages
+    coalescer: Option<crate::channels::coalescing::MessageCoalescer>,
     /// Mock AI client for integration tests (bypasses real AI API)
     #[cfg(test)]
     mock_ai_client: Option<crate::ai::MockAiClient>,
@@ -157,6 +161,18 @@ impl MessageDispatcher {
             log::info!("[DISPATCHER] Memory store linked to context manager");
         }
 
+        // Apply compaction thresholds from bot settings (if available)
+        if let Ok(bot_settings) = db.get_bot_settings() {
+            use crate::context::ThreeTierCompactionConfig;
+            let compaction_cfg = ThreeTierCompactionConfig {
+                background_threshold: bot_settings.compaction_background_threshold,
+                aggressive_threshold: bot_settings.compaction_aggressive_threshold,
+                emergency_threshold: bot_settings.compaction_emergency_threshold,
+                ..ThreeTierCompactionConfig::default()
+            };
+            context_manager = context_manager.with_compaction_config(compaction_cfg);
+        }
+
         // Initialize telemetry subsystem
         let telemetry_store = Arc::new(TelemetryStore::new(db.clone()));
         let rollout_manager = Arc::new(RolloutManager::new(db.clone()));
@@ -176,8 +192,10 @@ impl MessageDispatcher {
             archetype_registry: ArchetypeRegistry::new(),
             memory_config,
             memory_store,
+            hybrid_search: None,
             subagent_manager: Some(subagent_manager),
             skill_registry,
+            coalescer: None,
             hook_manager: None,
             validator_registry: None,
             tx_queue: None,
@@ -221,6 +239,35 @@ impl MessageDispatcher {
         }
         self.tx_queue = Some(tx_queue);
         self
+    }
+
+    /// Set the hybrid search engine
+    pub fn with_hybrid_search(mut self, engine: Arc<crate::memory::HybridSearchEngine>) -> Self {
+        self.hybrid_search = Some(engine);
+        self
+    }
+
+    /// Set message coalescer for batching rapid-fire messages
+    pub fn with_coalescer(mut self, coalescer: crate::channels::coalescing::MessageCoalescer) -> Self {
+        self.coalescer = Some(coalescer);
+        self
+    }
+
+    /// Try to coalesce a message. Returns Some(text) if ready to dispatch,
+    /// None if still accumulating.
+    pub fn coalesce_message(&self, channel_id: i64, user_id: &str, text: &str) -> Option<String> {
+        match &self.coalescer {
+            Some(coalescer) => coalescer.add_message(channel_id, user_id, text),
+            None => Some(text.to_string()), // No coalescer = pass through
+        }
+    }
+
+    /// Check coalescer timeouts and return any ready batches
+    pub fn check_coalesce_timeouts(&self) -> Vec<(String, String)> {
+        match &self.coalescer {
+            Some(coalescer) => coalescer.check_timeouts(),
+            None => Vec::new(),
+        }
     }
 
     /// Set a mock AI client for integration tests (bypasses real AI API)
@@ -271,8 +318,10 @@ impl MessageDispatcher {
             archetype_registry: ArchetypeRegistry::new(),
             memory_config,
             memory_store,
+            hybrid_search: None,
             subagent_manager: None, // No tools = no subagent support
             skill_registry: None,   // No skills without tools
+            coalescer: None,
             hook_manager: None,     // No hooks without explicit setup
             validator_registry: None, // No validators without explicit setup
             tx_queue: None,         // No tx queue without explicit setup
@@ -326,6 +375,25 @@ impl MessageDispatcher {
         if let Some(thinking_response) = self.handle_thinking_directive(&message).await {
             return thinking_response;
         }
+
+        // Try to coalesce rapid-fire messages (returns None if still accumulating)
+        let dispatch_text = match self.coalesce_message(
+            message.channel_id,
+            &message.user_id,
+            &message.text,
+        ) {
+            Some(text) => text,
+            None => {
+                // Message is being accumulated; return a no-op result
+                return DispatchResult::success("(coalescing)".to_string());
+            }
+        };
+
+        // Use the coalesced text for the rest of the pipeline
+        let message = NormalizedMessage {
+            text: dispatch_text,
+            ..message
+        };
 
         // Parse inline thinking directive and extract clean message
         let (thinking_level, clean_text) = commands::parse_inline_thinking(&message.text);
@@ -950,6 +1018,12 @@ impl MessageDispatcher {
         if let Some(ref store) = self.memory_store {
             tool_context = tool_context.with_memory_store(store.clone());
             log::debug!("[DISPATCH] MemoryStore attached to tool context");
+        }
+
+        // Add HybridSearchEngine for hybrid memory search (FTS + vector + graph)
+        if let Some(ref engine) = self.hybrid_search {
+            tool_context = tool_context.with_hybrid_search(engine.clone());
+            log::debug!("[DISPATCH] HybridSearchEngine attached to tool context");
         }
 
         // Add DiskQuotaManager for enforcing disk usage limits

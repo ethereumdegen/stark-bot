@@ -770,6 +770,470 @@ async fn memory_info(data: web::Data<AppState>, req: HttpRequest) -> impl Respon
     }
 }
 
+// ============================================================================
+// Graph & Association Types
+// ============================================================================
+
+#[derive(Debug, Serialize)]
+struct GraphNode {
+    id: i64,
+    content: String,
+    memory_type: String,
+    importance: i32,
+}
+
+#[derive(Debug, Serialize)]
+struct GraphEdge {
+    source: i64,
+    target: i64,
+    association_type: String,
+    strength: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct GraphResponse {
+    success: bool,
+    nodes: Vec<GraphNode>,
+    edges: Vec<GraphEdge>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct AssociationResponse {
+    success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    associations: Option<Vec<AssociationItem>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    created: Option<AssociationItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deleted: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct AssociationItem {
+    id: i64,
+    source_memory_id: i64,
+    target_memory_id: i64,
+    association_type: String,
+    strength: f64,
+    created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateAssociationBody {
+    source_memory_id: i64,
+    target_memory_id: i64,
+    #[serde(default = "default_association_type")]
+    association_type: String,
+    #[serde(default = "default_strength")]
+    strength: f64,
+}
+
+fn default_association_type() -> String {
+    "related".to_string()
+}
+
+fn default_strength() -> f64 {
+    0.5
+}
+
+#[derive(Debug, Deserialize)]
+struct AssociationQuery {
+    memory_id: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteAssociationPath {
+    id: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct HybridSearchResponse {
+    success: bool,
+    query: String,
+    mode: String,
+    results: Vec<HybridSearchItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct HybridSearchItem {
+    memory_id: i64,
+    content: String,
+    memory_type: String,
+    importance: i32,
+    rrf_score: f64,
+    fts_rank: Option<f64>,
+    vector_similarity: Option<f32>,
+    association_count: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HybridSearchQuery {
+    query: String,
+    #[serde(default = "default_search_limit")]
+    limit: i32,
+}
+
+#[derive(Debug, Serialize)]
+struct EmbeddingStatsResponse {
+    success: bool,
+    total_memories: i64,
+    memories_with_embeddings: i64,
+    memories_without_embeddings: i64,
+    coverage_percent: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct BackfillResponse {
+    success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+// ============================================================================
+// Graph & Association Handlers
+// ============================================================================
+
+/// GET /api/memory/graph - Get memory graph data (nodes + edges)
+async fn get_graph(data: web::Data<AppState>, req: HttpRequest) -> impl Responder {
+    if let Err(resp) = validate_session_from_request(&data, &req) {
+        return resp;
+    }
+
+    let conn = data.db.conn();
+
+    // Get all memories as nodes
+    let nodes: Vec<GraphNode> = {
+        let mut stmt = match conn.prepare(
+            "SELECT id, content, memory_type, importance FROM memories ORDER BY id",
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(GraphResponse {
+                    success: false,
+                    nodes: vec![],
+                    edges: vec![],
+                    error: Some(format!("Failed to query memories: {}", e)),
+                });
+            }
+        };
+
+        match stmt.query_map([], |row| {
+            Ok(GraphNode {
+                id: row.get(0)?,
+                content: {
+                    let c: String = row.get(1)?;
+                    if c.len() > 200 { format!("{}...", &c[..200]) } else { c }
+                },
+                memory_type: row.get(2)?,
+                importance: row.get(3)?,
+            })
+        }) {
+            Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(GraphResponse {
+                    success: false,
+                    nodes: vec![],
+                    edges: vec![],
+                    error: Some(format!("Failed to query memories: {}", e)),
+                });
+            }
+        }
+    };
+
+    // Get all associations as edges
+    let edges: Vec<GraphEdge> = {
+        let mut stmt = match conn.prepare(
+            "SELECT source_memory_id, target_memory_id, association_type, strength FROM memory_associations",
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(GraphResponse {
+                    success: false,
+                    nodes: vec![],
+                    edges: vec![],
+                    error: Some(format!("Failed to query associations: {}", e)),
+                });
+            }
+        };
+
+        match stmt.query_map([], |row| {
+            Ok(GraphEdge {
+                source: row.get(0)?,
+                target: row.get(1)?,
+                association_type: row.get(2)?,
+                strength: row.get(3)?,
+            })
+        }) {
+            Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(GraphResponse {
+                    success: false,
+                    nodes: vec![],
+                    edges: vec![],
+                    error: Some(format!("Failed to query associations: {}", e)),
+                });
+            }
+        }
+    };
+
+    HttpResponse::Ok().json(GraphResponse {
+        success: true,
+        nodes,
+        edges,
+        error: None,
+    })
+}
+
+/// POST /api/memory/associations - Create a new association
+async fn create_association(
+    data: web::Data<AppState>,
+    req: HttpRequest,
+    body: web::Json<CreateAssociationBody>,
+) -> impl Responder {
+    if let Err(resp) = validate_session_from_request(&data, &req) {
+        return resp;
+    }
+
+    let strength = body.strength.clamp(0.0, 1.0);
+
+    match data.db.create_memory_association(
+        body.source_memory_id,
+        body.target_memory_id,
+        &body.association_type,
+        strength,
+        None,
+    ) {
+        Ok(id) => HttpResponse::Ok().json(AssociationResponse {
+            success: true,
+            associations: None,
+            created: Some(AssociationItem {
+                id,
+                source_memory_id: body.source_memory_id,
+                target_memory_id: body.target_memory_id,
+                association_type: body.association_type.clone(),
+                strength,
+                created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            }),
+            deleted: None,
+            error: None,
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(AssociationResponse {
+            success: false,
+            associations: None,
+            created: None,
+            deleted: None,
+            error: Some(format!("Failed to create association: {}", e)),
+        }),
+    }
+}
+
+/// GET /api/memory/associations - List associations for a memory
+async fn list_associations(
+    data: web::Data<AppState>,
+    req: HttpRequest,
+    query: web::Query<AssociationQuery>,
+) -> impl Responder {
+    if let Err(resp) = validate_session_from_request(&data, &req) {
+        return resp;
+    }
+
+    match data.db.get_memory_associations(query.memory_id) {
+        Ok(associations) => {
+            let items: Vec<AssociationItem> = associations
+                .into_iter()
+                .map(|a| AssociationItem {
+                    id: a.id,
+                    source_memory_id: a.source_memory_id,
+                    target_memory_id: a.target_memory_id,
+                    association_type: a.association_type,
+                    strength: a.strength as f64,
+                    created_at: a.created_at,
+                })
+                .collect();
+
+            HttpResponse::Ok().json(AssociationResponse {
+                success: true,
+                associations: Some(items),
+                created: None,
+                deleted: None,
+                error: None,
+            })
+        }
+        Err(e) => HttpResponse::InternalServerError().json(AssociationResponse {
+            success: false,
+            associations: None,
+            created: None,
+            deleted: None,
+            error: Some(format!("Failed to list associations: {}", e)),
+        }),
+    }
+}
+
+/// DELETE /api/memory/associations/{id} - Delete an association
+async fn delete_association(
+    data: web::Data<AppState>,
+    req: HttpRequest,
+    path: web::Path<i64>,
+) -> impl Responder {
+    if let Err(resp) = validate_session_from_request(&data, &req) {
+        return resp;
+    }
+
+    let association_id = path.into_inner();
+
+    match data.db.delete_memory_association(association_id) {
+        Ok(deleted) => HttpResponse::Ok().json(AssociationResponse {
+            success: true,
+            associations: None,
+            created: None,
+            deleted: Some(deleted),
+            error: None,
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(AssociationResponse {
+            success: false,
+            associations: None,
+            created: None,
+            deleted: None,
+            error: Some(format!("Failed to delete association: {}", e)),
+        }),
+    }
+}
+
+/// GET /api/memory/hybrid-search - Combined FTS + vector + graph search
+async fn hybrid_search(
+    data: web::Data<AppState>,
+    req: HttpRequest,
+    query: web::Query<HybridSearchQuery>,
+) -> impl Responder {
+    if let Err(resp) = validate_session_from_request(&data, &req) {
+        return resp;
+    }
+
+    let engine = match &data.hybrid_search {
+        Some(engine) => engine,
+        None => {
+            return HttpResponse::ServiceUnavailable().json(HybridSearchResponse {
+                success: false,
+                query: query.query.clone(),
+                mode: "hybrid".to_string(),
+                results: vec![],
+                error: Some("Hybrid search engine not initialized".to_string()),
+            });
+        }
+    };
+
+    let limit = query.limit.clamp(1, 50) as usize;
+
+    match engine.search(&query.query, limit).await {
+        Ok(results) => {
+            let items: Vec<HybridSearchItem> = results
+                .into_iter()
+                .map(|r| HybridSearchItem {
+                    memory_id: r.memory_id,
+                    content: r.content,
+                    memory_type: r.memory_type,
+                    importance: r.importance,
+                    rrf_score: r.rrf_score,
+                    fts_rank: r.fts_rank,
+                    vector_similarity: r.vector_similarity,
+                    association_count: r.association_count,
+                })
+                .collect();
+
+            HttpResponse::Ok().json(HybridSearchResponse {
+                success: true,
+                query: query.query.clone(),
+                mode: "hybrid".to_string(),
+                results: items,
+                error: None,
+            })
+        }
+        Err(e) => HttpResponse::InternalServerError().json(HybridSearchResponse {
+            success: false,
+            query: query.query.clone(),
+            mode: "hybrid".to_string(),
+            results: vec![],
+            error: Some(format!("Hybrid search failed: {}", e)),
+        }),
+    }
+}
+
+/// GET /api/memory/embeddings/stats - Get embedding statistics
+async fn embedding_stats(data: web::Data<AppState>, req: HttpRequest) -> impl Responder {
+    if let Err(resp) = validate_session_from_request(&data, &req) {
+        return resp;
+    }
+
+    let conn = data.db.conn();
+
+    let total_memories: i64 = conn
+        .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
+        .unwrap_or(0);
+
+    let memories_with_embeddings: i64 = conn
+        .query_row("SELECT COUNT(*) FROM memory_embeddings", [], |row| row.get(0))
+        .unwrap_or(0);
+
+    let memories_without = total_memories - memories_with_embeddings;
+    let coverage = if total_memories > 0 {
+        (memories_with_embeddings as f64 / total_memories as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    HttpResponse::Ok().json(EmbeddingStatsResponse {
+        success: true,
+        total_memories,
+        memories_with_embeddings,
+        memories_without_embeddings: memories_without,
+        coverage_percent: coverage,
+        error: None,
+    })
+}
+
+/// POST /api/memory/embeddings/backfill - Trigger embedding backfill
+async fn backfill_embeddings(data: web::Data<AppState>, req: HttpRequest) -> impl Responder {
+    if let Err(resp) = validate_session_from_request(&data, &req) {
+        return resp;
+    }
+
+    let engine = match &data.hybrid_search {
+        Some(engine) => engine,
+        None => {
+            return HttpResponse::ServiceUnavailable().json(BackfillResponse {
+                success: false,
+                message: None,
+                error: Some("Hybrid search engine not initialized. Embedding backfill requires an embedding provider.".to_string()),
+            });
+        }
+    };
+
+    // Run backfill in background
+    let engine = engine.clone();
+    tokio::spawn(async move {
+        match engine.backfill_embeddings().await {
+            Ok(count) => log::info!("[EMBEDDINGS] Backfill complete: {} embeddings generated", count),
+            Err(e) => log::error!("[EMBEDDINGS] Backfill failed: {}", e),
+        }
+    });
+
+    HttpResponse::Ok().json(BackfillResponse {
+        success: true,
+        message: Some("Embedding backfill started in background".to_string()),
+        error: None,
+    })
+}
+
 /// Configure memory routes
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(
@@ -783,6 +1247,14 @@ pub fn config(cfg: &mut web::ServiceConfig) {
             .route("/long-term", web::post().to(append_long_term))
             .route("/stats", web::get().to(get_stats))
             .route("/reindex", web::post().to(reindex))
-            .route("/info", web::get().to(memory_info)),
+            .route("/info", web::get().to(memory_info))
+            // Phase 1: Memory System Overhaul endpoints
+            .route("/graph", web::get().to(get_graph))
+            .route("/associations", web::post().to(create_association))
+            .route("/associations", web::get().to(list_associations))
+            .route("/associations/{id}", web::delete().to(delete_association))
+            .route("/hybrid-search", web::get().to(hybrid_search))
+            .route("/embeddings/stats", web::get().to(embedding_stats))
+            .route("/embeddings/backfill", web::post().to(backfill_embeddings)),
     );
 }

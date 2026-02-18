@@ -37,6 +37,24 @@ pub struct BotSettings {
     pub proxy_url: Option<String>,
     /// Whether kanban "ready" tasks are auto-executed by the scheduler
     pub kanban_auto_execute: bool,
+    /// Whether message coalescing is enabled
+    #[serde(default)]
+    pub coalescing_enabled: bool,
+    /// Coalescing debounce time in milliseconds
+    #[serde(default = "default_coalescing_debounce")]
+    pub coalescing_debounce_ms: u64,
+    /// Coalescing max wait time in milliseconds
+    #[serde(default = "default_coalescing_max_wait")]
+    pub coalescing_max_wait_ms: u64,
+    /// Background compaction threshold (ratio 0.0-1.0)
+    #[serde(default = "default_background_threshold")]
+    pub compaction_background_threshold: f64,
+    /// Aggressive compaction threshold
+    #[serde(default = "default_aggressive_threshold")]
+    pub compaction_aggressive_threshold: f64,
+    /// Emergency compaction threshold
+    #[serde(default = "default_emergency_threshold")]
+    pub compaction_emergency_threshold: f64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -59,11 +77,23 @@ impl Default for BotSettings {
             theme_accent: None,
             proxy_url: None,
             kanban_auto_execute: true,
+            coalescing_enabled: false,
+            coalescing_debounce_ms: 1500,
+            coalescing_max_wait_ms: 5000,
+            compaction_background_threshold: 0.80,
+            compaction_aggressive_threshold: 0.85,
+            compaction_emergency_threshold: 0.95,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
     }
 }
+
+fn default_coalescing_debounce() -> u64 { 1500 }
+fn default_coalescing_max_wait() -> u64 { 5000 }
+fn default_background_threshold() -> f64 { 0.80 }
+fn default_aggressive_threshold() -> f64 { 0.85 }
+fn default_emergency_threshold() -> f64 { 0.95 }
 
 /// Request type for updating bot settings
 #[derive(Debug, Clone, Deserialize)]
@@ -85,4 +115,10 @@ pub struct UpdateBotSettingsRequest {
     pub proxy_url: Option<String>,
     /// Whether kanban "ready" tasks are auto-executed by the scheduler
     pub kanban_auto_execute: Option<bool>,
+    pub coalescing_enabled: Option<bool>,
+    pub coalescing_debounce_ms: Option<u64>,
+    pub coalescing_max_wait_ms: Option<u64>,
+    pub compaction_background_threshold: Option<f64>,
+    pub compaction_aggressive_threshold: Option<f64>,
+    pub compaction_emergency_threshold: Option<f64>,
 }

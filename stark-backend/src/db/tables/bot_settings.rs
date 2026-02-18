@@ -17,7 +17,7 @@ impl Database {
         let conn = self.conn();
 
         let result = conn.query_row(
-            "SELECT id, bot_name, bot_email, web3_tx_requires_confirmation, rpc_provider, custom_rpc_endpoints, max_tool_iterations, rogue_mode_enabled, safe_mode_max_queries_per_10min, keystore_url, chat_session_memory_generation, guest_dashboard_enabled, theme_accent, proxy_url, kanban_auto_execute, created_at, updated_at FROM bot_settings LIMIT 1",
+            "SELECT id, bot_name, bot_email, web3_tx_requires_confirmation, rpc_provider, custom_rpc_endpoints, max_tool_iterations, rogue_mode_enabled, safe_mode_max_queries_per_10min, keystore_url, chat_session_memory_generation, guest_dashboard_enabled, theme_accent, proxy_url, kanban_auto_execute, created_at, updated_at, coalescing_enabled, coalescing_debounce_ms, coalescing_max_wait_ms, compaction_background_threshold, compaction_aggressive_threshold, compaction_emergency_threshold FROM bot_settings LIMIT 1",
             [],
             |row| {
                 let web3_tx_confirmation: i64 = row.get(3)?;
@@ -34,6 +34,12 @@ impl Database {
                 let kanban_auto_execute: i64 = row.get::<_, Option<i64>>(14)?.unwrap_or(1);
                 let created_at_str: String = row.get(15)?;
                 let updated_at_str: String = row.get(16)?;
+                let coalescing_enabled: i64 = row.get::<_, Option<i64>>(17)?.unwrap_or(0);
+                let coalescing_debounce_ms: u64 = row.get::<_, Option<u64>>(18)?.unwrap_or(1500);
+                let coalescing_max_wait_ms: u64 = row.get::<_, Option<u64>>(19)?.unwrap_or(5000);
+                let compaction_background_threshold: f64 = row.get::<_, Option<f64>>(20)?.unwrap_or(0.80);
+                let compaction_aggressive_threshold: f64 = row.get::<_, Option<f64>>(21)?.unwrap_or(0.85);
+                let compaction_emergency_threshold: f64 = row.get::<_, Option<f64>>(22)?.unwrap_or(0.95);
 
                 let custom_rpc_endpoints: Option<HashMap<String, String>> = custom_rpc_endpoints_json
                     .and_then(|json| serde_json::from_str(&json).ok());
@@ -54,6 +60,12 @@ impl Database {
                     theme_accent,
                     proxy_url,
                     kanban_auto_execute: kanban_auto_execute != 0,
+                    coalescing_enabled: coalescing_enabled != 0,
+                    coalescing_debounce_ms,
+                    coalescing_max_wait_ms,
+                    compaction_background_threshold,
+                    compaction_aggressive_threshold,
+                    compaction_emergency_threshold,
                     created_at: DateTime::parse_from_rfc3339(&created_at_str)
                         .unwrap()
                         .with_timezone(&Utc),

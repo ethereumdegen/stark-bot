@@ -29,6 +29,9 @@ fn register_all_tools(registry: &mut ToolRegistry) {
     // QMD Memory tools (file-based markdown memory system)
     registry.register(Arc::new(builtin::QmdMemorySearchTool::new()));
     registry.register(Arc::new(builtin::QmdMemoryReadTool::new()));
+    // Memory graph tools (associations + knowledge graph)
+    registry.register(Arc::new(builtin::MemoryAssociateTool::new()));
+    registry.register(Arc::new(builtin::MemoryGraphTool::new()));
     registry.register(Arc::new(builtin::ModifySoulTool::new()));
     registry.register(Arc::new(builtin::RegisterNewIdentityTool::new()));
     registry.register(Arc::new(builtin::ImportIdentityTool::new()));
@@ -40,6 +43,7 @@ fn register_all_tools(registry: &mut ToolRegistry) {
     registry.register(Arc::new(builtin::ReadSkillTool::new()));
     registry.register(Arc::new(builtin::ManageModulesTool::new()));
     registry.register(Arc::new(builtin::WorkstreamTool::new()));
+    registry.register(Arc::new(builtin::BranchTool::new()));
     registry.register(Arc::new(builtin::InstallApiKeyTool::new()));
     registry.register(Arc::new(builtin::HeartbeatConfigTool::new()));
     registry.register(Arc::new(builtin::MindmapManageTool::new()));

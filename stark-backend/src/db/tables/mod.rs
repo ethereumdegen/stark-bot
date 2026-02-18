@@ -26,3 +26,5 @@ pub mod kanban;          // kanban_items (kanban board task management)
 pub mod modules;         // installed_modules (plugin system registry)
 pub mod telemetry;       // execution_spans, rollouts, attempts, resource_versions
 pub mod special_roles;   // special_roles, special_role_assignments (enriched safe mode)
+pub mod memory_embeddings; // memory_embeddings (vector search)
+pub mod memory_associations; // memory_associations (knowledge graph)

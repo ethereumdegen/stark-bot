@@ -44,6 +44,17 @@ impl QmdMemorySearchTool {
             },
         );
 
+        properties.insert(
+            "mode".to_string(),
+            PropertySchema {
+                schema_type: "string".to_string(),
+                description: "Search mode: 'fts' for full-text search only (default), 'hybrid' for combined FTS + vector + graph search using RRF ranking.".to_string(),
+                default: Some(json!("fts")),
+                items: None,
+                enum_values: Some(vec!["fts".to_string(), "hybrid".to_string()]),
+            },
+        );
+
         Self {
             definition: ToolDefinition {
                 name: "memory_search".to_string(),
@@ -70,6 +81,12 @@ impl Default for QmdMemorySearchTool {
 struct SearchParams {
     query: String,
     limit: Option<i32>,
+    #[serde(default = "default_mode")]
+    mode: String,
+}
+
+fn default_mode() -> String {
+    "fts".to_string()
 }
 
 /// Check if tool context indicates safe mode
@@ -107,13 +124,65 @@ impl Tool for QmdMemorySearchTool {
         };
 
         let safe_mode = is_safe_mode(context);
+        let result_limit = params.limit.unwrap_or(10).min(50).max(1);
+
+        // Hybrid mode: use combined FTS + vector + graph search
+        if params.mode == "hybrid" {
+            if let Some(ref hybrid_engine) = context.hybrid_search {
+                match hybrid_engine.search(&params.query, result_limit as usize).await {
+                    Ok(results) => {
+                        if results.is_empty() {
+                            return ToolResult::success(format!(
+                                "No memories found matching: \"{}\" (hybrid mode)",
+                                params.query
+                            ));
+                        }
+
+                        let mut output = format!(
+                            "## Hybrid Memory Search Results\n**Query:** \"{}\"\n**Found:** {} result(s)\n**Mode:** hybrid (FTS5 + vector + graph RRF)\n\n",
+                            params.query, results.len()
+                        );
+
+                        for (i, result) in results.iter().enumerate() {
+                            output.push_str(&format!(
+                                "### {}. Memory #{} ({})\n**RRF Score:** {:.4} | **Importance:** {} | **Type:** {}\n{}\n\n",
+                                i + 1,
+                                result.memory_id,
+                                result.memory_type,
+                                result.rrf_score,
+                                result.importance,
+                                result.memory_type,
+                                if result.content.len() > 300 {
+                                    format!("{}...", &result.content[..300])
+                                } else {
+                                    result.content.clone()
+                                }
+                            ));
+                        }
+
+                        return ToolResult::success(output).with_metadata(json!({
+                            "query": params.query,
+                            "mode": "hybrid",
+                            "result_count": results.len(),
+                            "memory_ids": results.iter().map(|r| r.memory_id).collect::<Vec<_>>()
+                        }));
+                    }
+                    Err(e) => {
+                        return ToolResult::error(format!("Hybrid search failed: {}. Try mode='fts' as fallback.", e));
+                    }
+                }
+            } else {
+                return ToolResult::error("Hybrid search engine not available. Use mode='fts' for full-text search.");
+            }
+        }
+
+        // FTS mode (default): use file-based full-text search
         // In safe mode, request more results so we have enough after filtering
         let search_limit = if safe_mode {
-            params.limit.unwrap_or(10).min(50).max(1) * 3
+            result_limit * 3
         } else {
-            params.limit.unwrap_or(10).min(50).max(1)
+            result_limit
         };
-        let result_limit = params.limit.unwrap_or(10).min(50).max(1);
 
         // Perform search
         match memory_store.search(&params.query, search_limit) {

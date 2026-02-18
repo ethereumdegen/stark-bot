@@ -425,6 +425,8 @@ pub struct ToolContext {
     pub current_subagent_id: Option<String>,
     /// If this context is running inside a sub-agent, the sub-agent's depth (0 = top-level)
     pub current_subagent_depth: Option<u32>,
+    /// Hybrid search engine for combined FTS5 + vector + graph memory search
+    pub hybrid_search: Option<Arc<crate::memory::HybridSearchEngine>>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -455,6 +457,7 @@ impl std::fmt::Debug for ToolContext {
             .field("disk_quota", &self.disk_quota.is_some())
             .field("current_subagent_id", &self.current_subagent_id)
             .field("current_subagent_depth", &self.current_subagent_depth)
+            .field("hybrid_search", &self.hybrid_search.is_some())
             .finish()
     }
 }
@@ -488,6 +491,7 @@ impl Default for ToolContext {
             disk_quota: None,
             current_subagent_id: None,
             current_subagent_depth: None,
+            hybrid_search: None,
         }
     }
 }
@@ -702,6 +706,12 @@ impl ToolContext {
     /// Add a DiskQuotaManager to the context (for enforcing disk usage limits)
     pub fn with_disk_quota(mut self, dq: Arc<DiskQuotaManager>) -> Self {
         self.disk_quota = Some(dq);
+        self
+    }
+
+    /// Add a HybridSearchEngine to the context (for combined FTS5 + vector + graph search)
+    pub fn with_hybrid_search(mut self, engine: Arc<crate::memory::HybridSearchEngine>) -> Self {
+        self.hybrid_search = Some(engine);
         self
     }
 

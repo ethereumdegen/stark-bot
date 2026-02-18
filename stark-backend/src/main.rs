@@ -24,6 +24,7 @@ mod qmd_memory;
 mod scheduler;
 mod skills;
 mod tools;
+mod memory;
 mod siwa;
 mod wallet;
 mod x402;
@@ -80,6 +81,8 @@ pub struct AppState {
     pub telemetry_store: Arc<telemetry::TelemetryStore>,
     /// Resource manager for versioned prompts and configs
     pub resource_manager: Arc<telemetry::ResourceManager>,
+    /// Hybrid search engine (FTS + vector + graph)
+    pub hybrid_search: Option<Arc<memory::HybridSearchEngine>>,
 }
 
 /// Auto-retrieve backup from keystore on fresh instance
@@ -1242,6 +1245,23 @@ async fn main() -> std::io::Result<()> {
     let validator_registry = Arc::new(tool_validators::create_default_registry());
     log::info!("Registered {} tool validators", validator_registry.len());
 
+    // Create embedding generator for hybrid search + association loop
+    let embedding_generator: Arc<dyn memory::EmbeddingGenerator + Send + Sync> =
+        if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+            log::info!("HybridSearchEngine: using OpenAI embeddings");
+            Arc::new(memory::embeddings::OpenAIEmbeddingGenerator::new(api_key))
+        } else {
+            log::info!("HybridSearchEngine: no OPENAI_API_KEY, vector search disabled");
+            Arc::new(memory::embeddings::NullEmbeddingGenerator)
+        };
+
+    // Create hybrid search engine (FTS + vector + graph)
+    let hybrid_search_engine: Option<Arc<memory::HybridSearchEngine>> =
+        Some(Arc::new(memory::HybridSearchEngine::new(
+            db.clone(),
+            embedding_generator.clone(),
+        )));
+
     // Create the shared MessageDispatcher for all message processing
     log::info!("Initializing message dispatcher");
     let mut dispatcher_builder = MessageDispatcher::new_with_wallet_and_skills(
@@ -1254,12 +1274,33 @@ async fn main() -> std::io::Result<()> {
         ).with_hook_manager(hook_manager.clone())
          .with_validator_registry(validator_registry.clone())
          .with_tx_queue(tx_queue.clone());
+    if let Some(ref engine) = hybrid_search_engine {
+        dispatcher_builder = dispatcher_builder.with_hybrid_search(engine.clone());
+    }
     if let Some(ref dq) = disk_quota {
         dispatcher_builder = dispatcher_builder.with_disk_quota(dq.clone());
         // Also wire disk quota into the MemoryStore for memory append limits
         if let Some(ref store) = dispatcher_builder.memory_store() {
             store.set_disk_quota(dq.clone());
         }
+    }
+    // Wire up message coalescer from bot settings
+    {
+        let bot_settings = db.get_bot_settings().unwrap_or_default();
+        let coalescer_config = channels::coalescing::CoalescerConfig {
+            enabled: bot_settings.coalescing_enabled,
+            debounce_ms: bot_settings.coalescing_debounce_ms,
+            max_wait_ms: bot_settings.coalescing_max_wait_ms,
+        };
+        if coalescer_config.enabled {
+            log::info!(
+                "Message coalescing enabled (debounce={}ms, max_wait={}ms)",
+                coalescer_config.debounce_ms,
+                coalescer_config.max_wait_ms
+            );
+        }
+        let coalescer = channels::coalescing::MessageCoalescer::new(coalescer_config);
+        dispatcher_builder = dispatcher_builder.with_coalescer(coalescer);
     }
     let dispatcher = Arc::new(dispatcher_builder);
 
@@ -1286,6 +1327,35 @@ async fn main() -> std::io::Result<()> {
     tokio::spawn(async move {
         scheduler_handle.start(scheduler_shutdown_rx).await;
     });
+
+    // Spawn background association loop (auto-discovers memory connections via embeddings)
+    {
+        let db_loop = db.clone();
+        let emb_loop = embedding_generator.clone();
+        let config = memory::association_loop::AssociationLoopConfig::default();
+        let _assoc_handle = memory::association_loop::spawn_association_loop(db_loop, emb_loop, config);
+        log::info!("Background association loop spawned");
+    }
+
+    // Spawn background memory decay/pruning task (runs every 6 hours)
+    {
+        let db_decay = db.clone();
+        tokio::spawn(async move {
+            let config = memory::decay::DecayConfig::default();
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(6 * 3600)).await;
+                match memory::decay::run_decay_pass(&db_decay, &config) {
+                    Ok((updated, pruned)) => {
+                        log::info!("[DECAY] Pass complete: {} updated, {} pruned", updated, pruned);
+                    }
+                    Err(e) => {
+                        log::error!("[DECAY] Pass failed: {}", e);
+                    }
+                }
+            }
+        });
+        log::info!("Background memory decay task spawned (every 6h)");
+    }
 
     // Spawn slow network-dependent init in background so HTTP server starts immediately
     {
@@ -1412,6 +1482,7 @@ async fn main() -> std::io::Result<()> {
     let wallet_prov = wallet_provider.clone();
     let disk_q = disk_quota.clone();
     let mod_workers = module_workers.clone();
+    let hybrid_search_engine = hybrid_search_engine.clone();
     let frontend_dist = frontend_dist.to_string();
     let dev_mode = dev_mode;
 
@@ -1443,6 +1514,7 @@ async fn main() -> std::io::Result<()> {
                 started_at: std::time::Instant::now(),
                 telemetry_store: Arc::new(telemetry::TelemetryStore::new(Arc::clone(&db))),
                 resource_manager: Arc::new(telemetry::ResourceManager::new(Arc::clone(&db))),
+                hybrid_search: hybrid_search_engine.clone(),
             }))
             .app_data(web::Data::new(Arc::clone(&sched)))
             // WebSocket data for /ws route

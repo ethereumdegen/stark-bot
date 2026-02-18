@@ -210,6 +210,107 @@ export interface SessionCompleteEvent {
   timestamp: string;
 }
 
+// Memory Graph types (Phase 3)
+export interface GraphNode {
+  id: number;
+  content: string;
+  memory_type: string;
+  importance: number;
+}
+
+export interface GraphEdge {
+  source: number;
+  target: number;
+  association_type: string;
+  strength: number;
+}
+
+export interface MemoryGraphResponse {
+  success: boolean;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  error?: string;
+}
+
+export interface HybridSearchItem {
+  memory_id: number;
+  content: string;
+  memory_type: string;
+  importance: number;
+  rrf_score: number;
+  fts_rank?: number;
+  vector_similarity?: number;
+  association_count?: number;
+}
+
+export interface HybridSearchResponse {
+  success: boolean;
+  query: string;
+  mode: string;
+  results: HybridSearchItem[];
+  error?: string;
+}
+
+export interface EmbeddingStatsResponse {
+  success: boolean;
+  total_memories: number;
+  with_embeddings: number;
+  without_embeddings: number;
+  coverage_pct: number;
+}
+
+export interface MemoryAssociation {
+  id: number;
+  source_memory_id: number;
+  target_memory_id: number;
+  association_type: string;
+  strength: number;
+  created_at: string;
+}
+
+// Branch/Worker events (Phase 2 gateway)
+export interface BranchStartedEvent {
+  channel_id: number;
+  branch_id: string;
+  label: string;
+  task: string;
+}
+
+export interface BranchCompletedEvent {
+  channel_id: number;
+  branch_id: string;
+  result_summary: string;
+}
+
+export interface BranchFailedEvent {
+  channel_id: number;
+  branch_id: string;
+  error: string;
+}
+
+export interface CoalesceBufferingEvent {
+  channel_id: number;
+  pending_count: number;
+}
+
+export interface CoalesceFlushedEvent {
+  channel_id: number;
+  message_count: number;
+}
+
+export interface WorkerCheckpointEvent {
+  channel_id: number;
+  subagent_id: string;
+  iteration: number;
+}
+
+// Cortex Bulletin
+export interface CortexBulletin {
+  content: string;
+  generated_at: string;
+  topics: string[];
+}
+
 export type MemoryType = 'daily_log' | 'long_term' | 'session_summary' | 'compaction';
 
 export interface Memory {

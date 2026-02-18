@@ -1591,6 +1591,82 @@ impl Database {
             [],
         );
 
+        // =====================================================
+        // Memory Associations Table (Knowledge Graph)
+        // =====================================================
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS memory_associations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_memory_id INTEGER NOT NULL,
+                target_memory_id INTEGER NOT NULL,
+                association_type TEXT NOT NULL DEFAULT 'related',
+                strength REAL NOT NULL DEFAULT 0.5,
+                metadata TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (source_memory_id) REFERENCES memories(id) ON DELETE CASCADE,
+                FOREIGN KEY (target_memory_id) REFERENCES memories(id) ON DELETE CASCADE
+            )",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_assoc_source ON memory_associations(source_memory_id)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_assoc_target ON memory_associations(target_memory_id)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_assoc_type ON memory_associations(association_type)",
+            [],
+        )?;
+
+        // Migration: Add updated_at column to memory_embeddings if it doesn't exist
+        let _ = conn.execute(
+            "ALTER TABLE memory_embeddings ADD COLUMN updated_at TEXT",
+            [],
+        );
+
+        // Phase 2: Worker delegation columns
+        let _ = conn.execute(
+            "ALTER TABLE sub_agents ADD COLUMN mode TEXT NOT NULL DEFAULT 'standard'",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE sub_agents ADD COLUMN parent_context_snapshot TEXT",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE sub_agents ADD COLUMN checkpoints TEXT",
+            [],
+        );
+        // Coalescing and compaction settings
+        let _ = conn.execute(
+            "ALTER TABLE bot_settings ADD COLUMN coalescing_enabled INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE bot_settings ADD COLUMN coalescing_debounce_ms INTEGER NOT NULL DEFAULT 1500",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE bot_settings ADD COLUMN coalescing_max_wait_ms INTEGER NOT NULL DEFAULT 5000",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE bot_settings ADD COLUMN compaction_background_threshold REAL NOT NULL DEFAULT 0.80",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE bot_settings ADD COLUMN compaction_aggressive_threshold REAL NOT NULL DEFAULT 0.85",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE bot_settings ADD COLUMN compaction_emergency_threshold REAL NOT NULL DEFAULT 0.95",
+            [],
+        );
+
         Ok(())
     }
 
