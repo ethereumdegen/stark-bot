@@ -1,11 +1,34 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { MessageSquare, Calendar, Wrench, Zap, Sparkles, Wallet, Copy, Check, Newspaper } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Card, { CardContent } from '@/components/ui/Card';
 import { useApi } from '@/hooks/useApi';
 import { useWallet } from '@/hooks/useWallet';
-import { getCortexBulletin } from '@/lib/api';
+import { getCortexBulletin, SkillInfo } from '@/lib/api';
 import type { CortexBulletin } from '@/types';
+
+interface ServiceCapability {
+  id: string;
+  label: string;
+  icon: string;
+  matchNames: string[];
+  matchTags: string[];
+}
+
+const SERVICE_CAPABILITIES: ServiceCapability[] = [
+  { id: 'github', label: 'GitHub', icon: '/icons/github.svg', matchNames: ['github'], matchTags: ['git', 'github'] },
+  { id: 'railway', label: 'Railway', icon: '/icons/railway.svg', matchNames: ['railway'], matchTags: ['railway'] },
+  { id: 'digitalocean', label: 'DigitalOcean', icon: '/icons/digitalocean.svg', matchNames: ['digitalocean', 'digital_ocean'], matchTags: ['digitalocean'] },
+  { id: 'polymarket', label: 'Polymarket', icon: '/icons/polymarket.svg', matchNames: ['polymarket'], matchTags: ['polymarket', 'prediction'] },
+  { id: 'cloudflare', label: 'Cloudflare', icon: '/icons/cloudflare.svg', matchNames: ['cloudflare'], matchTags: ['cloudflare', 'dns'] },
+  { id: 'x402', label: 'x402 Payments', icon: '/icons/x402.svg', matchNames: ['x402', 'x402_post'], matchTags: ['x402', 'payments'] },
+  { id: 'erc20', label: 'ERC-20 Swap', icon: '/icons/erc20.svg', matchNames: ['erc20', 'erc_20', 'swap', 'token_swap'], matchTags: ['swap', 'erc20', 'erc-20', 'token'] },
+  { id: 'twitter', label: 'X / Twitter', icon: '/icons/twitter.svg', matchNames: ['twitter', 'x_post', 'tweet'], matchTags: ['twitter', 'x', 'social-media'] },
+  { id: 'discord', label: 'Discord', icon: '/icons/discord.svg', matchNames: ['discord'], matchTags: ['discord'] },
+  { id: 'telegram', label: 'Telegram', icon: '/icons/telegram.svg', matchNames: ['telegram'], matchTags: ['telegram'] },
+  { id: 'uniswap', label: 'Uniswap', icon: '/icons/uniswap.svg', matchNames: ['uniswap'], matchTags: ['uniswap', 'dex'] },
+  { id: 'wallet', label: 'Wallet', icon: '/icons/wallet.svg', matchNames: ['wallet', 'transfer', 'send_eth', 'send_usdc'], matchTags: ['wallet', 'transfer', 'crypto'] },
+];
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -29,9 +52,24 @@ export default function Dashboard() {
 
   const { data: sessions } = useApi<Array<unknown>>('/sessions');
   const { data: tools } = useApi<Array<unknown>>('/tools');
-  const { data: skills } = useApi<Array<unknown>>('/skills');
+  const { data: skills } = useApi<SkillInfo[]>('/skills');
   const { data: versionData } = useApi<{ version: string }>('/version');
   const appVersion = versionData?.version || '...';
+
+  const activeCapabilities = useMemo(() => {
+    if (!skills || skills.length === 0) return [];
+    const enabledSkills = skills.filter((s) => s.enabled);
+    return SERVICE_CAPABILITIES.filter((cap) =>
+      enabledSkills.some((skill) => {
+        const name = skill.name.toLowerCase();
+        const tags = (skill.tags || []).map((t) => t.toLowerCase());
+        return (
+          cap.matchNames.some((m) => name.includes(m)) ||
+          cap.matchTags.some((m) => tags.includes(m))
+        );
+      })
+    );
+  }, [skills]);
 
   const stats = [
     {
@@ -126,7 +164,29 @@ export default function Dashboard() {
           </li>
         </ul>
       </div>
-      
+
+      {activeCapabilities.length > 0 && (
+        <div className="mb-8 p-6 bg-slate-800/50 rounded-lg border border-slate-700">
+          <h2 className="text-lg font-semibold text-white mb-4">Active Capabilities</h2>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+            {activeCapabilities.map((cap) => (
+              <div
+                key={cap.id}
+                className="flex flex-col items-center gap-2 p-4 rounded-lg bg-slate-700/30 hover:bg-slate-700/50 transition-colors"
+              >
+                <div className="w-10 h-10 flex items-center justify-center">
+                  <img
+                    src={cap.icon}
+                    alt={cap.label}
+                    className="w-8 h-8 opacity-80 brightness-0 invert"
+                  />
+                </div>
+                <span className="text-sm text-slate-300 text-center">{cap.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {stats.map((stat) => (
