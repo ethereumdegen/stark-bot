@@ -30,12 +30,12 @@ interface CleanupResult {
 const CATEGORY_COLORS: Record<string, { bg: string; text: string; label: string }> = {
   workspace: { bg: 'bg-blue-500', text: 'text-blue-400', label: 'Workspace' },
   memory: { bg: 'bg-purple-500', text: 'text-purple-400', label: 'Memory' },
-  journal: { bg: 'bg-green-500', text: 'text-green-400', label: 'Journal' },
+  notes: { bg: 'bg-green-500', text: 'text-green-400', label: 'Notes' },
   soul: { bg: 'bg-amber-500', text: 'text-amber-400', label: 'Soul' },
   database: { bg: 'bg-slate-400', text: 'text-slate-300', label: 'Database' },
 };
 
-const CATEGORY_ORDER = ['workspace', 'memory', 'journal', 'soul', 'database'];
+const CATEGORY_ORDER = ['workspace', 'memory', 'notes', 'soul', 'database'];
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';

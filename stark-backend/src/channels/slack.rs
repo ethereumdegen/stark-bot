@@ -501,6 +501,7 @@ async fn process_slack_message(
         session_mode: None,
         selected_network: None,
         force_safe_mode,
+        preferred_subtype: None,
     };
 
     // Subscribe to events for real-time tool call forwarding

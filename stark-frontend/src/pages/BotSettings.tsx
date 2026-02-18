@@ -492,7 +492,7 @@ export default function BotSettings() {
               </span>
             </label>
             <p className="text-xs text-slate-500">
-              Allow unauthenticated users to view the mind map dashboard without logging in.
+              Allow unauthenticated users to view the impulse map dashboard without logging in.
             </p>
           </CardContent>
         </Card>

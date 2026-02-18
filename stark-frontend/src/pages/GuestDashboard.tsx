@@ -3,9 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import * as d3 from 'd3';
 import Button from '@/components/ui/Button';
 import {
-  getGuestMindGraph,
-  MindNodeInfo,
-  MindConnectionInfo,
+  getGuestImpulseGraph,
+  ImpulseNodeInfo,
+  ImpulseConnectionInfo,
 } from '@/lib/api';
 
 interface D3Node extends d3.SimulationNodeDatum {
@@ -26,24 +26,24 @@ export default function GuestDashboard() {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const [nodes, setNodes] = useState<MindNodeInfo[]>([]);
-  const [connections, setConnections] = useState<MindConnectionInfo[]>([]);
+  const [nodes, setNodes] = useState<ImpulseNodeInfo[]>([]);
+  const [connections, setConnections] = useState<ImpulseConnectionInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Hover tooltip state
-  const [hoveredNode, setHoveredNode] = useState<MindNodeInfo | null>(null);
+  const [hoveredNode, setHoveredNode] = useState<ImpulseNodeInfo | null>(null);
 
   // Load graph data
   const loadGraph = useCallback(async () => {
     try {
       setLoading(true);
-      const graph = await getGuestMindGraph();
+      const graph = await getGuestImpulseGraph();
       setNodes(graph.nodes);
       setConnections(graph.connections);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load mind map');
+      setError(e instanceof Error ? e.message : 'Failed to load impulse map');
     } finally {
       setLoading(false);
     }
@@ -224,7 +224,7 @@ export default function GuestDashboard() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen bg-black">
-        <div className="text-gray-400">Loading mind map...</div>
+        <div className="text-gray-400">Loading impulse map...</div>
       </div>
     );
   }
@@ -246,13 +246,13 @@ export default function GuestDashboard() {
       <div className="p-4 border-b border-gray-800 flex items-center justify-between">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-xl font-semibold text-white">Starkbot's Mind Map</h1>
+            <h1 className="text-xl font-semibold text-white">Starkbot's Impulse Map</h1>
             <span className="text-xs px-2 py-1 rounded bg-gray-700 text-gray-300">
               Guest View (Read Only)
             </span>
           </div>
           <p className="text-sm text-gray-400">
-            Explore Starkbot's mind map. Login to make changes.
+            Explore Starkbot's impulse map. Login to make changes.
           </p>
         </div>
         <Button onClick={() => navigate('/')}>

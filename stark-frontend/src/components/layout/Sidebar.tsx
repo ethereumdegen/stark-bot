@@ -96,7 +96,7 @@ export default function Sidebar() {
           <NavItem to="/agent-chat" icon={MessageSquare} label="Agent Chat" />
           <NavItem to="/workstream" icon={Columns} label="Workstream" />
           <NavItem to="/heartbeat" icon={Heart} label="Heartbeat" />
-          <NavItem to="/mindmap" icon={Network} label="Mind Map" />
+          <NavItem to="/impulse-map" icon={Network} label="Impulse Map" />
         </div>
 
         {/* Configuration Section */}
@@ -124,7 +124,7 @@ export default function Sidebar() {
           <NavItem to="/files" icon={FolderOpen} label="Workspace Files" />
           <NavItem to="/crypto-transactions" icon={Wallet} label="Crypto Transactions" />
           <NavItem to="/system-files" icon={Sparkles} label="System Files" />
-          <NavItem to="/journal" icon={BookOpen} label="Journal" />
+          <NavItem to="/notes" icon={BookOpen} label="Notes" />
         </div>
 
         {/* Developer Section */}

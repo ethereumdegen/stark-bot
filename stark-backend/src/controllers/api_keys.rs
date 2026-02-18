@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumIter, EnumString, IntoEnumIterator};
 
 use crate::backup::{ApiKeyEntry, BackupData};
-use crate::db::tables::mind_nodes::CreateMindNodeRequest;
+use crate::db::tables::impulse_nodes::CreateImpulseNodeRequest;
 use crate::keystore_client::KEYSTORE_CLIENT;
 use crate::models::ApiKeyResponse;
 use crate::AppState;
@@ -764,8 +764,8 @@ async fn backup_to_cloud(state: web::Data<AppState>, req: HttpRequest) -> impl R
 
     let key_count = backup.api_keys.len();
     // Count only non-trunk nodes to be consistent with restore
-    let node_count = backup.mind_map_nodes.iter().filter(|n| !n.is_trunk).count();
-    let connection_count = backup.mind_map_connections.len();
+    let node_count = backup.impulse_map_nodes.iter().filter(|n| !n.is_trunk).count();
+    let connection_count = backup.impulse_map_connections.len();
     let cron_job_count = backup.cron_jobs.len();
     let channel_count = backup.channels.len();
     let channel_setting_count = backup.channel_settings.len();
@@ -1177,13 +1177,13 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
         }
     }
 
-    // Clear existing mind nodes and connections before restore
-    match state.db.clear_mind_nodes_for_restore() {
+    // Clear existing impulse nodes and connections before restore
+    match state.db.clear_impulse_nodes_for_restore() {
         Ok((nodes_deleted, connections_deleted)) => {
             log::info!("Cleared {} nodes and {} connections for restore", nodes_deleted, connections_deleted);
         }
         Err(e) => {
-            log::warn!("Failed to clear mind nodes for restore: {}", e);
+            log::warn!("Failed to clear impulse nodes for restore: {}", e);
         }
     }
 
@@ -1217,14 +1217,14 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
         }
     }
 
-    // Restore mind map nodes with ID mapping
+    // Restore impulse map nodes with ID mapping
     // Get or create trunk node and map backup trunk ID to current trunk ID
     let mut old_to_new_id: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
     let current_trunk = state.db.get_or_create_trunk_node().ok();
 
     // Find trunk in backup and map its ID to current trunk ID
     if let Some(ref trunk) = current_trunk {
-        for node in &backup_data.mind_map_nodes {
+        for node in &backup_data.impulse_map_nodes {
             if node.is_trunk {
                 old_to_new_id.insert(node.id, trunk.id);
                 break;
@@ -1233,37 +1233,37 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
     }
 
     let mut restored_nodes = 0;
-    for node in &backup_data.mind_map_nodes {
+    for node in &backup_data.impulse_map_nodes {
         // Skip trunk nodes - they're auto-managed (already mapped above)
         if node.is_trunk {
             continue;
         }
 
-        let request = CreateMindNodeRequest {
+        let request = CreateImpulseNodeRequest {
             body: Some(node.body.clone()),
             position_x: node.position_x,
             position_y: node.position_y,
             parent_id: None, // Connections are handled separately
         };
 
-        match state.db.create_mind_node(&request) {
+        match state.db.create_impulse_node(&request) {
             Ok(new_node) => {
                 old_to_new_id.insert(node.id, new_node.id);
                 restored_nodes += 1;
             }
             Err(e) => {
-                log::warn!("Failed to restore mind node: {}", e);
+                log::warn!("Failed to restore impulse node: {}", e);
             }
         }
     }
 
-    // Restore mind map connections using ID mapping
+    // Restore impulse map connections using ID mapping
     let mut restored_connections = 0;
-    for conn in &backup_data.mind_map_connections {
+    for conn in &backup_data.impulse_map_connections {
         let new_parent_id = old_to_new_id.get(&conn.parent_id);
         let new_child_id = old_to_new_id.get(&conn.child_id);
         if let (Some(&parent_id), Some(&child_id)) = (new_parent_id, new_child_id) {
-            match state.db.create_mind_node_connection(parent_id, child_id) {
+            match state.db.create_impulse_node_connection(parent_id, child_id) {
                 Ok(_) => restored_connections += 1,
                 Err(e) => {
                     log::warn!("Failed to restore connection: {}", e);
@@ -1416,6 +1416,7 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
                     hb_config.active_hours_end.as_deref(),
                     hb_config.active_days.as_deref(),
                     Some(hb_config.enabled),
+                    Some(hb_config.impulse_evolver),
                 ) {
                     log::warn!("Failed to restore heartbeat config: {}", e);
                 }
@@ -2052,14 +2053,14 @@ async fn preview_cloud_keys(state: web::Data<AppState>, req: HttpRequest) -> imp
             .collect();
 
         // Count only non-trunk nodes to match restore behavior
-        let non_trunk_node_count = backup_data.mind_map_nodes.iter().filter(|n| !n.is_trunk).count();
+        let non_trunk_node_count = backup_data.impulse_map_nodes.iter().filter(|n| !n.is_trunk).count();
 
         return HttpResponse::Ok().json(PreviewKeysResponse {
             success: true,
             key_count: previews.len(),
             keys: previews,
             node_count: Some(non_trunk_node_count),
-            connection_count: Some(backup_data.mind_map_connections.len()),
+            connection_count: Some(backup_data.impulse_map_connections.len()),
             cron_job_count: Some(backup_data.cron_jobs.len()),
             channel_count: Some(backup_data.channels.len()),
             channel_setting_count: Some(backup_data.channel_settings.len()),

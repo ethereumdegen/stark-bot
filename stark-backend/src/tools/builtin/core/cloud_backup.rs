@@ -31,7 +31,7 @@ impl CloudBackupTool {
         CloudBackupTool {
             definition: ToolDefinition {
                 name: "cloud_backup".to_string(),
-                description: "Trigger a cloud backup of all bot data (API keys, settings, channels, skills, mind map, etc.) or check the last backup status. Data is encrypted with ECIES before upload.".to_string(),
+                description: "Trigger a cloud backup of all bot data (API keys, settings, channels, skills, impulse map, etc.) or check the last backup status. Data is encrypted with ECIES before upload.".to_string(),
                 input_schema: ToolInputSchema {
                     schema_type: "object".to_string(),
                     properties,
@@ -123,7 +123,7 @@ impl Tool for CloudBackupTool {
                 let item_count = backup.item_count();
                 let key_count = backup.api_keys.len();
                 let node_count = backup
-                    .mind_map_nodes
+                    .impulse_map_nodes
                     .iter()
                     .filter(|n| !n.is_trunk)
                     .count();

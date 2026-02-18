@@ -150,7 +150,7 @@ export default function Dashboard() {
           </li>
           <li className="flex items-start gap-2">
             <span className="text-stark-400 mt-1">•</span>
-            <span>To setup automation, configure a heartbeat and the mindmap or set up scheduled cron jobs</span>
+            <span>To setup automation, configure a heartbeat and the impulse map or set up scheduled cron jobs</span>
           </li>
         </ul>
       </div>

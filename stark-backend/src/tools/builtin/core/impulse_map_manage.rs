@@ -1,6 +1,6 @@
-//! Mindmap management tool
+//! Impulse Map management tool
 //!
-//! Allows the agent to manage the mind map:
+//! Allows the agent to manage the impulse map:
 //! - list: Show all nodes
 //! - get: Get a specific node
 //! - create: Add a new node (optionally connected to a parent)
@@ -9,7 +9,7 @@
 //! - connect: Create a connection between two nodes
 //! - disconnect: Remove a connection between two nodes
 
-use crate::db::tables::mind_nodes::{CreateMindNodeRequest, UpdateMindNodeRequest};
+use crate::db::tables::impulse_nodes::{CreateImpulseNodeRequest, UpdateImpulseNodeRequest};
 use crate::tools::registry::Tool;
 use crate::tools::types::{
     PropertySchema, ToolContext, ToolDefinition, ToolGroup, ToolInputSchema, ToolResult,
@@ -19,11 +19,11 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-pub struct MindmapManageTool {
+pub struct ImpulseMapManageTool {
     definition: ToolDefinition,
 }
 
-impl MindmapManageTool {
+impl ImpulseMapManageTool {
     pub fn new() -> Self {
         let mut properties = HashMap::new();
 
@@ -90,10 +90,10 @@ impl MindmapManageTool {
             },
         );
 
-        MindmapManageTool {
+        ImpulseMapManageTool {
             definition: ToolDefinition {
-                name: "mindmap_manage".to_string(),
-                description: "Manage the mind map: list nodes, create/edit/delete nodes, and connect or disconnect them. The mindmap is a knowledge graph of ideas, topics, and goals that the heartbeat system uses for automated reflection.".to_string(),
+                name: "impulse_map_manage".to_string(),
+                description: "Manage the impulse map: list nodes, create/edit/delete nodes, and connect or disconnect them. The impulse_map is a knowledge graph of ideas, topics, and goals that the heartbeat system uses for automated reflection.".to_string(),
                 input_schema: ToolInputSchema {
                     schema_type: "object".to_string(),
                     properties,
@@ -106,14 +106,14 @@ impl MindmapManageTool {
     }
 }
 
-impl Default for MindmapManageTool {
+impl Default for ImpulseMapManageTool {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[derive(Debug, Deserialize)]
-struct MindmapParams {
+struct ImpulseMapParams {
     action: String,
     node_id: Option<i64>,
     body: Option<String>,
@@ -121,7 +121,7 @@ struct MindmapParams {
     child_id: Option<i64>,
 }
 
-fn format_node(node: &crate::db::tables::mind_nodes::MindNode) -> String {
+fn format_node(node: &crate::db::tables::impulse_nodes::ImpulseNode) -> String {
     let trunk_label = if node.is_trunk { " [TRUNK]" } else { "" };
     let body_preview = if node.body.is_empty() {
         "(empty)".to_string()
@@ -134,7 +134,7 @@ fn format_node(node: &crate::db::tables::mind_nodes::MindNode) -> String {
     format!("#{}{} — {}", node.id, trunk_label, body_preview)
 }
 
-fn format_node_detail(node: &crate::db::tables::mind_nodes::MindNode) -> String {
+fn format_node_detail(node: &crate::db::tables::impulse_nodes::ImpulseNode) -> String {
     let trunk_label = if node.is_trunk { " [TRUNK]" } else { "" };
     format!(
         "Node #{}{}\n  Body: {}\n  Created: {}\n  Updated: {}",
@@ -147,13 +147,13 @@ fn format_node_detail(node: &crate::db::tables::mind_nodes::MindNode) -> String 
 }
 
 #[async_trait]
-impl Tool for MindmapManageTool {
+impl Tool for ImpulseMapManageTool {
     fn definition(&self) -> ToolDefinition {
         self.definition.clone()
     }
 
     async fn execute(&self, params: Value, context: &ToolContext) -> ToolResult {
-        let params: MindmapParams = match serde_json::from_value(params) {
+        let params: ImpulseMapParams = match serde_json::from_value(params) {
             Ok(p) => p,
             Err(e) => return ToolResult::error(format!("Invalid parameters: {}", e)),
         };
@@ -165,13 +165,13 @@ impl Tool for MindmapManageTool {
 
         match params.action.as_str() {
             "list" => {
-                match db.get_mind_graph() {
+                match db.get_impulse_graph() {
                     Ok(graph) => {
                         if graph.nodes.is_empty() {
-                            return ToolResult::success("Mind map is empty. The trunk node will be created automatically.");
+                            return ToolResult::success("Impulse map is empty. The trunk node will be created automatically.");
                         }
 
-                        let mut output = format!("Mind Map — {} nodes, {} connections\n\n", graph.nodes.len(), graph.connections.len());
+                        let mut output = format!("Impulse Map — {} nodes, {} connections\n\n", graph.nodes.len(), graph.connections.len());
 
                         for node in &graph.nodes {
                             output.push_str(&format!("{}\n", format_node(node)));
@@ -200,12 +200,12 @@ impl Tool for MindmapManageTool {
                     None => return ToolResult::error("'node_id' is required for 'get' action"),
                 };
 
-                match db.get_mind_node(node_id) {
+                match db.get_impulse_node(node_id) {
                     Ok(Some(node)) => {
                         let mut output = format_node_detail(&node);
 
                         // Also show neighbors
-                        if let Ok(neighbors) = db.get_mind_node_neighbors(node_id) {
+                        if let Ok(neighbors) = db.get_impulse_node_neighbors(node_id) {
                             if !neighbors.is_empty() {
                                 output.push_str(&format!("\n  Neighbors ({}):", neighbors.len()));
                                 for n in &neighbors {
@@ -224,14 +224,14 @@ impl Tool for MindmapManageTool {
             "create" => {
                 let body = params.body.unwrap_or_default();
 
-                let request = CreateMindNodeRequest {
+                let request = CreateImpulseNodeRequest {
                     body: Some(body.clone()),
                     position_x: None,
                     position_y: None,
                     parent_id: params.parent_id,
                 };
 
-                match db.create_mind_node(&request) {
+                match db.create_impulse_node(&request) {
                     Ok(node) => {
                         let parent_msg = params.parent_id
                             .map(|pid| format!(" (connected to parent #{})", pid))
@@ -255,13 +255,13 @@ impl Tool for MindmapManageTool {
                     None => return ToolResult::error("'node_id' is required for 'update' action"),
                 };
 
-                let request = UpdateMindNodeRequest {
+                let request = UpdateImpulseNodeRequest {
                     body: params.body.clone(),
                     position_x: None,
                     position_y: None,
                 };
 
-                match db.update_mind_node(node_id, &request) {
+                match db.update_impulse_node(node_id, &request) {
                     Ok(Some(node)) => {
                         ToolResult::success(format!("Updated node:\n{}", format_node_detail(&node)))
                     }
@@ -276,7 +276,7 @@ impl Tool for MindmapManageTool {
                     None => return ToolResult::error("'node_id' is required for 'delete' action"),
                 };
 
-                match db.delete_mind_node(node_id) {
+                match db.delete_impulse_node(node_id) {
                     Ok(true) => ToolResult::success(format!("Deleted node #{}", node_id)),
                     Ok(false) => ToolResult::error("Cannot delete trunk node, or node not found"),
                     Err(e) => ToolResult::error(format!("Database error: {}", e)),
@@ -293,7 +293,7 @@ impl Tool for MindmapManageTool {
                     None => return ToolResult::error("'child_id' is required for 'connect' action"),
                 };
 
-                match db.create_mind_node_connection(parent_id, child_id) {
+                match db.create_impulse_node_connection(parent_id, child_id) {
                     Ok(conn) => ToolResult::success(format!(
                         "Connected #{} → #{} (connection #{})", conn.parent_id, conn.child_id, conn.id
                     )),
@@ -311,7 +311,7 @@ impl Tool for MindmapManageTool {
                     None => return ToolResult::error("'child_id' is required for 'disconnect' action"),
                 };
 
-                match db.delete_mind_node_connection(parent_id, child_id) {
+                match db.delete_impulse_node_connection(parent_id, child_id) {
                     Ok(true) => ToolResult::success(format!("Disconnected #{} → #{}", parent_id, child_id)),
                     Ok(false) => ToolResult::error("Connection not found"),
                     Err(e) => ToolResult::error(format!("Database error: {}", e)),
@@ -332,9 +332,9 @@ mod tests {
 
     #[test]
     fn test_tool_definition() {
-        let tool = MindmapManageTool::new();
+        let tool = ImpulseMapManageTool::new();
         let def = tool.definition();
-        assert_eq!(def.name, "mindmap_manage");
+        assert_eq!(def.name, "impulse_map_manage");
         assert_eq!(def.group, ToolGroup::System);
         assert!(def.input_schema.required.contains(&"action".to_string()));
     }

@@ -208,6 +208,7 @@ impl TestHarness {
             session_mode: None,
             selected_network: None,
             force_safe_mode,
+            preferred_subtype: None,
         }
     }
 
@@ -902,6 +903,7 @@ async fn swap_flow_realistic() {
         session_mode: None,
         selected_network: None,
         force_safe_mode: false,
+        preferred_subtype: None,
     };
 
     eprintln!("  Dispatching: \"{}\"", msg.text);

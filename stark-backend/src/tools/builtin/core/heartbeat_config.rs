@@ -117,10 +117,21 @@ impl HeartbeatConfigTool {
             },
         );
 
+        properties.insert(
+            "impulse_evolver".to_string(),
+            PropertySchema {
+                schema_type: "boolean".to_string(),
+                description: "Enable/disable the impulse evolver — automatically evolves impulse map nodes after each heartbeat (for 'update' action)".to_string(),
+                default: None,
+                items: None,
+                enum_values: None,
+            },
+        );
+
         HeartbeatConfigTool {
             definition: ToolDefinition {
                 name: "heartbeat_config".to_string(),
-                description: "Manage heartbeat settings: list configs, view details, update interval/schedule, enable or disable. The heartbeat system periodically wakes the agent to reflect on the mindmap.".to_string(),
+                description: "Manage heartbeat settings: list configs, view details, update interval/schedule/impulse_evolver, enable or disable. The heartbeat system periodically wakes the agent to reflect on the impulse_map. The impulse_evolver sub-system automatically evolves map nodes after each heartbeat.".to_string(),
                 input_schema: ToolInputSchema {
                     schema_type: "object".to_string(),
                     properties,
@@ -149,6 +160,7 @@ struct HeartbeatConfigParams {
     active_hours_start: Option<String>,
     active_hours_end: Option<String>,
     active_days: Option<String>,
+    impulse_evolver: Option<bool>,
 }
 
 fn format_config(config: &crate::models::HeartbeatConfig) -> String {
@@ -182,8 +194,10 @@ fn format_config(config: &crate::models::HeartbeatConfig) -> String {
         out.push_str(&format!("\n  Next beat: {}", next));
     }
 
-    if let Some(ref node_id) = config.current_mind_node_id {
-        out.push_str(&format!("\n  Current mind node: #{}", node_id));
+    out.push_str(&format!("\n  Impulse Evolver: {}", if config.impulse_evolver { "ON" } else { "OFF" }));
+
+    if let Some(ref node_id) = config.current_impulse_node_id {
+        out.push_str(&format!("\n  Current impulse node: #{}", node_id));
     }
 
     out
@@ -252,6 +266,7 @@ impl Tool for HeartbeatConfigTool {
                     params.active_hours_end.as_deref(),
                     params.active_days.as_deref(),
                     None, // don't change enabled via update — use enable/disable actions
+                    params.impulse_evolver,
                 ) {
                     Ok(config) => ToolResult::success(format!("Updated heartbeat config:\n\n{}", format_config(&config))),
                     Err(e) => ToolResult::error(format!("Database error: {}", e)),
@@ -270,7 +285,7 @@ impl Tool for HeartbeatConfigTool {
                     }
                 };
 
-                match db.update_heartbeat_config(config_id, None, None, None, None, None, Some(true)) {
+                match db.update_heartbeat_config(config_id, None, None, None, None, None, Some(true), None) {
                     Ok(config) => ToolResult::success(format!("Heartbeat ENABLED:\n\n{}", format_config(&config))),
                     Err(e) => ToolResult::error(format!("Database error: {}", e)),
                 }
@@ -287,7 +302,7 @@ impl Tool for HeartbeatConfigTool {
                     }
                 };
 
-                match db.update_heartbeat_config(config_id, None, None, None, None, None, Some(false)) {
+                match db.update_heartbeat_config(config_id, None, None, None, None, None, Some(false), None) {
                     Ok(config) => ToolResult::success(format!("Heartbeat DISABLED:\n\n{}", format_config(&config))),
                     Err(e) => ToolResult::error(format!("Database error: {}", e)),
                 }

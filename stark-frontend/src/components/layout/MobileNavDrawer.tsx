@@ -95,7 +95,7 @@ export default function MobileNavDrawer({ isOpen, onClose }: MobileNavDrawerProp
     { to: '/agent-chat', icon: MessageSquare, label: 'Agent Chat' },
     { to: '/workstream', icon: Columns, label: 'Workstream' },
     { to: '/heartbeat', icon: Heart, label: 'Heartbeat' },
-    { to: '/mindmap', icon: Network, label: 'Mind Map' },
+    { to: '/impulse-map', icon: Network, label: 'Impulse Map' },
   ];
 
   const configItems = [
@@ -114,7 +114,7 @@ export default function MobileNavDrawer({ isOpen, onClose }: MobileNavDrawerProp
     { to: '/files', icon: FolderOpen, label: 'Workspace Files' },
     { to: '/crypto-transactions', icon: Wallet, label: 'Crypto Transactions' },
     { to: '/system-files', icon: Sparkles, label: 'System Files' },
-    { to: '/journal', icon: BookOpen, label: 'Journal' },
+    { to: '/notes', icon: BookOpen, label: 'Notes' },
   ];
 
   const devItems = [

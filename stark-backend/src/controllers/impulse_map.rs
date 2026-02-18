@@ -1,7 +1,7 @@
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use serde::Deserialize;
 
-use crate::db::tables::mind_nodes::{CreateMindNodeRequest, UpdateMindNodeRequest};
+use crate::db::tables::impulse_nodes::{CreateImpulseNodeRequest, UpdateImpulseNodeRequest};
 use crate::AppState;
 
 /// Validate session token from request
@@ -38,7 +38,7 @@ fn validate_session_from_request(
     }
 }
 
-/// Get the full mind map graph (nodes + connections)
+/// Get the full impulse map graph (nodes + connections)
 async fn get_graph(
     data: web::Data<AppState>,
     req: HttpRequest,
@@ -47,10 +47,10 @@ async fn get_graph(
         return resp;
     }
 
-    match data.db.get_mind_graph() {
+    match data.db.get_impulse_graph() {
         Ok(graph) => HttpResponse::Ok().json(graph),
         Err(e) => {
-            log::error!("Failed to get mind graph: {}", e);
+            log::error!("Failed to get impulse graph: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": format!("Database error: {}", e)
             }))
@@ -58,7 +58,7 @@ async fn get_graph(
     }
 }
 
-/// Get the full mind map graph for guest users (no auth required, feature flag controlled)
+/// Get the full impulse map graph for guest users (no auth required, feature flag controlled)
 async fn get_graph_guest(data: web::Data<AppState>) -> impl Responder {
     let guest_enabled = data.db.get_bot_settings().map(|s| s.guest_dashboard_enabled).unwrap_or(false);
     if !guest_enabled {
@@ -67,10 +67,10 @@ async fn get_graph_guest(data: web::Data<AppState>) -> impl Responder {
         }));
     }
 
-    match data.db.get_mind_graph() {
+    match data.db.get_impulse_graph() {
         Ok(graph) => HttpResponse::Ok().json(graph),
         Err(e) => {
-            log::error!("Failed to get mind graph for guest: {}", e);
+            log::error!("Failed to get impulse graph for guest: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": format!("Database error: {}", e)
             }))
@@ -87,10 +87,10 @@ async fn list_nodes(
         return resp;
     }
 
-    match data.db.list_mind_nodes() {
+    match data.db.list_impulse_nodes() {
         Ok(nodes) => HttpResponse::Ok().json(nodes),
         Err(e) => {
-            log::error!("Failed to list mind nodes: {}", e);
+            log::error!("Failed to list impulse nodes: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": format!("Database error: {}", e)
             }))
@@ -102,16 +102,16 @@ async fn list_nodes(
 async fn create_node(
     data: web::Data<AppState>,
     req: HttpRequest,
-    body: web::Json<CreateMindNodeRequest>,
+    body: web::Json<CreateImpulseNodeRequest>,
 ) -> impl Responder {
     if let Err(resp) = validate_session_from_request(&data, &req) {
         return resp;
     }
 
-    match data.db.create_mind_node(&body.into_inner()) {
+    match data.db.create_impulse_node(&body.into_inner()) {
         Ok(node) => HttpResponse::Created().json(node),
         Err(e) => {
-            log::error!("Failed to create mind node: {}", e);
+            log::error!("Failed to create impulse node: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": format!("Database error: {}", e)
             }))
@@ -131,13 +131,13 @@ async fn get_node(
 
     let node_id = path.into_inner();
 
-    match data.db.get_mind_node(node_id) {
+    match data.db.get_impulse_node(node_id) {
         Ok(Some(node)) => HttpResponse::Ok().json(node),
         Ok(None) => HttpResponse::NotFound().json(serde_json::json!({
             "error": "Node not found"
         })),
         Err(e) => {
-            log::error!("Failed to get mind node: {}", e);
+            log::error!("Failed to get impulse node: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": format!("Database error: {}", e)
             }))
@@ -150,7 +150,7 @@ async fn update_node(
     data: web::Data<AppState>,
     req: HttpRequest,
     path: web::Path<i64>,
-    body: web::Json<UpdateMindNodeRequest>,
+    body: web::Json<UpdateImpulseNodeRequest>,
 ) -> impl Responder {
     if let Err(resp) = validate_session_from_request(&data, &req) {
         return resp;
@@ -158,13 +158,13 @@ async fn update_node(
 
     let node_id = path.into_inner();
 
-    match data.db.update_mind_node(node_id, &body.into_inner()) {
+    match data.db.update_impulse_node(node_id, &body.into_inner()) {
         Ok(Some(node)) => HttpResponse::Ok().json(node),
         Ok(None) => HttpResponse::NotFound().json(serde_json::json!({
             "error": "Node not found"
         })),
         Err(e) => {
-            log::error!("Failed to update mind node: {}", e);
+            log::error!("Failed to update impulse node: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": format!("Database error: {}", e)
             }))
@@ -184,7 +184,7 @@ async fn delete_node(
 
     let node_id = path.into_inner();
 
-    match data.db.delete_mind_node(node_id) {
+    match data.db.delete_impulse_node(node_id) {
         Ok(true) => HttpResponse::Ok().json(serde_json::json!({
             "success": true,
             "message": "Node deleted"
@@ -193,7 +193,7 @@ async fn delete_node(
             "error": "Cannot delete trunk node or node not found"
         })),
         Err(e) => {
-            log::error!("Failed to delete mind node: {}", e);
+            log::error!("Failed to delete impulse node: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": format!("Database error: {}", e)
             }))
@@ -210,10 +210,10 @@ async fn list_connections(
         return resp;
     }
 
-    match data.db.list_mind_node_connections() {
+    match data.db.list_impulse_node_connections() {
         Ok(connections) => HttpResponse::Ok().json(connections),
         Err(e) => {
-            log::error!("Failed to list mind node connections: {}", e);
+            log::error!("Failed to list impulse node connections: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": format!("Database error: {}", e)
             }))
@@ -237,10 +237,10 @@ async fn create_connection(
         return resp;
     }
 
-    match data.db.create_mind_node_connection(body.parent_id, body.child_id) {
+    match data.db.create_impulse_node_connection(body.parent_id, body.child_id) {
         Ok(connection) => HttpResponse::Created().json(connection),
         Err(e) => {
-            log::error!("Failed to create mind node connection: {}", e);
+            log::error!("Failed to create impulse node connection: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": format!("Database error: {}", e)
             }))
@@ -260,7 +260,7 @@ async fn delete_connection(
 
     let (parent_id, child_id) = path.into_inner();
 
-    match data.db.delete_mind_node_connection(parent_id, child_id) {
+    match data.db.delete_impulse_node_connection(parent_id, child_id) {
         Ok(true) => HttpResponse::Ok().json(serde_json::json!({
             "success": true,
             "message": "Connection deleted"
@@ -269,7 +269,7 @@ async fn delete_connection(
             "error": "Connection not found"
         })),
         Err(e) => {
-            log::error!("Failed to delete mind node connection: {}", e);
+            log::error!("Failed to delete impulse node connection: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": format!("Database error: {}", e)
             }))
@@ -281,12 +281,12 @@ async fn delete_connection(
 #[derive(serde::Serialize)]
 struct HeartbeatSessionInfo {
     id: i64,
-    mind_node_id: Option<i64>,
+    impulse_node_id: Option<i64>,
     created_at: String,
     message_count: i64,
 }
 
-/// List recent heartbeat sessions with their associated mind nodes
+/// List recent heartbeat sessions with their associated impulse nodes
 async fn list_heartbeat_sessions(
     data: web::Data<AppState>,
     req: HttpRequest,
@@ -303,7 +303,7 @@ async fn list_heartbeat_sessions(
                     let message_count = data.db.count_session_messages(session.id).unwrap_or(0);
                     HeartbeatSessionInfo {
                         id: session.id,
-                        mind_node_id: node_id,
+                        impulse_node_id: node_id,
                         created_at: session.created_at.to_rfc3339(),
                         message_count,
                     }
@@ -322,7 +322,7 @@ async fn list_heartbeat_sessions(
 
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(
-        web::scope("/api/mindmap")
+        web::scope("/api/impulse-map")
             .route("/graph", web::get().to(get_graph))
             .route("/graph/guest", web::get().to(get_graph_guest))
             .route("/nodes", web::get().to(list_nodes))

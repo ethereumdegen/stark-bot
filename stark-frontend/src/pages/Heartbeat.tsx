@@ -210,6 +210,7 @@ function HeartbeatSection({ config, setConfig, setMessage }: HeartbeatSectionPro
     active_hours_end: config?.active_hours_end || '17:00',
     active_days: config?.active_days || 'mon,tue,wed,thu,fri',
     enabled: config?.enabled || false,
+    impulse_evolver: config?.impulse_evolver ?? true,
   });
 
   useEffect(() => {
@@ -223,6 +224,7 @@ function HeartbeatSection({ config, setConfig, setMessage }: HeartbeatSectionPro
         active_hours_end: config.active_hours_end || '17:00',
         active_days: config.active_days || 'mon,tue,wed,thu,fri',
         enabled: config.enabled,
+        impulse_evolver: config.impulse_evolver ?? true,
       });
     }
   }, [config]);
@@ -416,6 +418,27 @@ function HeartbeatSection({ config, setConfig, setMessage }: HeartbeatSectionPro
             </div>
           </div>
 
+          {/* Impulse Evolver Toggle */}
+          <div className="flex items-center justify-between bg-slate-800/50 rounded-lg p-4">
+            <div>
+              <p className="text-sm font-medium text-slate-200">Impulse Evolver</p>
+              <p className="text-xs text-slate-400">Automatically evolve impulse map nodes based on goals and memories</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setFormData({ ...formData, impulse_evolver: !formData.impulse_evolver })}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                formData.impulse_evolver ? 'bg-stark-500' : 'bg-slate-600'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  formData.impulse_evolver ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
           <div className="flex justify-between items-center">
             <div className="flex gap-2">
               <Button type="submit" isLoading={isSaving} className="w-fit">
@@ -437,10 +460,10 @@ function HeartbeatSection({ config, setConfig, setMessage }: HeartbeatSectionPro
               type="button"
               variant="secondary"
               className="w-fit"
-              onClick={() => navigate('/mindmap')}
+              onClick={() => navigate('/impulse-map')}
             >
               <Network className="w-4 h-4 mr-2" />
-              Edit Mindmap
+              Edit Impulse Map
             </Button>
           </div>
         </form>

@@ -5,6 +5,7 @@ use crate::disk_quota::DiskQuotaManager;
 use crate::execution::ProcessManager;
 use crate::gateway::events::EventBroadcaster;
 use crate::gateway::protocol::GatewayEvent;
+use crate::notes::NoteStore;
 use crate::qmd_memory::MemoryStore;
 use crate::skills::SkillRegistry;
 use crate::tools::register::RegisterStore;
@@ -407,6 +408,8 @@ pub struct ToolContext {
     pub selected_network: Option<String>,
     /// QMD Memory store for markdown-based memory system
     pub memory_store: Option<Arc<MemoryStore>>,
+    /// Notes store for Obsidian-compatible notes with FTS5
+    pub notes_store: Option<Arc<NoteStore>>,
     /// Wallet provider for signing transactions (Standard or Flash mode)
     pub wallet_provider: Option<Arc<dyn WalletProvider>>,
     /// Platform-specific chat/conversation ID (e.g., Telegram chat_id)
@@ -447,6 +450,7 @@ impl std::fmt::Debug for ToolContext {
             .field("tx_queue", &self.tx_queue.is_some())
             .field("selected_network", &self.selected_network)
             .field("memory_store", &self.memory_store.is_some())
+            .field("notes_store", &self.notes_store.is_some())
             .field("wallet_provider", &self.wallet_provider.is_some())
             .field("platform_chat_id", &self.platform_chat_id)
             .field("api_keys", &self.api_keys.read().ok().map(|m| m.len()))
@@ -480,6 +484,7 @@ impl Default for ToolContext {
             tx_queue: None,
             selected_network: None,
             memory_store: None,
+            notes_store: None,
             wallet_provider: None,
             platform_chat_id: None,
             api_keys: Arc::new(RwLock::new(HashMap::new())),
@@ -689,6 +694,12 @@ impl ToolContext {
     /// Add a MemoryStore to the context (for QMD memory tools)
     pub fn with_memory_store(mut self, store: Arc<MemoryStore>) -> Self {
         self.memory_store = Some(store);
+        self
+    }
+
+    /// Add a NoteStore to the context (for notes tools)
+    pub fn with_notes_store(mut self, store: Arc<NoteStore>) -> Self {
+        self.notes_store = Some(store);
         self
     }
 

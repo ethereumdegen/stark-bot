@@ -18,7 +18,7 @@ save this plan to  SUPER_ROUTER_REGISTER_UPGRADE.md in the root for now
 3. superbridge skill 
 
 - load balancer for kimi endpoint nd check ti 
-- visual mind map for impetus  in heartbeat mode 
+- visual impulse map for impetus  in heartbeat mode 
 
 
 - gog skill

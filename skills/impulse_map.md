@@ -1,67 +1,67 @@
 ---
-name: mindmap
-description: "Manage the mind map — list nodes, add new ideas, edit or remove existing ones, and connect related concepts."
+name: impulse_map
+description: "Manage the impulse map — list nodes, add new ideas, edit or remove existing ones, and connect related concepts."
 version: 1.0.0
 author: starkbot
 metadata: {"clawdbot":{"emoji":"🧠"}}
-requires_tools: [mindmap_manage]
-tags: [general, mindmap, ideas, planning, secretary, productivity]
+requires_tools: [impulse_map_manage]
+tags: [general, impulse_map, ideas, planning, secretary, productivity]
 ---
 
-# Mind Map Management
+# Impulse Map Management
 
-The **mind map** is a knowledge graph where you organize thoughts, ideas, projects, and goals. It has a root node called the **trunk** that always exists and cannot be deleted.
+The **impulse map** is a knowledge graph where you organize thoughts, ideas, projects, and goals. It has a root node called the **trunk** that always exists and cannot be deleted.
 
-Use the `mindmap_manage` tool to manage nodes and connections.
+Use the `impulse_map_manage` tool to manage nodes and connections.
 
 ## Quick Actions
 
 ### List all nodes and connections
-```tool:mindmap_manage
+```tool:impulse_map_manage
 action: list
 ```
 
 ### View a specific node and its neighbors
-```tool:mindmap_manage
+```tool:impulse_map_manage
 action: get
 node_id: <id>
 ```
 
 ### Add a new node connected to the trunk (or another parent)
-```tool:mindmap_manage
+```tool:impulse_map_manage
 action: create
 body: "My new idea or topic"
 parent_id: 1
 ```
 
 ### Edit a node's content
-```tool:mindmap_manage
+```tool:impulse_map_manage
 action: update
 node_id: <id>
 body: "Updated content here"
 ```
 
 ### Remove a node
-```tool:mindmap_manage
+```tool:impulse_map_manage
 action: delete
 node_id: <id>
 ```
 
 ### Connect two existing nodes
-```tool:mindmap_manage
+```tool:impulse_map_manage
 action: connect
 parent_id: <parent_node_id>
 child_id: <child_node_id>
 ```
 
 ### Disconnect two nodes
-```tool:mindmap_manage
+```tool:impulse_map_manage
 action: disconnect
 parent_id: <parent_node_id>
 child_id: <child_node_id>
 ```
 
-## How the Mind Map Works
+## How the Impulse Map Works
 
 - The **trunk** (root node, usually #1) is the center of the graph and cannot be deleted
 - Nodes represent topics, projects, ideas, goals, or any concept worth tracking

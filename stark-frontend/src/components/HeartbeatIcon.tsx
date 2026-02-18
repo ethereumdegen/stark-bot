@@ -9,7 +9,7 @@ interface HeartbeatIconProps {
 
 /**
  * Heart icon that animates when heartbeat events occur.
- * Shared between sidebar and mindmap header.
+ * Shared between sidebar and impulse_map header.
  */
 export default function HeartbeatIcon({ enabled, size = 16, className = '' }: HeartbeatIconProps) {
   const { isPulsing } = useHeartbeatPulse();

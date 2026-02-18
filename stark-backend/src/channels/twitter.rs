@@ -1025,6 +1025,7 @@ async fn process_mention(
         session_mode: None,
         selected_network: None,
         force_safe_mode,
+        preferred_subtype: None,
     };
 
     // Subscribe to events to capture say_to_user messages.

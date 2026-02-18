@@ -19,7 +19,7 @@ export default function Skills() {
     'Finance': ['crypto', 'defi', 'finance', 'trading', 'swap', 'transfer', 'wallet', 'yield', 'lending', 'bridge', 'payments'],
     'Code': ['development', 'git', 'code', 'debugging', 'testing', 'deployment', 'ci-cd', 'devops', 'infrastructure'],
     'Social': ['social', 'messaging', 'twitter', 'discord', 'telegram', 'communication', 'social-media'],
-    'Secretary': ['journal', 'secretary', 'productivity', 'notes', 'scheduling', 'cron', 'automation'],
+    'Secretary': ['secretary', 'productivity', 'notes', 'scheduling', 'cron', 'automation'],
   };
 
   const filteredSkills = useMemo(() => {

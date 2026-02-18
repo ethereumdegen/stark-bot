@@ -11,7 +11,8 @@ pub mod env_vars {
     pub const DATABASE_URL: &str = "DATABASE_URL";
     pub const WORKSPACE_DIR: &str = "STARK_WORKSPACE_DIR";
     pub const SKILLS_DIR: &str = "STARK_SKILLS_DIR";
-    pub const JOURNAL_DIR: &str = "STARK_JOURNAL_DIR";
+    pub const NOTES_DIR: &str = "STARK_NOTES_DIR";
+    pub const NOTES_REINDEX_INTERVAL_SECS: &str = "STARK_NOTES_REINDEX_INTERVAL_SECS";
     pub const SOUL_DIR: &str = "STARK_SOUL_DIR";
     // Disk quota (0 = disabled)
     pub const DISK_QUOTA_MB: &str = "STARK_DISK_QUOTA_MB";
@@ -30,7 +31,7 @@ pub mod defaults {
     pub const DATABASE_URL: &str = "./.db/stark.db";
     pub const WORKSPACE_DIR: &str = "workspace";
     pub const SKILLS_DIR: &str = "skills";
-    pub const JOURNAL_DIR: &str = "journal";
+    pub const NOTES_DIR: &str = "notes";
     pub const SOUL_DIR: &str = "soul";
     pub const MEMORY_DIR: &str = "memory";
     pub const DISK_QUOTA_MB: u64 = 1024;
@@ -74,9 +75,9 @@ pub fn skills_dir() -> String {
     resolve_dir(env_vars::SKILLS_DIR, defaults::SKILLS_DIR)
 }
 
-/// Get the journal directory from environment or default
-pub fn journal_dir() -> String {
-    resolve_backend_dir(env_vars::JOURNAL_DIR, defaults::JOURNAL_DIR)
+/// Get the notes directory from environment or default
+pub fn notes_dir() -> String {
+    resolve_backend_dir(env_vars::NOTES_DIR, defaults::NOTES_DIR)
 }
 
 /// Get the soul directory from environment or default
@@ -205,6 +206,46 @@ pub fn memory_config() -> MemoryConfig {
     MemoryConfig::from_env()
 }
 
+/// Configuration for Notes system (Obsidian-compatible markdown notes with FTS5)
+#[derive(Clone, Debug)]
+pub struct NotesConfig {
+    /// Directory for notes markdown files (default: ./notes)
+    pub notes_dir: String,
+    /// Reindex interval in seconds (default: 300 = 5 minutes)
+    pub reindex_interval_secs: u64,
+}
+
+impl Default for NotesConfig {
+    fn default() -> Self {
+        Self {
+            notes_dir: resolve_backend_dir(env_vars::NOTES_DIR, defaults::NOTES_DIR),
+            reindex_interval_secs: 300,
+        }
+    }
+}
+
+impl NotesConfig {
+    pub fn from_env() -> Self {
+        Self {
+            notes_dir: resolve_backend_dir(env_vars::NOTES_DIR, defaults::NOTES_DIR),
+            reindex_interval_secs: std::env::var(env_vars::NOTES_REINDEX_INTERVAL_SECS)
+                .unwrap_or_else(|_| "300".to_string())
+                .parse()
+                .unwrap_or(300),
+        }
+    }
+
+    /// Get the path to the notes FTS database
+    pub fn notes_db_path(&self) -> String {
+        format!("{}/.notes.db", self.notes_dir)
+    }
+}
+
+/// Get the notes configuration
+pub fn notes_config() -> NotesConfig {
+    NotesConfig::from_env()
+}
+
 /// Get the path to SOUL.md in the soul directory
 pub fn soul_document_path() -> PathBuf {
     PathBuf::from(soul_dir()).join("SOUL.md")
@@ -237,7 +278,7 @@ fn find_original_guidelines() -> Option<PathBuf> {
     if path.exists() { Some(path) } else { None }
 }
 
-/// Initialize the workspace, journal, and soul directories
+/// Initialize the workspace, notes, and soul directories
 /// This should be called at startup before any agent processing begins
 /// SOUL.md is copied from the original to the soul directory only if it doesn't exist,
 /// preserving agent modifications and user edits across restarts
@@ -248,10 +289,10 @@ pub fn initialize_workspace() -> std::io::Result<()> {
     // Create workspace directory if it doesn't exist
     std::fs::create_dir_all(workspace_path)?;
 
-    // Create journal directory if it doesn't exist
-    let journal = journal_dir();
-    let journal_path = Path::new(&journal);
-    std::fs::create_dir_all(journal_path)?;
+    // Create notes directory if it doesn't exist
+    let notes = notes_dir();
+    let notes_path = Path::new(&notes);
+    std::fs::create_dir_all(notes_path)?;
 
     // Create soul directory if it doesn't exist
     let soul = soul_dir();

@@ -22,6 +22,14 @@ pub const HEARTBEAT_CHAT_ID: &str = "heartbeat:global";
 /// Using -999 to avoid collision with real channels and cron job negative IDs
 pub const HEARTBEAT_CHANNEL_ID: i64 = -999;
 
+/// Constants for the impulse evolver sub-system
+pub const EVOLVER_CHANNEL_ID: i64 = -998;
+pub const EVOLVER_CHANNEL_TYPE: &str = "impulse_evolver";
+pub const EVOLVER_USER_ID: &str = "impulse-evolver";
+pub const EVOLVER_USER_NAME: &str = "Impulse Evolver";
+pub const EVOLVER_CHAT_ID: &str = "impulse-evolver:global";
+const EVOLVER_TIMEOUT_SECS: u64 = 120;
+
 /// Scheduler configuration
 #[derive(Debug, Clone)]
 pub struct SchedulerConfig {
@@ -276,6 +284,7 @@ impl Scheduler {
             session_mode: Some("isolated".to_string()),
             selected_network: None,
             force_safe_mode: false,
+            preferred_subtype: None,
         };
 
         // Execute with 10-minute timeout (same as cron default)
@@ -434,6 +443,7 @@ impl Scheduler {
             session_mode: Some(job.session_mode.clone()),
             selected_network: None,
             force_safe_mode: false,
+            preferred_subtype: None,
         };
 
         // Execute the job with timeout
@@ -693,7 +703,7 @@ impl Scheduler {
         true
     }
 
-    /// Execute a heartbeat check - now with mind map meandering
+    /// Execute a heartbeat check - now with impulse map meandering
     async fn execute_heartbeat(&self, config: &HeartbeatConfig) -> Result<(), String> {
         let now = Utc::now();
         let now_str = now.to_rfc3339();
@@ -707,15 +717,15 @@ impl Scheduler {
             log::error!("Failed to update heartbeat next_beat_at: {}", e);
         }
 
-        // === MIND MAP MEANDERING ===
+        // === IMPULSE MAP MEANDERING ===
         // Get the next node to visit (starts at trunk, then meanders)
-        let next_node = self.db.get_next_heartbeat_node(config.current_mind_node_id)
+        let next_node = self.db.get_next_heartbeat_node(config.current_impulse_node_id)
             .map_err(|e| format!("Failed to get next heartbeat node: {}", e))?;
 
-        let node_depth = self.db.get_mind_node_depth(next_node.id).unwrap_or(0);
+        let node_depth = self.db.get_impulse_node_depth(next_node.id).unwrap_or(0);
 
         log::info!(
-            "Heartbeat visiting mind node {} (depth: {}, is_trunk: {}, body_len: {})",
+            "Heartbeat visiting impulse node {} (depth: {}, is_trunk: {}, body_len: {})",
             next_node.id, node_depth, next_node.is_trunk, next_node.body.len()
         );
 
@@ -725,8 +735,8 @@ impl Scheduler {
             serde_json::json!({
                 "config_id": config.id,
                 "channel_id": config.channel_id,
-                "mind_node_id": next_node.id,
-                "mind_node_depth": node_depth,
+                "impulse_node_id": next_node.id,
+                "impulse_node_depth": node_depth,
                 "is_trunk": next_node.is_trunk,
             }),
         ));
@@ -734,7 +744,7 @@ impl Scheduler {
         // === BUILD HEARTBEAT MESSAGE ===
         let node_content = if next_node.body.is_empty() {
             if next_node.is_trunk {
-                "This is the trunk node (root of your mind map). It's currently empty.".to_string()
+                "This is the trunk node (root of your impulse map). It's currently empty.".to_string()
             } else {
                 "This node is currently empty.".to_string()
             }
@@ -743,11 +753,11 @@ impl Scheduler {
         };
 
         let message_text = format!(
-            "[HEARTBEAT - Mind Map Reflection]\n\
+            "[HEARTBEAT - Impulse Map Reflection]\n\
             Current Position: Node #{} (depth: {}{})\n\
             Node Content: {}\n\n\
             Instructions:\n\
-            - Reflect on this node's content in the context of your mind map\n\
+            - Reflect on this node's content in the context of your impulse map\n\
             - Consider connections to other thoughts and ideas\n\
             - If the node is empty, consider what thoughts belong here\n\
             - You may update this node's content or create new connected nodes\n\
@@ -774,6 +784,7 @@ impl Scheduler {
             session_mode: Some("isolated".to_string()), // Isolated to prevent state corruption
             selected_network: None,
             force_safe_mode: false,
+            preferred_subtype: None,
         };
 
         // Execute the heartbeat
@@ -787,13 +798,13 @@ impl Scheduler {
             .flatten()
             .map(|s| s.id);
 
-        // Update heartbeat config with new mind position and session ID
+        // Update heartbeat config with new impulse map position and session ID
         if let Err(e) = self.db.update_heartbeat_mind_position(
             config.id,
             Some(next_node.id),
             new_session_id,
         ) {
-            log::error!("Failed to update heartbeat mind position: {}", e);
+            log::error!("Failed to update heartbeat impulse map position: {}", e);
         }
 
         // Update last_beat_at only (next_beat_at was already set at the start to prevent race conditions)
@@ -812,7 +823,7 @@ impl Scheduler {
             serde_json::json!({
                 "config_id": config.id,
                 "channel_id": config.channel_id,
-                "mind_node_id": next_node.id,
+                "impulse_node_id": next_node.id,
                 "success": result.error.is_none(),
             }),
         ));
@@ -821,6 +832,39 @@ impl Scheduler {
             "Heartbeat completed (config_id: {}, visited node: {})",
             config.id, next_node.id
         );
+
+        // Spawn impulse evolver if enabled — runs as a separate session
+        // with the `impulse_evolver` agent subtype (registered in defaultagents.ron)
+        if config.impulse_evolver {
+            let dispatcher = Arc::clone(&self.dispatcher);
+            tokio::spawn(async move {
+                log::info!("[EVOLVER] Spawning impulse evolver session");
+                let now = Utc::now();
+                let normalized = NormalizedMessage {
+                    channel_id: EVOLVER_CHANNEL_ID,
+                    channel_type: EVOLVER_CHANNEL_TYPE.to_string(),
+                    chat_id: EVOLVER_CHAT_ID.to_string(),
+                    chat_name: None,
+                    user_id: EVOLVER_USER_ID.to_string(),
+                    user_name: EVOLVER_USER_NAME.to_string(),
+                    text: "[Impulse Evolver] Review and evolve the impulse map.".to_string(),
+                    message_id: Some(format!("evolver-{}", now.timestamp())),
+                    session_mode: Some("isolated".to_string()),
+                    selected_network: None,
+                    force_safe_mode: false,
+                    preferred_subtype: Some("impulse_evolver".to_string()),
+                };
+                let result = timeout(
+                    TokioDuration::from_secs(EVOLVER_TIMEOUT_SECS),
+                    dispatcher.dispatch_safe(normalized),
+                ).await;
+                match result {
+                    Ok(r) if r.error.is_some() => log::warn!("[EVOLVER] Failed: {:?}", r.error),
+                    Err(_) => log::warn!("[EVOLVER] Timed out after {}s", EVOLVER_TIMEOUT_SECS),
+                    _ => log::info!("[EVOLVER] Completed successfully"),
+                }
+            });
+        }
 
         Ok(())
     }
@@ -927,7 +971,7 @@ async fn execute_heartbeat_isolated(
     let now_str = now.to_rfc3339();
 
     log::info!("[HEARTBEAT-ISOLATED] Executing heartbeat (config_id: {})", config.id);
-    log::info!("[HEARTBEAT-ISOLATED] current_mind_node_id: {:?}", config.current_mind_node_id);
+    log::info!("[HEARTBEAT-ISOLATED] current_impulse_node_id: {:?}", config.current_impulse_node_id);
 
     // Calculate and set next_beat_at BEFORE execution
     let next_beat = now + Duration::minutes(config.interval_minutes as i64);
@@ -939,7 +983,7 @@ async fn execute_heartbeat_isolated(
 
     // Get the next node to visit
     log::info!("[HEARTBEAT-ISOLATED] Getting next heartbeat node...");
-    let next_node = match db.get_next_heartbeat_node(config.current_mind_node_id) {
+    let next_node = match db.get_next_heartbeat_node(config.current_impulse_node_id) {
         Ok(node) => {
             log::info!("[HEARTBEAT-ISOLATED] Got next node: id={}", node.id);
             node
@@ -951,10 +995,10 @@ async fn execute_heartbeat_isolated(
     };
 
     // Calculate depth using iterative BFS (safe from cycles)
-    let node_depth = db.get_mind_node_depth(next_node.id).unwrap_or(0);
+    let node_depth = db.get_impulse_node_depth(next_node.id).unwrap_or(0);
 
     log::info!(
-        "[HEARTBEAT-ISOLATED] Visiting mind node {} (is_trunk: {})",
+        "[HEARTBEAT-ISOLATED] Visiting impulse node {} (is_trunk: {})",
         next_node.id, next_node.is_trunk
     );
 
@@ -962,7 +1006,7 @@ async fn execute_heartbeat_isolated(
 
     // Update heartbeat config with new position immediately
     if let Err(e) = db.update_heartbeat_mind_position(config.id, Some(next_node.id), None) {
-        log::error!("[HEARTBEAT-ISOLATED] Failed to update mind position: {}", e);
+        log::error!("[HEARTBEAT-ISOLATED] Failed to update impulse map position: {}", e);
     }
 
     // Update last_beat_at only (next_beat_at was already set above)
@@ -976,8 +1020,8 @@ async fn execute_heartbeat_isolated(
         serde_json::json!({
             "config_id": config.id,
             "channel_id": config.channel_id,
-            "mind_node_id": next_node.id,
-            "mind_node_depth": node_depth,
+            "impulse_node_id": next_node.id,
+            "impulse_node_depth": node_depth,
             "is_trunk": next_node.is_trunk,
         }),
     ));
@@ -985,7 +1029,7 @@ async fn execute_heartbeat_isolated(
     // Build heartbeat message
     let node_content = if next_node.body.is_empty() {
         if next_node.is_trunk {
-            "This is the trunk node (root of your mind map). It's currently empty.".to_string()
+            "This is the trunk node (root of your impulse map). It's currently empty.".to_string()
         } else {
             "This node is currently empty.".to_string()
         }
@@ -994,11 +1038,11 @@ async fn execute_heartbeat_isolated(
     };
 
     let message_text = format!(
-        "[HEARTBEAT - Mind Map Reflection]\n\
+        "[HEARTBEAT - Impulse Map Reflection]\n\
         Current Position: Node #{} (depth: {}{})\n\
         Node Content: {}\n\n\
         Instructions:\n\
-        - Reflect on this node's content in the context of your mind map\n\
+        - Reflect on this node's content in the context of your impulse map\n\
         - Consider connections to other thoughts and ideas\n\
         - If the node is empty, consider what thoughts belong here\n\
         - You may update this node's content or create new connected nodes\n\
@@ -1023,6 +1067,7 @@ async fn execute_heartbeat_isolated(
         session_mode: Some("isolated".to_string()),
         selected_network: None,
         force_safe_mode: false,
+        preferred_subtype: None,
     };
 
     // === DEFERRED AI CALL (fire and forget) ===
@@ -1072,7 +1117,7 @@ async fn execute_heartbeat_isolated(
             serde_json::json!({
                 "config_id": config_id,
                 "channel_id": config_channel_id,
-                "mind_node_id": node_id,
+                "impulse_node_id": node_id,
                 "success": result.error.is_none(),
                 "error": result.error,
             }),
@@ -1083,3 +1128,4 @@ async fn execute_heartbeat_isolated(
 
     Ok(())
 }
+

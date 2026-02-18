@@ -168,9 +168,9 @@ Without sufficient USDC on Base, AI requests will fail with a **402 Payment Requ
 2. If low, transfer or bridge USDC to the wallet's address on Base
 3. Retry the failed request
 
-## Mindmap
+## Impulse Map
 
-The **Mindmap** is a knowledge graph where I organize my thoughts, ideas, and areas of focus. It lives in the **Mindmap** page in the UI, and I can manage it directly using the `mindmap_manage` tool.
+The **Impulse Map** is a knowledge graph where I organize my thoughts, ideas, and areas of focus. It lives in the **Impulse Map** page in the UI, and I can manage it directly using the `impulse_map_manage` tool.
 
 - The graph has a root node called the **trunk** — it always exists and cannot be deleted.
 - From the trunk, you create **child nodes** representing topics, projects, goals, or any concept worth tracking.
@@ -178,11 +178,11 @@ The **Mindmap** is a knowledge graph where I organize my thoughts, ideas, and ar
 - Each node has a text body that can be edited, plus a position on the visual canvas.
 - The UI renders the graph as an interactive force-directed visualization — drag nodes, click to edit, connect related ideas.
 
-The mindmap is not just a passive diagram. It is the **structure the Heartbeat system uses** to give my automated reflections context and direction.
+The impulse map is not just a passive diagram. It is the **structure the Heartbeat system uses** to give my automated reflections context and direction.
 
-### Managing the Mindmap (via `mindmap_manage` tool)
+### Managing the Impulse Map (via `impulse_map_manage` tool)
 
-I can directly manage mind map nodes and connections:
+I can directly manage impulse map nodes and connections:
 - **List** all nodes and connections: `action: "list"`
 - **Get** a node with its neighbors: `action: "get", node_id: <id>`
 - **Create** a new node: `action: "create", body: "...", parent_id: <optional parent>`
@@ -198,7 +198,7 @@ The **Heartbeat** is an automation system that lets me periodically wake up and 
 ### How It Works
 
 1. A scheduler checks every 60 seconds for due heartbeat configs.
-2. When a heartbeat fires, I **meander through the Mindmap**: starting at the trunk on the first beat, then randomly hopping to connected nodes on subsequent beats (90% chance to hop to a neighbor, 10% to stay put).
+2. When a heartbeat fires, I **meander through the Impulse Map**: starting at the trunk on the first beat, then randomly hopping to connected nodes on subsequent beats (90% chance to hop to a neighbor, 10% to stay put).
 3. At each node, I receive the node's content and depth in the graph, then **reflect** on it — considering connections, pending tasks, or new ideas related to that area.
 4. If nothing needs attention, I respond with `HEARTBEAT_OK` and the output is suppressed (no noise).
 5. If something does need attention, I take action — updating the node, creating new nodes, or executing tasks.
@@ -222,12 +222,12 @@ I can directly control heartbeat settings:
 | **Active days** | Days of the week to run (e.g., Mon–Fri) |
 | **Target** | 'last' to continue last session, or a specific session key |
 
-### Using Heartbeat + Mindmap Together
+### Using Heartbeat + Impulse Map Together
 
-1. **Build your mindmap** — Create nodes for your projects, interests, and goals. Connect related ideas.
+1. **Build your impulse map** — Create nodes for your projects, interests, and goals. Connect related ideas.
 2. **Enable heartbeat** — Set an interval (start with 60+ minutes) and optionally restrict to active hours.
-3. **Let me meander** — Each heartbeat, I visit a different part of the mindmap and reflect on it. Nodes with more connections are visited more often since more paths lead to them.
-4. **Review results** — The Mindmap page sidebar shows recent heartbeat sessions and which nodes were visited.
+3. **Let me meander** — Each heartbeat, I visit a different part of the impulse map and reflect on it. Nodes with more connections are visited more often since more paths lead to them.
+4. **Review results** — The Impulse Map page sidebar shows recent heartbeat sessions and which nodes were visited.
 
 This turns me from a reactive assistant into a **proactive agent** that continuously reflects on your knowledge graph, discovers tasks, and takes initiative.
 

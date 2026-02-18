@@ -16,7 +16,7 @@ import Identities from '@/pages/Identities';
 import IdentityDetail from '@/pages/IdentityDetail';
 import FileBrowser from '@/pages/FileBrowser';
 import SystemFiles from '@/pages/SystemFiles';
-import Journal from '@/pages/Journal';
+import Notes from '@/pages/Notes';
 import Debug from '@/pages/Debug';
 import System from '@/pages/System';
 import ApiKeys from '@/pages/ApiKeys';
@@ -24,7 +24,7 @@ import CloudBackup from '@/pages/CloudBackup';
 import Payments from '@/pages/Payments';
 import EIP8004 from '@/pages/EIP8004';
 import CryptoTransactions from '@/pages/CryptoTransactions';
-import MindMap from '@/pages/MindMap';
+import ImpulseMap from '@/pages/ImpulseMap';
 import Workstream from '@/pages/Workstream';
 import Modules from '@/pages/Modules';
 import ModuleDashboard from '@/pages/ModuleDashboard';
@@ -53,13 +53,13 @@ function App() {
         <Route path="/sessions" element={<Sessions />} />
         <Route path="/sessions/:sessionId" element={<Sessions />} />
         <Route path="/memories" element={<MemoryBrowser />} />
-        <Route path="/mindmap" element={<MindMap />} />
+        <Route path="/impulse-map" element={<ImpulseMap />} />
         <Route path="/workstream" element={<Workstream />} />
         <Route path="/identities" element={<Identities />} />
         <Route path="/identities/:identityId" element={<IdentityDetail />} />
         <Route path="/files" element={<FileBrowser />} />
         <Route path="/system-files" element={<SystemFiles />} />
-        <Route path="/journal" element={<Journal />} />
+        <Route path="/notes" element={<Notes />} />
         <Route path="/system" element={<System />} />
         <Route path="/debug" element={<Debug />} />
         <Route path="/payments" element={<Payments />} />

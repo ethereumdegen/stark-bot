@@ -10,7 +10,7 @@ tags: [general, heartbeat, automation, scheduling, secretary]
 
 # Heartbeat Management
 
-The **heartbeat** is an automation system that periodically wakes the agent to reflect on the mindmap. Use the `heartbeat_config` tool to manage it.
+The **heartbeat** is an automation system that periodically wakes the agent to reflect on the impulse map. Use the `heartbeat_config` tool to manage it.
 
 ## Quick Actions
 
@@ -59,7 +59,7 @@ active_days: "mon,tue,wed,thu,fri"
 ## How Heartbeat Works
 
 1. A scheduler checks every 60 seconds for due heartbeat configs
-2. When a heartbeat fires, the agent meanders through the mindmap — randomly hopping between connected nodes
+2. When a heartbeat fires, the agent meanders through the impulse map — randomly hopping between connected nodes
 3. At each node, the agent reflects on the content and takes action if needed
 4. If nothing needs attention, the agent responds with HEARTBEAT_OK (suppressed output)
-5. The heartbeat tracks which mind node it's on and maintains session continuity across beats
+5. The heartbeat tracks which impulse node it's on and maintains session continuity across beats

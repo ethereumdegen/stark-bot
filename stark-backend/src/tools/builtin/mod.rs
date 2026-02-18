@@ -16,6 +16,7 @@ pub mod social_media;
 
 // Individual tools (remaining uncategorized)
 mod local_rpc;
+mod notes;
 mod process_status;
 mod qmd_memory_read;
 mod qmd_memory_search;
@@ -30,7 +31,7 @@ pub use bash::{
 pub use code::{CommitterTool, DeployTool, IndexProjectTool, PrQualityTool, VerifyChangesTool};
 pub use core::{
     AddTaskTool, DefineTasksTool, AgentSendTool, ApiKeysCheckTool, AskUserTool, HeartbeatConfigTool,
-    ImportIdentityTool, InstallApiKeyTool, ManageModulesTool, ManageSkillsTool, MindmapManageTool,
+    ImportIdentityTool, InstallApiKeyTool, ManageModulesTool, ManageSkillsTool, ImpulseMapManageTool,
     ReadSkillTool, RegisterNewIdentityTool, WorkstreamTool, ModifySoulTool, ModifySpecialRoleTool, SayToUserTool,
     SetAgentSubtypeTool, SubagentStatusTool, SpawnSubagentsTool, TaskFullyCompletedTool, UseSkillTool,
     // Meta tools (self-management)
@@ -48,6 +49,7 @@ pub use social_media::{DiscordLookupTool, DiscordReadTool, DiscordWriteTool, Fig
 
 // Re-exports from individual tools
 pub use local_rpc::LocalRpcTool;
+pub use notes::NotesTool;
 pub use process_status::ProcessStatusTool;
 pub use qmd_memory_read::QmdMemoryReadTool;
 pub use qmd_memory_search::QmdMemorySearchTool;

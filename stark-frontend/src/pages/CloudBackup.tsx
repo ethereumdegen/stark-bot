@@ -64,7 +64,7 @@ export default function CloudBackup() {
       const result = await backupKeysToCloud();
       setMessage({
         type: 'success',
-        text: `Backup complete! ${result.key_count || 0} keys, ${result.node_count || 0} mind nodes, ${result.connection_count || 0} connections, ${result.cron_job_count || 0} cron jobs, ${result.channel_count || 0} channels, ${result.skill_count || 0} skills, ${result.agent_settings_count || 0} AI models${result.has_settings ? ', settings' : ''}${result.has_heartbeat ? ', heartbeat' : ''}${result.has_soul ? ', soul' : ''}`
+        text: `Backup complete! ${result.key_count || 0} keys, ${result.node_count || 0} impulse nodes, ${result.connection_count || 0} connections, ${result.cron_job_count || 0} cron jobs, ${result.channel_count || 0} channels, ${result.skill_count || 0} skills, ${result.agent_settings_count || 0} AI models${result.has_settings ? ', settings' : ''}${result.has_heartbeat ? ', heartbeat' : ''}${result.has_soul ? ', soul' : ''}`
       });
       setNoBackupWarning(false);
       // Refresh preview after successful backup
@@ -89,7 +89,7 @@ export default function CloudBackup() {
       const result = await restoreKeysFromCloud();
       setMessage({
         type: 'success',
-        text: `Restore complete! ${result.key_count || 0} keys, ${result.node_count || 0} mind nodes, ${result.connection_count || 0} connections, ${result.cron_job_count || 0} cron jobs, ${result.channel_count || 0} channels, ${result.skill_count || 0} skills, ${result.agent_settings_count || 0} AI models${result.has_settings ? ', settings' : ''}${result.has_heartbeat ? ', heartbeat' : ''}${result.has_soul ? ', soul' : ''}`
+        text: `Restore complete! ${result.key_count || 0} keys, ${result.node_count || 0} impulse nodes, ${result.connection_count || 0} connections, ${result.cron_job_count || 0} cron jobs, ${result.channel_count || 0} channels, ${result.skill_count || 0} skills, ${result.agent_settings_count || 0} AI models${result.has_settings ? ', settings' : ''}${result.has_heartbeat ? ', heartbeat' : ''}${result.has_soul ? ', soul' : ''}`
       });
     } catch (err) {
       setMessage({ type: 'error', text: formatKeystoreError(err) });
@@ -131,7 +131,7 @@ export default function CloudBackup() {
           <div>
             <p className="font-medium">No cloud backup found</p>
             <p className="text-sm text-yellow-300/80 mt-1">
-              Your data is not backed up to the cloud yet. Create a backup to protect your API keys, mind map, cron jobs, and settings.
+              Your data is not backed up to the cloud yet. Create a backup to protect your API keys, impulse map, cron jobs, and settings.
             </p>
           </div>
         </div>
@@ -245,7 +245,7 @@ export default function CloudBackup() {
                   <div className="p-3 bg-slate-900/50 rounded-lg border border-slate-700">
                     <div className="flex items-center gap-2 mb-1">
                       <Brain className="w-4 h-4 text-purple-400" />
-                      <span className="text-xs text-slate-400">Mind Nodes</span>
+                      <span className="text-xs text-slate-400">Impulse Nodes</span>
                     </div>
                     <span className="text-xl font-bold text-white">{previewData.node_count || 0}</span>
                   </div>
@@ -374,7 +374,7 @@ export default function CloudBackup() {
                 <div className="flex items-start gap-2">
                   <Brain className="w-4 h-4 text-purple-400 mt-0.5" />
                   <div>
-                    <p className="text-slate-300 font-medium">Mind Map</p>
+                    <p className="text-slate-300 font-medium">Impulse Map</p>
                     <p className="text-slate-400 text-xs">All nodes and connections</p>
                   </div>
                 </div>
@@ -540,7 +540,7 @@ export default function CloudBackup() {
                 </div>
                 <div className="flex items-center gap-2 p-2 bg-slate-900/50 rounded-lg">
                   <Brain className="w-4 h-4 text-purple-400" />
-                  <span className="text-sm text-slate-300">{previewData.node_count || 0} Mind Nodes</span>
+                  <span className="text-sm text-slate-300">{previewData.node_count || 0} Impulse Nodes</span>
                 </div>
                 <div className="flex items-center gap-2 p-2 bg-slate-900/50 rounded-lg">
                   <Link2 className="w-4 h-4 text-blue-400" />

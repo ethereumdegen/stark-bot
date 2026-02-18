@@ -596,7 +596,7 @@ impl Database {
         })
     }
 
-    /// List heartbeat sessions with their associated mind node IDs
+    /// List heartbeat sessions with their associated impulse node IDs
     /// Parses the node ID from the heartbeat message content
     pub fn list_heartbeat_sessions(&self, limit: i32) -> SqliteResult<Vec<(ChatSession, Option<i64>)>> {
         let conn = self.conn();
@@ -619,7 +619,7 @@ impl Database {
 
         drop(stmt);
 
-        // For each session, try to extract the mind node ID from the first message
+        // For each session, try to extract the impulse node ID from the first message
         let mut results = Vec::new();
         for session in sessions {
             let node_id = self.extract_heartbeat_node_id(&conn, session.id);
@@ -629,7 +629,7 @@ impl Database {
         Ok(results)
     }
 
-    /// Extract the mind node ID from a heartbeat session's first message
+    /// Extract the impulse node ID from a heartbeat session's first message
     /// Looks for pattern "Current Position: Node #X" in the message
     fn extract_heartbeat_node_id(&self, conn: &super::super::DbConn, session_id: i64) -> Option<i64> {
         let content: Option<String> = conn.query_row(

@@ -1128,6 +1128,7 @@ export interface HeartbeatConfigInfo {
   active_hours_end?: string;
   active_days?: string;
   enabled: boolean;
+  impulse_evolver?: boolean;
   last_beat_at?: string;
   next_beat_at?: string;
   created_at: string;
@@ -1152,6 +1153,7 @@ export async function updateHeartbeatConfig(data: {
   active_hours_end?: string;
   active_days?: string;
   enabled?: boolean;
+  impulse_evolver?: boolean;
 }): Promise<HeartbeatConfigInfo> {
   const response = await apiFetch<HeartbeatConfigResponse>('/heartbeat/config', {
     method: 'PUT',
@@ -1489,8 +1491,8 @@ export async function deleteIntrinsicFile(name: string): Promise<WriteIntrinsicR
   });
 }
 
-// Journal API
-export interface JournalEntry {
+// Notes API
+export interface NoteEntry {
   name: string;
   path: string;
   is_dir: boolean;
@@ -1498,38 +1500,77 @@ export interface JournalEntry {
   modified?: string;
 }
 
-export interface ListJournalResponse {
+export interface ListNotesResponse {
   success: boolean;
   path: string;
-  entries: JournalEntry[];
+  entries: NoteEntry[];
   error?: string;
 }
 
-export interface ReadJournalResponse {
+export interface ReadNoteResponse {
   success: boolean;
   path: string;
   content?: string;
   size?: number;
+  title?: string;
+  tags?: string[];
+  note_type?: string;
   error?: string;
 }
 
-export interface JournalInfoResponse {
+export interface NotesInfoResponse {
   success: boolean;
-  journal_path: string;
+  notes_path: string;
   exists: boolean;
+  file_count: number;
 }
 
-export async function listJournal(path?: string): Promise<ListJournalResponse> {
+export interface SearchNotesResponse {
+  success: boolean;
+  query: string;
+  results: SearchResultItem[];
+  error?: string;
+}
+
+export interface SearchResultItem {
+  file_path: string;
+  title: string;
+  tags: string;
+  snippet: string;
+}
+
+export interface TagItem {
+  tag: string;
+  count: number;
+}
+
+export interface TagsResponse {
+  success: boolean;
+  tags: TagItem[];
+  error?: string;
+}
+
+export async function listNotes(path?: string): Promise<ListNotesResponse> {
   const query = path ? `?path=${encodeURIComponent(path)}` : '';
-  return apiFetch(`/journal${query}`);
+  return apiFetch(`/notes${query}`);
 }
 
-export async function readJournalFile(path: string): Promise<ReadJournalResponse> {
-  return apiFetch(`/journal/read?path=${encodeURIComponent(path)}`);
+export async function readNoteFile(path: string): Promise<ReadNoteResponse> {
+  return apiFetch(`/notes/read?path=${encodeURIComponent(path)}`);
 }
 
-export async function getJournalInfo(): Promise<JournalInfoResponse> {
-  return apiFetch('/journal/info');
+export async function searchNotes(q: string, limit?: number): Promise<SearchNotesResponse> {
+  const params = new URLSearchParams({ q });
+  if (limit) params.set('limit', String(limit));
+  return apiFetch(`/notes/search?${params.toString()}`);
+}
+
+export async function getNotesInfo(): Promise<NotesInfoResponse> {
+  return apiFetch('/notes/info');
+}
+
+export async function getNotesTags(): Promise<TagsResponse> {
+  return apiFetch('/notes/tags');
 }
 
 // Transaction Queue API
@@ -1621,8 +1662,8 @@ export async function getBroadcastedTransactions(params?: {
   return apiFetch(`/broadcasted-transactions${query ? `?${query}` : ''}`);
 }
 
-// Mind Map API
-export interface MindNodeInfo {
+// Impulse Map API
+export interface ImpulseNodeInfo {
   id: number;
   body: string;
   position_x: number | null;
@@ -1632,92 +1673,92 @@ export interface MindNodeInfo {
   updated_at: string;
 }
 
-export interface MindConnectionInfo {
+export interface ImpulseConnectionInfo {
   id: number;
   parent_id: number;
   child_id: number;
   created_at: string;
 }
 
-export interface MindGraphResponse {
-  nodes: MindNodeInfo[];
-  connections: MindConnectionInfo[];
+export interface ImpulseGraphResponse {
+  nodes: ImpulseNodeInfo[];
+  connections: ImpulseConnectionInfo[];
 }
 
-export async function getMindGraph(): Promise<MindGraphResponse> {
-  return apiFetch('/mindmap/graph');
+export async function getImpulseGraph(): Promise<ImpulseGraphResponse> {
+  return apiFetch('/impulse-map/graph');
 }
 
-export async function getMindNodes(): Promise<MindNodeInfo[]> {
-  return apiFetch('/mindmap/nodes');
+export async function getImpulseNodes(): Promise<ImpulseNodeInfo[]> {
+  return apiFetch('/impulse-map/nodes');
 }
 
-export async function createMindNode(data: {
+export async function createImpulseNode(data: {
   body?: string;
   position_x?: number;
   position_y?: number;
   parent_id?: number;
-}): Promise<MindNodeInfo> {
-  return apiFetch('/mindmap/nodes', {
+}): Promise<ImpulseNodeInfo> {
+  return apiFetch('/impulse-map/nodes', {
     method: 'POST',
     body: JSON.stringify(data),
   });
 }
 
-export async function updateMindNode(id: number, data: {
+export async function updateImpulseNode(id: number, data: {
   body?: string;
   position_x?: number;
   position_y?: number;
-}): Promise<MindNodeInfo> {
-  return apiFetch(`/mindmap/nodes/${id}`, {
+}): Promise<ImpulseNodeInfo> {
+  return apiFetch(`/impulse-map/nodes/${id}`, {
     method: 'PUT',
     body: JSON.stringify(data),
   });
 }
 
-export async function deleteMindNode(id: number): Promise<{ success: boolean; message: string }> {
-  return apiFetch(`/mindmap/nodes/${id}`, {
+export async function deleteImpulseNode(id: number): Promise<{ success: boolean; message: string }> {
+  return apiFetch(`/impulse-map/nodes/${id}`, {
     method: 'DELETE',
   });
 }
 
-export async function getMindConnections(): Promise<MindConnectionInfo[]> {
-  return apiFetch('/mindmap/connections');
+export async function getImpulseConnections(): Promise<ImpulseConnectionInfo[]> {
+  return apiFetch('/impulse-map/connections');
 }
 
-export async function createMindConnection(parentId: number, childId: number): Promise<MindConnectionInfo> {
-  return apiFetch('/mindmap/connections', {
+export async function createImpulseConnection(parentId: number, childId: number): Promise<ImpulseConnectionInfo> {
+  return apiFetch('/impulse-map/connections', {
     method: 'POST',
     body: JSON.stringify({ parent_id: parentId, child_id: childId }),
   });
 }
 
-export async function deleteMindConnection(parentId: number, childId: number): Promise<{ success: boolean; message: string }> {
-  return apiFetch(`/mindmap/connections/${parentId}/${childId}`, {
+export async function deleteImpulseConnection(parentId: number, childId: number): Promise<{ success: boolean; message: string }> {
+  return apiFetch(`/impulse-map/connections/${parentId}/${childId}`, {
     method: 'DELETE',
   });
 }
 
-// Heartbeat session info for mind map sidebar
+// Heartbeat session info for impulse map sidebar
 export interface HeartbeatSessionInfo {
   id: number;
-  mind_node_id: number | null;
+  impulse_node_id: number | null;
   created_at: string;
   message_count: number;
 }
 
 export async function getHeartbeatSessions(): Promise<HeartbeatSessionInfo[]> {
-  return apiFetch('/mindmap/heartbeat-sessions');
+  return apiFetch('/impulse-map/heartbeat-sessions');
 }
 
-// Guest Mind Map API (no auth required)
-export async function getGuestMindGraph(): Promise<MindGraphResponse> {
-  const response = await fetch(`${API_BASE}/mindmap/graph/guest`);
+// Guest Impulse Map API (no auth required)
+export async function getGuestImpulseGraph(): Promise<ImpulseGraphResponse> {
+  const response = await fetch(`${API_BASE}/impulse-map/graph/guest`);
   if (!response.ok) {
     if (response.status === 403) {
       throw new Error('Guest dashboard is not enabled');
     }
-    throw new Error('Failed to fetch guest mind graph');
+    throw new Error('Failed to fetch guest impulse graph');
   }
   return response.json();
 }

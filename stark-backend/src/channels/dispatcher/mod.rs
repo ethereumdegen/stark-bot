@@ -6,7 +6,8 @@ use crate::ai::{
     ThinkingLevel,
 };
 use crate::channels::types::{DispatchResult, NormalizedMessage};
-use crate::config::MemoryConfig;
+use crate::config::{MemoryConfig, NotesConfig};
+use crate::notes::NoteStore;
 use crate::context::{self, estimate_tokens, ContextManager};
 use crate::db::Database;
 use crate::execution::{ExecutionTracker, SessionLaneManager};
@@ -53,6 +54,8 @@ pub struct MessageDispatcher {
     memory_config: MemoryConfig,
     /// QMD Memory store for file-based markdown memory system
     memory_store: Option<Arc<MemoryStore>>,
+    /// Notes store for Obsidian-compatible notes with FTS5
+    notes_store: Option<Arc<NoteStore>>,
     /// SubAgent manager for spawning background AI agents
     subagent_manager: Option<Arc<SubAgentManager>>,
     /// Skill registry for managing skills
@@ -133,6 +136,20 @@ impl MessageDispatcher {
             }
         };
 
+        // Create NoteStore for Obsidian-compatible notes
+        let notes_config = NotesConfig::from_env();
+        let notes_dir = std::path::PathBuf::from(notes_config.notes_dir.clone());
+        let notes_store = match NoteStore::new(notes_dir, &notes_config.notes_db_path()) {
+            Ok(store) => {
+                log::info!("[DISPATCHER] NoteStore initialized at {}", notes_config.notes_dir);
+                Some(Arc::new(store))
+            }
+            Err(e) => {
+                log::error!("[DISPATCHER] Failed to create NoteStore: {}", e);
+                None
+            }
+        };
+
         // Create SubAgentManager for spawning background AI agents
         // Uses OnceLock for late-bound fields (tx_queue, disk_quota set via with_* after construction)
         let subagent_manager = Arc::new(SubAgentManager::new_with_config(
@@ -178,6 +195,7 @@ impl MessageDispatcher {
             archetype_registry: ArchetypeRegistry::new(),
             memory_config,
             memory_store,
+            notes_store,
             subagent_manager: Some(subagent_manager),
             skill_registry,
             hook_manager: None,
@@ -250,6 +268,13 @@ impl MessageDispatcher {
             .ok()
             .map(Arc::new);
 
+        // Create NoteStore
+        let notes_config = NotesConfig::from_env();
+        let notes_dir = std::path::PathBuf::from(notes_config.notes_dir.clone());
+        let notes_store = NoteStore::new(notes_dir, &notes_config.notes_db_path())
+            .ok()
+            .map(Arc::new);
+
         // Create context manager and link memory store to it
         let mut context_manager = ContextManager::new(db.clone())
             .with_memory_config(memory_config.clone());
@@ -274,6 +299,7 @@ impl MessageDispatcher {
             archetype_registry: ArchetypeRegistry::new(),
             memory_config,
             memory_store,
+            notes_store,
             subagent_manager: None, // No tools = no subagent support
             skill_registry: None,   // No skills without tools
             hook_manager: None,     // No hooks without explicit setup
@@ -293,6 +319,11 @@ impl MessageDispatcher {
     /// Get the QMD MemoryStore (if available)
     pub fn memory_store(&self) -> Option<Arc<MemoryStore>> {
         self.memory_store.clone()
+    }
+
+    /// Get the NoteStore (if available)
+    pub fn notes_store(&self) -> Option<Arc<NoteStore>> {
+        self.notes_store.clone()
     }
 
     /// Get the SubAgentManager (if available)
@@ -994,6 +1025,12 @@ impl MessageDispatcher {
             log::debug!("[DISPATCH] MemoryStore attached to tool context");
         }
 
+        // Add NoteStore for notes tools
+        if let Some(ref store) = self.notes_store {
+            tool_context = tool_context.with_notes_store(store.clone());
+            log::debug!("[DISPATCH] NoteStore attached to tool context");
+        }
+
         // Add DiskQuotaManager for enforcing disk usage limits
         if let Some(ref dq) = self.disk_quota {
             tool_context = tool_context.with_disk_quota(dq.clone());
@@ -1440,6 +1477,14 @@ impl MessageDispatcher {
                 Orchestrator::new(original_message.text.clone())
             }
         };
+
+        // Honor preferred_subtype from system dispatches (e.g., impulse_evolver)
+        if let Some(ref preferred) = original_message.preferred_subtype {
+            if let Some(resolved) = agent_types::resolve_subtype_key(preferred) {
+                orchestrator.set_subtype(Some(resolved.clone()));
+                log::info!("[MULTI_AGENT] Preferred subtype set to: {}", resolved);
+            }
+        }
 
         // Update the selected network from the current message
         // This ensures the agent uses the network the user has selected in the UI

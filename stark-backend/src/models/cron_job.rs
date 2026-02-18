@@ -244,10 +244,12 @@ pub struct HeartbeatConfig {
     pub enabled: bool,
     pub last_beat_at: Option<String>,
     pub next_beat_at: Option<String>,
-    /// Current position in mind map (for meandering)
-    pub current_mind_node_id: Option<i64>,
+    /// Current position in impulse map (for meandering)
+    pub current_impulse_node_id: Option<i64>,
     /// Last heartbeat session ID (for context continuity)
     pub last_session_id: Option<i64>,
+    /// Whether to run impulse evolver after each heartbeat
+    pub impulse_evolver: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -267,6 +269,8 @@ pub struct UpdateHeartbeatConfigRequest {
     pub active_days: Option<String>,
     #[serde(default)]
     pub enabled: Option<bool>,
+    #[serde(default)]
+    pub impulse_evolver: Option<bool>,
 }
 
 /// Response for heartbeat config operations

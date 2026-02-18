@@ -37,6 +37,10 @@ pub struct AgentSubtypeConfig {
     /// Alternative names that resolve to this subtype key (e.g. "crypto" → "finance")
     #[serde(default)]
     pub aliases: Vec<String>,
+    /// Hidden subtypes are excluded from the director overview, set_agent_subtype,
+    /// and the UI picker. They can only be activated via `preferred_subtype` on dispatch.
+    #[serde(default)]
+    pub hidden: bool,
 }
 
 fn default_max_iterations() -> u32 {
@@ -64,10 +68,10 @@ pub fn get_subtype_config(key: &str) -> Option<AgentSubtypeConfig> {
     reg.iter().find(|c| c.key == key).cloned()
 }
 
-/// Get all subtype configs (enabled only, sorted by sort_order).
+/// Get all subtype configs (enabled + non-hidden only, sorted by sort_order).
 pub fn all_subtype_configs() -> Vec<AgentSubtypeConfig> {
     let reg = registry().read();
-    let mut configs: Vec<_> = reg.iter().filter(|c| c.enabled).cloned().collect();
+    let mut configs: Vec<_> = reg.iter().filter(|c| c.enabled && !c.hidden).cloned().collect();
     configs.sort_by_key(|c| c.sort_order);
     configs
 }

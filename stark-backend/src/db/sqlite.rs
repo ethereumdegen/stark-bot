@@ -837,19 +837,20 @@ impl Database {
                 enabled INTEGER NOT NULL DEFAULT 1,
                 last_beat_at TEXT,
                 next_beat_at TEXT,
-                current_mind_node_id INTEGER,
+                current_impulse_node_id INTEGER,
                 last_session_id INTEGER,
+                impulse_evolver INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (channel_id) REFERENCES external_channels(id) ON DELETE CASCADE,
-                FOREIGN KEY (current_mind_node_id) REFERENCES mind_nodes(id) ON DELETE SET NULL
+                FOREIGN KEY (current_impulse_node_id) REFERENCES impulse_nodes(id) ON DELETE SET NULL
             )",
             [],
         )?;
 
-        // Migration: Add mind map columns to heartbeat_configs if they don't exist
+        // Migration: Add impulse map columns to heartbeat_configs if they don't exist
         let _ = conn.execute(
-            "ALTER TABLE heartbeat_configs ADD COLUMN current_mind_node_id INTEGER",
+            "ALTER TABLE heartbeat_configs ADD COLUMN current_impulse_node_id INTEGER",
             [],
         );
         let _ = conn.execute(
@@ -1253,9 +1254,9 @@ impl Database {
             [],
         )?;
 
-        // Mind map nodes table
+        // Impulse map nodes table
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS mind_nodes (
+            "CREATE TABLE IF NOT EXISTS impulse_nodes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 body TEXT NOT NULL DEFAULT '',
                 position_x REAL,
@@ -1267,27 +1268,27 @@ impl Database {
             [],
         )?;
 
-        // Mind map node connections table
+        // Impulse map node connections table
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS mind_node_connections (
+            "CREATE TABLE IF NOT EXISTS impulse_node_connections (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 parent_id INTEGER NOT NULL,
                 child_id INTEGER NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                FOREIGN KEY (parent_id) REFERENCES mind_nodes(id) ON DELETE CASCADE,
-                FOREIGN KEY (child_id) REFERENCES mind_nodes(id) ON DELETE CASCADE,
+                FOREIGN KEY (parent_id) REFERENCES impulse_nodes(id) ON DELETE CASCADE,
+                FOREIGN KEY (child_id) REFERENCES impulse_nodes(id) ON DELETE CASCADE,
                 UNIQUE(parent_id, child_id)
             )",
             [],
         )?;
 
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_mind_connections_parent ON mind_node_connections(parent_id)",
+            "CREATE INDEX IF NOT EXISTS idx_mind_connections_parent ON impulse_node_connections(parent_id)",
             [],
         )?;
 
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_mind_connections_child ON mind_node_connections(child_id)",
+            "CREATE INDEX IF NOT EXISTS idx_mind_connections_child ON impulse_node_connections(child_id)",
             [],
         )?;
 
@@ -1420,6 +1421,12 @@ impl Database {
         // Migration: add aliases_json column (alternative names that resolve to this subtype key)
         let _ = conn.execute(
             "ALTER TABLE agent_subtypes ADD COLUMN aliases_json TEXT NOT NULL DEFAULT '[]'",
+            [],
+        );
+
+        // Migration: add hidden column (hidden subtypes are system-only, not shown in UI/director)
+        let _ = conn.execute(
+            "ALTER TABLE agent_subtypes ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0",
             [],
         );
 
@@ -1602,6 +1609,17 @@ impl Database {
         // Migration: Add label column to special_role_assignments if it doesn't exist
         let _ = conn.execute(
             "ALTER TABLE special_role_assignments ADD COLUMN label TEXT",
+            [],
+        );
+
+        // Migration: Rename mind_nodes → impulse_nodes, mind_node_connections → impulse_node_connections
+        let _ = conn.execute("ALTER TABLE mind_nodes RENAME TO impulse_nodes", []);
+        let _ = conn.execute("ALTER TABLE mind_node_connections RENAME TO impulse_node_connections", []);
+        let _ = conn.execute("ALTER TABLE heartbeat_configs RENAME COLUMN current_mind_node_id TO current_impulse_node_id", []);
+
+        // Migration: Add impulse_evolver column to heartbeat_configs
+        let _ = conn.execute(
+            "ALTER TABLE heartbeat_configs ADD COLUMN impulse_evolver INTEGER NOT NULL DEFAULT 1",
             [],
         );
 

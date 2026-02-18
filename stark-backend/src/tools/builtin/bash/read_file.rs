@@ -1,4 +1,4 @@
-use crate::config::{journal_dir, soul_dir};
+use crate::config::{notes_dir, soul_dir};
 use crate::tools::registry::Tool;
 use crate::tools::types::{
     PropertySchema, ToolContext, ToolDefinition, ToolGroup, ToolInputSchema, ToolResult,
@@ -126,15 +126,15 @@ impl Tool for ReadFileTool {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-            // Get journal directory
-            let journal = PathBuf::from(journal_dir());
+            // Get notes directory
+            let notes = PathBuf::from(notes_dir());
 
-            // Resolve the path - check if it starts with "journal/" to use journal dir
+            // Resolve the path - check if it starts with "notes/" to use notes dir
             let requested_path = Path::new(&params.path);
-            let (full_path, base_dir) = if params.path.starts_with("journal/") || params.path == "journal" {
-                // Strip "journal/" prefix and use journal directory
-                let relative = params.path.strip_prefix("journal/").unwrap_or(&params.path);
-                (journal.join(relative), journal.clone())
+            let (full_path, base_dir) = if params.path.starts_with("notes/") || params.path == "notes" {
+                // Strip "notes/" prefix and use notes directory
+                let relative = params.path.strip_prefix("notes/").unwrap_or(&params.path);
+                (notes.join(relative), notes.clone())
             } else if requested_path.is_absolute() {
                 (requested_path.to_path_buf(), workspace.clone())
             } else {
@@ -154,7 +154,7 @@ impl Tool for ReadFileTool {
                 Err(e) => return ToolResult::error(format!("Cannot resolve file path: {}", e)),
             };
 
-            // Security check: ensure path is within allowed directory (workspace or journal)
+            // Security check: ensure path is within allowed directory (workspace or notes)
             if !canonical_path.starts_with(&canonical_base) {
                 return ToolResult::error(format!(
                     "Access denied: path '{}' is outside the allowed directory",

@@ -6,16 +6,16 @@ import { X, Save, Trash2, Menu, Clock, MessageSquare, Zap, GitBranch } from 'luc
 import Button from '@/components/ui/Button';
 import HeartbeatIcon from '@/components/HeartbeatIcon';
 import {
-  getMindGraph,
-  createMindNode,
-  updateMindNode,
-  deleteMindNode,
+  getImpulseGraph,
+  createImpulseNode,
+  updateImpulseNode,
+  deleteImpulseNode,
   getHeartbeatSessions,
   getHeartbeatConfig,
   updateHeartbeatConfig,
   pulseHeartbeatOnce,
-  MindNodeInfo,
-  MindConnectionInfo,
+  ImpulseNodeInfo,
+  ImpulseConnectionInfo,
   HeartbeatSessionInfo,
 } from '@/lib/api';
 import { getGateway } from '@/lib/gateway-client';
@@ -33,7 +33,7 @@ interface D3Link extends d3.SimulationLinkDatum<D3Node> {
   target: D3Node | number;
 }
 
-export default function MindMap() {
+export default function ImpulseMap() {
   const navigate = useNavigate();
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -43,13 +43,13 @@ export default function MindMap() {
   });
   const draggedRef = useRef(false);
 
-  const [nodes, setNodes] = useState<MindNodeInfo[]>([]);
-  const [connections, setConnections] = useState<MindConnectionInfo[]>([]);
+  const [nodes, setNodes] = useState<ImpulseNodeInfo[]>([]);
+  const [connections, setConnections] = useState<ImpulseConnectionInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Modal state for editing node body
-  const [editingNode, setEditingNode] = useState<MindNodeInfo | null>(null);
+  const [editingNode, setEditingNode] = useState<ImpulseNodeInfo | null>(null);
   const [editBody, setEditBody] = useState('');
 
   // Sidebar state
@@ -58,7 +58,7 @@ export default function MindMap() {
   const [highlightedNodeId, setHighlightedNodeId] = useState<number | null>(null);
 
   // Hover tooltip state
-  const [hoveredNode, setHoveredNode] = useState<MindNodeInfo | null>(null);
+  const [hoveredNode, setHoveredNode] = useState<ImpulseNodeInfo | null>(null);
 
   // Heartbeat toggle state
   const [heartbeatEnabled, setHeartbeatEnabled] = useState(false);
@@ -67,15 +67,15 @@ export default function MindMap() {
   const [countdown, setCountdown] = useState<string | null>(null);
   const lastSessionIdRef = useRef<number | null>(null);
 
-  // Derived state for node executions (sessions with mind_node_id)
+  // Derived state for node executions (sessions with impulse_node_id)
   const nodeExecutions = useMemo(() => {
     const nodeMap = new Map(nodes.map(n => [n.id, n]));
     return heartbeatSessions
-      .filter(s => s.mind_node_id !== null)
+      .filter(s => s.impulse_node_id !== null)
       .slice(0, 10)
       .map(session => ({
         ...session,
-        node: nodeMap.get(session.mind_node_id!)
+        node: nodeMap.get(session.impulse_node_id!)
       }));
   }, [heartbeatSessions, nodes]);
 
@@ -219,12 +219,12 @@ export default function MindMap() {
   const loadGraph = useCallback(async () => {
     try {
       setLoading(true);
-      const graph = await getMindGraph();
+      const graph = await getImpulseGraph();
       setNodes(graph.nodes);
       setConnections(graph.connections);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load mind map');
+      setError(e instanceof Error ? e.message : 'Failed to load impulse map');
     } finally {
       setLoading(false);
     }
@@ -276,24 +276,24 @@ export default function MindMap() {
 
   const handlePulseOnce = async () => {
     setIsPulsing(true);
-    console.log('[MindMap] Pulse once clicked');
+    console.log('[ImpulseMap] Pulse once clicked');
 
     // Ensure gateway is connected before pulsing
     const gateway = getGateway();
     try {
       await gateway.connect();
-      console.log('[MindMap] Gateway connected, sending pulse request');
+      console.log('[ImpulseMap] Gateway connected, sending pulse request');
     } catch (e) {
-      console.error('[MindMap] Failed to connect gateway before pulse:', e);
+      console.error('[ImpulseMap] Failed to connect gateway before pulse:', e);
     }
 
     // Fire off the pulse request
     pulseHeartbeatOnce()
       .then(config => {
-        console.log('[MindMap] Pulse request sent successfully');
+        console.log('[ImpulseMap] Pulse request sent successfully');
         setNextBeatAt(config.next_beat_at || null);
       })
-      .catch(e => console.error('[MindMap] Failed to pulse heartbeat:', e));
+      .catch(e => console.error('[ImpulseMap] Failed to pulse heartbeat:', e));
 
     // Disable button for 5 seconds to prevent spam
     setTimeout(() => setIsPulsing(false), 5000);
@@ -305,20 +305,20 @@ export default function MindMap() {
     let mounted = true;
 
     const handleHeartbeatStarted = (data: unknown) => {
-      const event = data as { mind_node_id?: number };
-      console.log('[MindMap] Heartbeat started event received:', event);
+      const event = data as { impulse_node_id?: number };
+      console.log('[ImpulseMap] Heartbeat started event received:', event);
       if (!mounted) return;
       // Backend sets next_beat_at BEFORE execution, so load config now to update countdown
       loadHeartbeatConfig();
-      if (event.mind_node_id) {
-        console.log('[MindMap] Triggering animation for node:', event.mind_node_id);
-        triggerHeartbeatAnimation(event.mind_node_id);
+      if (event.impulse_node_id) {
+        console.log('[ImpulseMap] Triggering animation for node:', event.impulse_node_id);
+        triggerHeartbeatAnimation(event.impulse_node_id);
       }
     };
 
     const handleHeartbeatCompleted = async (data: unknown) => {
-      const event = data as { mind_node_id?: number };
-      console.log('[MindMap] Heartbeat completed event received:', event);
+      const event = data as { impulse_node_id?: number };
+      console.log('[ImpulseMap] Heartbeat completed event received:', event);
       if (!mounted) return;
       // Reload config to get updated next_beat_at
       loadHeartbeatConfig();
@@ -338,14 +338,14 @@ export default function MindMap() {
 
     // Also listen for pulse_started as fallback (uses first node if no specific node)
     const handlePulseStarted = (data: unknown) => {
-      console.log('[MindMap] Heartbeat pulse started:', data);
+      console.log('[ImpulseMap] Heartbeat pulse started:', data);
       if (!mounted) return;
       // Backend sets next_beat_at BEFORE execution, so load config now to update countdown
       loadHeartbeatConfig();
       // Try to trigger animation on trunk node (node id 1) as fallback
       if (nodes.length > 0) {
         const trunkNode = nodes.find(n => n.is_trunk) || nodes[0];
-        console.log('[MindMap] Triggering animation on trunk node:', trunkNode.id);
+        console.log('[ImpulseMap] Triggering animation on trunk node:', trunkNode.id);
         triggerHeartbeatAnimation(trunkNode.id);
       }
     };
@@ -354,9 +354,9 @@ export default function MindMap() {
     const handlePulseCompleted = async (data: unknown) => {
       const event = data as { success?: boolean; error?: string };
       if (event.success) {
-        console.log('[MindMap] Heartbeat pulse completed successfully');
+        console.log('[ImpulseMap] Heartbeat pulse completed successfully');
       } else {
-        console.error('[MindMap] Heartbeat pulse FAILED:', event.error);
+        console.error('[ImpulseMap] Heartbeat pulse FAILED:', event.error);
       }
       // Always refresh sessions list and config after pulse completes
       if (!mounted) return;
@@ -380,13 +380,13 @@ export default function MindMap() {
     gateway.on('heartbeat_completed', handleHeartbeatCompleted);
     gateway.on('heartbeat_pulse_started', handlePulseStarted);
     gateway.on('heartbeat_pulse_completed', handlePulseCompleted);
-    console.log('[MindMap] Registered heartbeat event listeners');
+    console.log('[ImpulseMap] Registered heartbeat event listeners');
 
     // Ensure connection
     gateway.connect().then(() => {
-      console.log('[MindMap] Gateway connected, listeners active');
+      console.log('[ImpulseMap] Gateway connected, listeners active');
     }).catch(e => {
-      console.error('[MindMap] Failed to connect to gateway:', e);
+      console.error('[ImpulseMap] Failed to connect to gateway:', e);
     });
 
     return () => {
@@ -395,7 +395,7 @@ export default function MindMap() {
       gateway.off('heartbeat_completed', handleHeartbeatCompleted);
       gateway.off('heartbeat_pulse_started', handlePulseStarted);
       gateway.off('heartbeat_pulse_completed', handlePulseCompleted);
-      console.log('[MindMap] Unregistered heartbeat event listeners');
+      console.log('[ImpulseMap] Unregistered heartbeat event listeners');
     };
   }, [triggerHeartbeatAnimation, nodes, loadHeartbeatConfig]);
 
@@ -462,7 +462,7 @@ export default function MindMap() {
   const handleSaveEdit = async () => {
     if (!editingNode) return;
     try {
-      await updateMindNode(editingNode.id, { body: editBody });
+      await updateImpulseNode(editingNode.id, { body: editBody });
       setEditingNode(null);
       await loadGraph();
     } catch (e) {
@@ -474,7 +474,7 @@ export default function MindMap() {
   const handleAddChild = async () => {
     if (!editingNode) return;
     try {
-      const newNode = await createMindNode({ parent_id: editingNode.id });
+      const newNode = await createImpulseNode({ parent_id: editingNode.id });
       await loadGraph();
       // Open edit modal on the new child so user fills in content
       setEditingNode(newNode);
@@ -488,7 +488,7 @@ export default function MindMap() {
   const handleDeleteNode = async () => {
     if (!editingNode || editingNode.is_trunk) return;
     try {
-      await deleteMindNode(editingNode.id);
+      await deleteImpulseNode(editingNode.id);
       setEditingNode(null);
       await loadGraph();
     } catch (e) {
@@ -500,7 +500,7 @@ export default function MindMap() {
   const handleDragEnd = useCallback(async (node: D3Node) => {
     if (node.x !== undefined && node.y !== undefined) {
       try {
-        await updateMindNode(node.id, {
+        await updateImpulseNode(node.id, {
           position_x: node.x,
           position_y: node.y,
         });
@@ -770,7 +770,7 @@ export default function MindMap() {
     const svg = d3.select(svgRef.current);
 
     // Helper to get stroke color
-    const getStrokeColor = (n: MindNodeInfo) => {
+    const getStrokeColor = (n: ImpulseNodeInfo) => {
       const hasBody = n.body.trim().length > 0;
       if (n.is_trunk) {
         return hasBody ? '#2563eb' : '#475569';
@@ -797,7 +797,7 @@ export default function MindMap() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full bg-black">
-        <div className="text-gray-400">Loading mind map...</div>
+        <div className="text-gray-400">Loading impulse map...</div>
       </div>
     );
   }
@@ -815,7 +815,7 @@ export default function MindMap() {
       {/* Header */}
       <div className="p-4 border-b border-gray-800 flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-white">Mind Map</h1>
+          <h1 className="text-xl font-semibold text-white">Impulse Map</h1>
           <p className="text-sm text-gray-400">
             Tap a node to edit, drag to move. Add child nodes from the edit modal.
           </p>
@@ -924,7 +924,7 @@ export default function MindMap() {
                     <div
                       key={session.id}
                       className="p-3 hover:bg-gray-800 cursor-pointer transition-colors"
-                      onMouseEnter={() => setHighlightedNodeId(session.mind_node_id)}
+                      onMouseEnter={() => setHighlightedNodeId(session.impulse_node_id)}
                       onMouseLeave={() => setHighlightedNodeId(null)}
                       onClick={() => navigate(`/sessions/${session.id}`)}
                     >
@@ -935,9 +935,9 @@ export default function MindMap() {
                             {formatDate(session.created_at)}
                           </span>
                         </div>
-                        {session.mind_node_id && (
+                        {session.impulse_node_id && (
                           <span className="text-xs px-2 py-0.5 rounded bg-amber-500/20 text-amber-400">
-                            Node #{session.mind_node_id}
+                            Node #{session.impulse_node_id}
                           </span>
                         )}
                       </div>
@@ -952,12 +952,12 @@ export default function MindMap() {
             </div>
           </div>
 
-          {/* Mind Node Executions Section */}
+          {/* Impulse Node Executions Section */}
           <div className="flex-1 min-h-0 flex flex-col border-t border-gray-800">
             <div className="px-4 py-2 border-b border-gray-800">
               <h2 className="text-sm font-semibold text-white flex items-center gap-2">
                 <GitBranch size={14} />
-                Mind Node Executions
+                Impulse Node Executions
               </h2>
             </div>
             <div className="flex-1 overflow-y-auto">
@@ -971,7 +971,7 @@ export default function MindMap() {
                     <div
                       key={execution.id}
                       className="p-3 hover:bg-gray-800 cursor-pointer transition-colors"
-                      onMouseEnter={() => setHighlightedNodeId(execution.mind_node_id)}
+                      onMouseEnter={() => setHighlightedNodeId(execution.impulse_node_id)}
                       onMouseLeave={() => setHighlightedNodeId(null)}
                       onClick={() => navigate(`/sessions/${execution.id}`)}
                     >
@@ -981,7 +981,7 @@ export default function MindMap() {
                             ? 'bg-green-500/20 text-green-400'
                             : 'bg-amber-500/20 text-amber-400'
                         }`}>
-                          {execution.node?.is_trunk ? 'Trunk' : `Node #${execution.mind_node_id}`}
+                          {execution.node?.is_trunk ? 'Trunk' : `Node #${execution.impulse_node_id}`}
                         </span>
                         <div className="flex items-center gap-2 text-xs text-gray-500">
                           <span>{formatDate(execution.created_at)}</span>
