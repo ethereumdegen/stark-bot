@@ -95,6 +95,12 @@ impl MessageDispatcher {
         // say_to_user loop prevention: don't allow say_to_user to be called twice in a row
         let mut previous_iteration_had_say_to_user = false;
 
+        // Counter for consecutive iterations where AI returns no tool calls
+        // but tasks are pending — caps forced retries to prevent infinite loops
+        // (e.g., when a subagent was cancelled and the task can never complete)
+        let mut no_tool_pending_retries: u32 = 0;
+        const MAX_NO_TOOL_PENDING_RETRIES: u32 = 3;
+
         loop {
             iterations += 1;
             log::info!(
@@ -478,9 +484,57 @@ impl MessageDispatcher {
                 // If there are pending tasks, don't exit — force the AI to keep working.
                 // The AI might respond with just text after a batched define_tasks + say_to_user,
                 // but we need it to continue executing tasks.
+                // Cap retries to prevent infinite loops (e.g., when a subagent was cancelled
+                // and the AI can't complete the task).
                 if !orchestrator.task_queue_is_empty() && !orchestrator.all_tasks_complete() {
+                    no_tool_pending_retries += 1;
+
+                    if no_tool_pending_retries > MAX_NO_TOOL_PENDING_RETRIES {
+                        log::warn!(
+                            "[ORCHESTRATED_LOOP] AI returned no tool calls {} times with pending tasks — \
+                             auto-skipping current task to prevent infinite loop",
+                            no_tool_pending_retries
+                        );
+                        // Auto-complete the current task so the loop can move on
+                        if let Some(task_id) = orchestrator.complete_current_task() {
+                            log::info!(
+                                "[ORCHESTRATED_LOOP] Auto-completed stuck task {} after {} no-tool retries",
+                                task_id, no_tool_pending_retries
+                            );
+                            self.broadcast_task_status_change(
+                                original_message.channel_id,
+                                session_id,
+                                task_id,
+                                "completed",
+                                "Auto-completed (agent could not proceed)",
+                            );
+                            self.broadcast_task_queue_update(
+                                original_message.channel_id,
+                                session_id,
+                                orchestrator,
+                            );
+                        }
+                        // Try to advance to next task or finish
+                        match self.advance_to_next_task_or_complete(
+                            original_message.channel_id,
+                            session_id,
+                            orchestrator,
+                        ) {
+                            TaskAdvanceResult::AllTasksComplete => {
+                                orchestrator_complete = true;
+                                break;
+                            }
+                            _ => {
+                                // Reset counter for the next task
+                                no_tool_pending_retries = 0;
+                            }
+                        }
+                        continue;
+                    }
+
                     log::info!(
-                        "[ORCHESTRATED_LOOP] AI returned no tool calls but tasks are pending — forcing retry"
+                        "[ORCHESTRATED_LOOP] AI returned no tool calls but tasks are pending — forcing retry ({}/{})",
+                        no_tool_pending_retries, MAX_NO_TOOL_PENDING_RETRIES
                     );
                     conversation.push(Message {
                         role: MessageRole::Assistant,
@@ -488,7 +542,7 @@ impl MessageDispatcher {
                     });
                     conversation.push(Message {
                         role: MessageRole::User,
-                        content: "[SYSTEM] You have pending tasks to complete. Please call the appropriate tools to continue working on the current task.".to_string(),
+                        content: "[SYSTEM] You have pending tasks to complete. Please call the appropriate tools to continue working on the current task. If a sub-agent failed or was cancelled, call `say_to_user` with `finished_task: true` to acknowledge and move on.".to_string(),
                     });
                     continue;
                 }
@@ -512,7 +566,8 @@ impl MessageDispatcher {
                 }
             }
 
-            // Process tool calls
+            // Process tool calls — reset the no-tool retry counter since the AI is working
+            no_tool_pending_retries = 0;
             let mut tool_responses = Vec::new();
 
             // Loop detection: check for repetitive tool calls
@@ -773,6 +828,10 @@ impl MessageDispatcher {
 
         // say_to_user loop prevention: don't allow say_to_user to be called twice in a row
         let mut previous_iteration_had_say_to_user = false;
+
+        // Counter for consecutive no-tool-call retries with pending tasks (text path)
+        let mut no_tool_pending_retries: u32 = 0;
+        const MAX_NO_TOOL_PENDING_RETRIES: u32 = 3;
 
         loop {
             iterations += 1;
@@ -1064,6 +1123,61 @@ impl MessageDispatcher {
                             });
 
                             // Continue the loop to force tool calling
+                            continue;
+                        }
+
+                        // If there are pending tasks, force the AI to keep working (with cap)
+                        if !orchestrator.task_queue_is_empty() && !orchestrator.all_tasks_complete() {
+                            no_tool_pending_retries += 1;
+
+                            if no_tool_pending_retries > MAX_NO_TOOL_PENDING_RETRIES {
+                                log::warn!(
+                                    "[TEXT_ORCHESTRATED] AI returned no tool calls {} times with pending tasks — \
+                                     auto-skipping current task",
+                                    no_tool_pending_retries
+                                );
+                                if let Some(task_id) = orchestrator.complete_current_task() {
+                                    self.broadcast_task_status_change(
+                                        original_message.channel_id,
+                                        session_id,
+                                        task_id,
+                                        "completed",
+                                        "Auto-completed (agent could not proceed)",
+                                    );
+                                    self.broadcast_task_queue_update(
+                                        original_message.channel_id,
+                                        session_id,
+                                        orchestrator,
+                                    );
+                                }
+                                match self.advance_to_next_task_or_complete(
+                                    original_message.channel_id,
+                                    session_id,
+                                    orchestrator,
+                                ) {
+                                    TaskAdvanceResult::AllTasksComplete => {
+                                        orchestrator_complete = true;
+                                        break;
+                                    }
+                                    _ => {
+                                        no_tool_pending_retries = 0;
+                                    }
+                                }
+                                continue;
+                            }
+
+                            log::info!(
+                                "[TEXT_ORCHESTRATED] AI returned no tool calls but tasks are pending — forcing retry ({}/{})",
+                                no_tool_pending_retries, MAX_NO_TOOL_PENDING_RETRIES
+                            );
+                            conversation.push(Message {
+                                role: MessageRole::Assistant,
+                                content: agent_response.body.clone(),
+                            });
+                            conversation.push(Message {
+                                role: MessageRole::User,
+                                content: "[SYSTEM] You have pending tasks to complete. Please call the appropriate tools to continue working on the current task. If a sub-agent failed or was cancelled, call `say_to_user` with `finished_task: true` to acknowledge and move on.".to_string(),
+                            });
                             continue;
                         }
 

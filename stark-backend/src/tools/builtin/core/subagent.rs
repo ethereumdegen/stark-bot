@@ -42,20 +42,24 @@ impl SpawnSubagentsTool {
             "agents".to_string(),
             PropertySchema {
                 schema_type: "array".to_string(),
-                description: "Array of sub-agent specifications to spawn in parallel. Each element is an object with: \
+                description: "Array of sub-agent specifications. Agents without depends_on run in parallel. \
+                    Each element is an object with: \
                     task (string, required) — the task prompt; \
-                    label (string) — short identifier like 'research' or 'analysis'; \
+                    label (string) — short identifier like 'research' or 'image_gen'; \
                     agent_subtype (string) — agent subtype key (e.g. 'superouter', 'finance', 'code_engineer'). \
                     REQUIRED — determines which tools and skills the sub-agent can use; \
                     model (string) — optional model override; \
                     thinking (string) — thinking level (off/minimal/low/medium/high/xhigh); \
                     timeout (integer) — per-agent timeout in seconds (default 300, max 3600); \
                     read_only (boolean) — restrict to read-only tools (default false); \
-                    context (string) — additional context to pass.".to_string(),
+                    context (string) — additional context to pass; \
+                    depends_on (string) — label of another agent that must complete first. \
+                    The dependent agent will receive the result of the dependency as additional context. \
+                    Use this when one agent needs the output of another (e.g. tweet_post depends_on image_gen).".to_string(),
                 default: None,
                 items: Some(Box::new(PropertySchema {
                     schema_type: "object".to_string(),
-                    description: "Sub-agent specification with task, label, agent_subtype, model, thinking, timeout, read_only, and context fields".to_string(),
+                    description: "Sub-agent specification with task, label, agent_subtype, model, thinking, timeout, read_only, context, and depends_on fields".to_string(),
                     default: None,
                     items: None,
                     enum_values: None,
@@ -79,10 +83,11 @@ impl SpawnSubagentsTool {
         SpawnSubagentsTool {
             definition: ToolDefinition {
                 name: "spawn_subagents".to_string(),
-                description: "Spawn multiple sub-agents in parallel and wait for all results. \
-                    Each sub-agent runs autonomously with its own tools. All agents execute concurrently \
-                    and the tool returns a consolidated report once all complete (or timeout is reached). \
-                    Use this for parallel task execution, multi-domain work, or delegating subtasks.".to_string(),
+                description: "Spawn multiple sub-agents and wait for all results. \
+                    Agents without depends_on run in parallel. Agents with depends_on wait for \
+                    their dependency to complete and receive its result as context. \
+                    Use this for parallel task execution, multi-domain work, or delegating subtasks \
+                    with data dependencies (e.g. generate an image, then tweet it).".to_string(),
                 input_schema: ToolInputSchema {
                     schema_type: "object".to_string(),
                     properties,
@@ -119,6 +124,9 @@ struct AgentSpec {
     context: Option<String>,
     #[serde(default)]
     read_only: Option<bool>,
+    /// Label of another agent that must complete first.
+    /// The dependent agent receives the dependency's result as context.
+    depends_on: Option<String>,
 }
 
 /// Progress interval for broadcasting await progress events (seconds)
@@ -174,7 +182,79 @@ impl Tool for SpawnSubagentsTool {
 }
 
 impl SpawnSubagentsTool {
-    /// Real execution path: spawn all agents via SubAgentManager, poll until done
+    /// Spawn a single agent spec via the SubAgentManager.
+    /// Returns (subagent_id, label) on success, or (FAILED_TO_SPAWN_<index>, label) on error.
+    async fn spawn_agent(
+        &self,
+        spec: &AgentSpec,
+        index: usize,
+        total: usize,
+        session_id: i64,
+        channel_id: i64,
+        extra_context: Option<&str>,
+        context: &ToolContext,
+        manager: &Arc<SubAgentManager>,
+    ) -> (String, String) {
+        let counter = SUBAGENT_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let label = spec.label.clone().unwrap_or_else(|| format!("task-{}", counter));
+        let subagent_id = SubAgentManager::generate_id(&label);
+        let agent_timeout = spec.timeout.unwrap_or(300).min(3600);
+        let read_only = spec.read_only.unwrap_or(false);
+
+        // Merge extra_context (from dependency result) with spec.context
+        let merged_context = match (spec.context.as_deref(), extra_context) {
+            (Some(spec_ctx), Some(dep_ctx)) => Some(format!(
+                "{}\n\n## Result from dependency\n{}",
+                spec_ctx, dep_ctx
+            )),
+            (None, Some(dep_ctx)) => Some(format!("## Result from dependency\n{}", dep_ctx)),
+            (Some(spec_ctx), None) => Some(spec_ctx.to_string()),
+            (None, None) => None,
+        };
+
+        let mut subagent_context = SubAgentContext::new(
+            subagent_id.clone(),
+            session_id,
+            channel_id,
+            label.clone(),
+            spec.task.clone(),
+            agent_timeout,
+        )
+        .with_model(spec.model.clone())
+        .with_context(merged_context)
+        .with_thinking(spec.thinking.clone())
+        .with_read_only(read_only)
+        .with_agent_subtype(spec.agent_subtype.clone());
+
+        // Propagate parent identity for depth tracking
+        if let (Some(parent_id), Some(parent_depth)) =
+            (&context.current_subagent_id, context.current_subagent_depth)
+        {
+            subagent_context =
+                subagent_context.with_parent_subagent(parent_id.clone(), parent_depth);
+        }
+
+        match manager.spawn(subagent_context).await {
+            Ok(id) => {
+                log::info!(
+                    "[SUBAGENTS] [{}/{}] Spawned '{}' (label: {})",
+                    index + 1,
+                    total,
+                    id,
+                    label
+                );
+                (id, label)
+            }
+            Err(e) => {
+                log::error!("[SUBAGENTS] Failed to spawn agent {}: {}", index, e);
+                (format!("FAILED_TO_SPAWN_{}", index), label)
+            }
+        }
+    }
+
+    /// Real execution path: spawn agents via SubAgentManager with dependency support.
+    /// Agents without `depends_on` start immediately in parallel.
+    /// Agents with `depends_on` wait for their dependency to complete and receive its result.
     async fn execute_real(
         &self,
         agents: &[AgentSpec],
@@ -185,101 +265,231 @@ impl SpawnSubagentsTool {
         let session_id = context.session_id.unwrap();
         let channel_id = context.channel_id.unwrap();
 
-        log::info!(
-            "[SUBAGENTS] Spawning {} sub-agents in parallel (timeout: {}s)",
-            agents.len(),
-            overall_timeout
-        );
+        // Assign labels upfront for dependency resolution
+        let labeled_agents: Vec<(String, &AgentSpec)> = agents
+            .iter()
+            .enumerate()
+            .map(|(i, spec)| {
+                let label = spec.label.clone().unwrap_or_else(|| {
+                    let counter = SUBAGENT_COUNTER.fetch_add(1, Ordering::SeqCst);
+                    format!("task-{}", counter)
+                });
+                (label, spec)
+            })
+            .collect();
 
-        // Phase 1: Spawn all agents
-        let mut spawned_ids: Vec<String> = Vec::with_capacity(agents.len());
-        let mut spawned_labels: Vec<String> = Vec::with_capacity(agents.len());
+        // Separate into immediate (no deps) and deferred (has deps)
+        let mut immediate_indices: Vec<usize> = Vec::new();
+        let mut deferred: Vec<(usize, String)> = Vec::new(); // (index, depends_on_label)
 
-        for (i, spec) in agents.iter().enumerate() {
-            let counter = SUBAGENT_COUNTER.fetch_add(1, Ordering::SeqCst);
-            let label = spec.label.clone().unwrap_or_else(|| format!("task-{}", counter));
-            let subagent_id = SubAgentManager::generate_id(&label);
-            let agent_timeout = spec.timeout.unwrap_or(300).min(3600);
-            let read_only = spec.read_only.unwrap_or(false);
-
-            let mut subagent_context = SubAgentContext::new(
-                subagent_id.clone(),
-                session_id,
-                channel_id,
-                label.clone(),
-                spec.task.clone(),
-                agent_timeout,
-            )
-            .with_model(spec.model.clone())
-            .with_context(spec.context.clone())
-            .with_thinking(spec.thinking.clone())
-            .with_read_only(read_only)
-            .with_agent_subtype(spec.agent_subtype.clone());
-
-            // Propagate parent identity for depth tracking
-            if let (Some(parent_id), Some(parent_depth)) =
-                (&context.current_subagent_id, context.current_subagent_depth)
-            {
-                subagent_context =
-                    subagent_context.with_parent_subagent(parent_id.clone(), parent_depth);
-            }
-
-            match manager.spawn(subagent_context).await {
-                Ok(id) => {
-                    log::info!(
-                        "[SUBAGENTS] [{}/{}] Spawned '{}' (label: {})",
-                        i + 1,
-                        agents.len(),
-                        id,
-                        label
+        for (i, (_, spec)) in labeled_agents.iter().enumerate() {
+            if let Some(ref dep_label) = spec.depends_on {
+                // Validate that the dependency label exists
+                if labeled_agents.iter().any(|(l, _)| l == dep_label) {
+                    deferred.push((i, dep_label.clone()));
+                } else {
+                    log::warn!(
+                        "[SUBAGENTS] Agent '{}' depends_on '{}' which doesn't exist, spawning immediately",
+                        labeled_agents[i].0, dep_label
                     );
-                    spawned_ids.push(id);
-                    spawned_labels.push(label);
+                    immediate_indices.push(i);
                 }
-                Err(e) => {
-                    log::error!("[SUBAGENTS] Failed to spawn agent {}: {}", i, e);
-                    // Continue spawning the rest, report this failure in results
-                    spawned_ids.push(format!("FAILED_TO_SPAWN_{}", i));
-                    spawned_labels.push(label);
-                }
+            } else {
+                immediate_indices.push(i);
             }
         }
 
-        // Phase 2: Poll all until terminal or overall timeout
+        let total = agents.len();
+        let has_deps = !deferred.is_empty();
+
+        log::info!(
+            "[SUBAGENTS] Spawning {} sub-agents ({} immediate, {} deferred) (timeout: {}s)",
+            total,
+            immediate_indices.len(),
+            deferred.len(),
+            overall_timeout
+        );
+
+        // Phase 1: Spawn immediate agents (no dependencies)
+        // Use ordered vectors: spawned_ids[i] and spawned_labels[i] correspond to agents[i]
+        let mut spawned_ids: Vec<Option<String>> = vec![None; total];
+        let mut spawned_labels: Vec<String> = labeled_agents.iter().map(|(l, _)| l.clone()).collect();
+
+        for &i in &immediate_indices {
+            let (id, _label) = self
+                .spawn_agent(
+                    labeled_agents[i].1,
+                    i,
+                    total,
+                    session_id,
+                    channel_id,
+                    None,
+                    context,
+                    manager,
+                )
+                .await;
+            spawned_ids[i] = Some(id);
+        }
+
+        // Phase 2: Poll all until terminal or overall timeout.
+        // When a dependency completes, spawn its dependents with the result as context.
         let start = std::time::Instant::now();
         let timeout_duration = std::time::Duration::from_secs(overall_timeout);
         let mut last_progress = std::time::Instant::now();
-
-        // Get broadcaster for progress events
         let broadcaster = context.broadcaster.as_ref();
+
+        // Track which deferred agents have been spawned
+        let mut deferred_spawned: Vec<bool> = vec![false; deferred.len()];
+        // Track which labels have completed (label -> result text)
+        let mut completed_results: HashMap<String, String> = HashMap::new();
 
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS)).await;
 
-            // Check all statuses
+            // Check all spawned agent statuses
             let mut all_terminal = true;
-            let mut status_summary: Vec<(String, String, String)> = Vec::new(); // (id, label, status)
+            let mut status_summary: Vec<(String, String, String)> = Vec::new();
 
-            for (id, label) in spawned_ids.iter().zip(spawned_labels.iter()) {
-                if id.starts_with("FAILED_TO_SPAWN_") {
-                    status_summary.push((id.clone(), label.clone(), "spawn_failed".to_string()));
-                    continue;
-                }
-
-                match manager.get_status(id) {
-                    Ok(Some(status)) => {
-                        let status_str = status.status.to_string();
-                        if !status.status.is_terminal() {
-                            all_terminal = false;
-                        }
-                        status_summary.push((id.clone(), label.clone(), status_str));
-                    }
-                    Ok(None) => {
-                        status_summary.push((id.clone(), label.clone(), "not_found".to_string()));
-                    }
-                    Err(_) => {
+            for i in 0..total {
+                let label = &spawned_labels[i];
+                match &spawned_ids[i] {
+                    None => {
+                        // Not yet spawned (deferred)
                         all_terminal = false;
-                        status_summary.push((id.clone(), label.clone(), "unknown".to_string()));
+                        status_summary.push(("pending".to_string(), label.clone(), "waiting_for_dependency".to_string()));
+                    }
+                    Some(id) if id.starts_with("FAILED_TO_SPAWN_") => {
+                        status_summary.push((id.clone(), label.clone(), "spawn_failed".to_string()));
+                    }
+                    Some(id) => {
+                        match manager.get_status(id) {
+                            Ok(Some(status)) => {
+                                let status_str = status.status.to_string();
+                                if !status.status.is_terminal() {
+                                    all_terminal = false;
+                                }
+                                // Track completed results for dependency injection
+                                if has_deps
+                                    && status.status == SubAgentStatus::Completed
+                                    && !completed_results.contains_key(label)
+                                {
+                                    let result_text = status
+                                        .result
+                                        .clone()
+                                        .unwrap_or_default();
+                                    completed_results.insert(label.clone(), result_text);
+                                }
+                                status_summary.push((id.clone(), label.clone(), status_str));
+                            }
+                            Ok(None) => {
+                                status_summary.push((id.clone(), label.clone(), "not_found".to_string()));
+                            }
+                            Err(_) => {
+                                all_terminal = false;
+                                status_summary.push((id.clone(), label.clone(), "unknown".to_string()));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Check if any deferred agents can now be spawned
+            if has_deps {
+                for (di, (agent_idx, dep_label)) in deferred.iter().enumerate() {
+                    if deferred_spawned[di] {
+                        continue; // Already spawned
+                    }
+
+                    // Check if the dependency has completed
+                    if let Some(dep_result) = completed_results.get(dep_label) {
+                        log::info!(
+                            "[SUBAGENTS] Dependency '{}' completed, spawning deferred agent '{}'",
+                            dep_label,
+                            spawned_labels[*agent_idx]
+                        );
+                        let (id, _label) = self
+                            .spawn_agent(
+                                labeled_agents[*agent_idx].1,
+                                *agent_idx,
+                                total,
+                                session_id,
+                                channel_id,
+                                Some(dep_result),
+                                context,
+                                manager,
+                            )
+                            .await;
+                        spawned_ids[*agent_idx] = Some(id);
+                        deferred_spawned[di] = true;
+                        all_terminal = false; // Just spawned, not terminal yet
+                    }
+
+                    // If the dependency failed/timed out, spawn anyway without context
+                    // so the agent can at least try (better than hanging forever)
+                    if !deferred_spawned[di] {
+                        let dep_agent_idx = labeled_agents
+                            .iter()
+                            .position(|(l, _)| l == dep_label);
+                        if let Some(dep_idx) = dep_agent_idx {
+                            if let Some(Some(dep_id)) = spawned_ids.get(dep_idx) {
+                                if dep_id.starts_with("FAILED_TO_SPAWN_") {
+                                    // Dependency failed to spawn — spawn dependent anyway
+                                    log::warn!(
+                                        "[SUBAGENTS] Dependency '{}' failed to spawn, spawning '{}' without dependency result",
+                                        dep_label,
+                                        spawned_labels[*agent_idx]
+                                    );
+                                    let (id, _label) = self
+                                        .spawn_agent(
+                                            labeled_agents[*agent_idx].1,
+                                            *agent_idx,
+                                            total,
+                                            session_id,
+                                            channel_id,
+                                            Some(&format!("[Dependency '{}' failed to spawn]", dep_label)),
+                                            context,
+                                            manager,
+                                        )
+                                        .await;
+                                    spawned_ids[*agent_idx] = Some(id);
+                                    deferred_spawned[di] = true;
+                                    all_terminal = false;
+                                } else if let Ok(Some(status)) = manager.get_status(dep_id) {
+                                    if status.status == SubAgentStatus::Failed
+                                        || status.status == SubAgentStatus::TimedOut
+                                        || status.status == SubAgentStatus::Cancelled
+                                    {
+                                        let error_ctx = format!(
+                                            "[Dependency '{}' {}] {}",
+                                            dep_label,
+                                            status.status,
+                                            status.error.as_deref().unwrap_or("no details")
+                                        );
+                                        log::warn!(
+                                            "[SUBAGENTS] Dependency '{}' {}, spawning '{}' with error context",
+                                            dep_label,
+                                            status.status,
+                                            spawned_labels[*agent_idx]
+                                        );
+                                        let (id, _label) = self
+                                            .spawn_agent(
+                                                labeled_agents[*agent_idx].1,
+                                                *agent_idx,
+                                                total,
+                                                session_id,
+                                                channel_id,
+                                                Some(&error_ctx),
+                                                context,
+                                                manager,
+                                            )
+                                            .await;
+                                        spawned_ids[*agent_idx] = Some(id);
+                                        deferred_spawned[di] = true;
+                                        all_terminal = false;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -289,7 +499,6 @@ impl SpawnSubagentsTool {
                 last_progress = std::time::Instant::now();
                 let elapsed = start.elapsed().as_secs();
 
-                // Build heartbeat info for each running agent
                 let mut progress_details = Vec::new();
                 for (id, label, status) in &status_summary {
                     let mut detail = json!({
@@ -297,8 +506,7 @@ impl SpawnSubagentsTool {
                         "label": label,
                         "status": status,
                     });
-                    // Add idle warning for running agents
-                    if status == "running" {
+                    if status == "running" && id != "pending" {
                         if let Some(last_act) = manager.get_last_activity(id) {
                             let idle_secs = (chrono::Utc::now() - last_act).num_seconds();
                             detail["idle_secs"] = json!(idle_secs);
@@ -345,7 +553,14 @@ impl SpawnSubagentsTool {
         }
 
         // Phase 3: Collect and return consolidated results
-        self.build_consolidated_result(&spawned_ids, &spawned_labels, manager, start.elapsed())
+        // Flatten spawned_ids (replacing None with FAILED_TO_SPAWN for unspawned deferred agents)
+        let final_ids: Vec<String> = spawned_ids
+            .into_iter()
+            .enumerate()
+            .map(|(i, opt)| opt.unwrap_or_else(|| format!("FAILED_TO_SPAWN_{}", i)))
+            .collect();
+
+        self.build_consolidated_result(&final_ids, &spawned_labels, manager, start.elapsed())
     }
 
     /// Build the consolidated result report from all subagent outcomes

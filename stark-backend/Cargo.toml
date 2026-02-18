@@ -21,7 +21,7 @@ uuid = { version = "1", features = ["v4"] }
 env_logger = "0.11"
 log = "0.4"
 dotenv = "0.15"
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.11", features = ["json", "multipart"] }
 async-trait = "0.1"
 
 # Gateway WebSocket server (integrated with Actix)

@@ -57,10 +57,21 @@ impl TwitterPostTool {
             },
         );
 
+        properties.insert(
+            "media_url".to_string(),
+            PropertySchema {
+                schema_type: "string".to_string(),
+                description: "Optional: URL of an image to attach to the tweet. The image will be downloaded and uploaded to Twitter. Supports PNG, JPG, GIF, and WEBP.".to_string(),
+                default: None,
+                items: None,
+                enum_values: None,
+            },
+        );
+
         TwitterPostTool {
             definition: ToolDefinition {
                 name: "twitter_post".to_string(),
-                description: "Post a tweet to Twitter/X. Requires Twitter OAuth credentials to be configured in Settings > API Keys.".to_string(),
+                description: "Post a tweet to Twitter/X with optional image attachment. Requires Twitter OAuth credentials to be configured in Settings > API Keys.".to_string(),
                 input_schema: ToolInputSchema {
                     schema_type: "object".to_string(),
                     properties,
@@ -75,6 +86,107 @@ impl TwitterPostTool {
     fn get_credential(&self, key_id: ApiKeyId, context: &ToolContext) -> Option<String> {
         context.get_api_key_by_id(key_id).filter(|k| !k.is_empty())
     }
+
+    /// Download an image from a URL and upload it to Twitter's media upload endpoint.
+    /// Returns the media_id string on success.
+    async fn upload_media(
+        &self,
+        client: &reqwest::Client,
+        image_url: &str,
+        credentials: &TwitterCredentials,
+    ) -> Result<String, String> {
+        // Step 1: Download the image
+        log::info!("[TWITTER] Downloading media from: {}", image_url);
+        let image_response = client
+            .get(image_url)
+            .timeout(std::time::Duration::from_secs(30))
+            .send()
+            .await
+            .map_err(|e| format!("Failed to download image: {}", e))?;
+
+        if !image_response.status().is_success() {
+            return Err(format!(
+                "Image download failed with status {}",
+                image_response.status()
+            ));
+        }
+
+        // Detect MIME type from Content-Type header or URL extension
+        let content_type = image_response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("image/png")
+            .to_string();
+
+        let image_bytes = image_response
+            .bytes()
+            .await
+            .map_err(|e| format!("Failed to read image bytes: {}", e))?;
+
+        let size_mb = image_bytes.len() as f64 / (1024.0 * 1024.0);
+        log::info!(
+            "[TWITTER] Downloaded {:.2} MB image ({})",
+            size_mb,
+            content_type
+        );
+
+        // Twitter limit for image uploads is 5 MB
+        if image_bytes.len() > 5 * 1024 * 1024 {
+            return Err(format!(
+                "Image too large ({:.2} MB). Twitter limit is 5 MB for images.",
+                size_mb
+            ));
+        }
+
+        // Step 2: Upload to Twitter media endpoint using multipart/form-data
+        let upload_url = "https://upload.twitter.com/1.1/media/upload.json";
+
+        // For multipart uploads, body params are NOT included in OAuth signature
+        let auth_header = generate_oauth_header("POST", upload_url, credentials, None);
+
+        let part = reqwest::multipart::Part::bytes(image_bytes.to_vec())
+            .mime_str(&content_type)
+            .map_err(|e| format!("Invalid MIME type: {}", e))?;
+
+        let form = reqwest::multipart::Form::new().part("media", part);
+
+        let upload_response = client
+            .post(upload_url)
+            .header("Authorization", auth_header)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| format!("Media upload request failed: {}", e))?;
+
+        let upload_status = upload_response.status();
+        let upload_body = upload_response.text().await.unwrap_or_default();
+
+        if !upload_status.is_success() {
+            return Err(format!(
+                "Media upload failed ({}): {}",
+                upload_status, upload_body
+            ));
+        }
+
+        // Step 3: Parse media_id from response
+        let upload_data: Value = serde_json::from_str(&upload_body)
+            .map_err(|e| format!("Failed to parse upload response: {}", e))?;
+
+        // media_id_string is the string form (preferred for v2 API)
+        let media_id = upload_data
+            .get("media_id_string")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| {
+                format!(
+                    "Upload response missing media_id_string: {}",
+                    upload_body
+                )
+            })?;
+
+        Ok(media_id)
+    }
 }
 
 impl Default for TwitterPostTool {
@@ -88,6 +200,7 @@ struct TwitterPostParams {
     text: String,
     reply_to: Option<String>,
     quote_tweet_id: Option<String>,
+    media_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -209,10 +322,32 @@ impl Tool for TwitterPostTool {
             }
         }
 
+        // Upload media if provided
+        let media_id = if let Some(ref media_url) = params.media_url {
+            match self.upload_media(&client, media_url, &credentials).await {
+                Ok(id) => {
+                    log::info!("[TWITTER] Media uploaded successfully, media_id: {}", id);
+                    Some(id)
+                }
+                Err(e) => {
+                    log::error!("[TWITTER] Media upload failed: {}", e);
+                    return ToolResult::error(format!("Failed to upload media: {}", e));
+                }
+            }
+        } else {
+            None
+        };
+
         // Build request body
         let mut body = json!({
             "text": params.text
         });
+
+        if let Some(ref mid) = media_id {
+            body["media"] = json!({
+                "media_ids": [mid]
+            });
+        }
 
         if let Some(reply_to) = &params.reply_to {
             body["reply"] = json!({

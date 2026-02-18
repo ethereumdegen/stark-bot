@@ -71,6 +71,16 @@ impl Orchestrator {
         }
     }
 
+    /// Reset per-turn counters.
+    /// Called at the start of each new user message to prevent carry-over
+    /// of iteration/tool counters from previous turns in the same session.
+    pub fn reset_turn_counters(&mut self) {
+        self.context.mode_iterations = 0;
+        self.context.total_iterations = 0;
+        self.context.actual_tool_calls = 0;
+        self.context.no_tool_warnings = 0;
+    }
+
     /// Clear the active skill
     pub fn clear_active_skill(&mut self) {
         if let Some(ref skill) = self.context.active_skill {

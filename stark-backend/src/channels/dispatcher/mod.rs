@@ -1377,6 +1377,10 @@ impl MessageDispatcher {
                 // Clear active skill at the start of each new message to prevent stale skills
                 // from being used. Skills should only be active for the turn they were invoked.
                 orch.clear_active_skill();
+                // Reset per-turn counters so they don't carry over from previous messages.
+                // mode_iterations/actual_tool_calls/no_tool_warnings are per-turn state,
+                // not cumulative session state.
+                orch.reset_turn_counters();
                 orch
             }
             Ok(None) => {
