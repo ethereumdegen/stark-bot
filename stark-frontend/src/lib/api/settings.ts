@@ -77,6 +77,7 @@ export interface AiEndpointPreset {
   display_name: string;
   endpoint: string;
   model_archetype: string;
+  model: string | null;
   x402_cost: number | null;
 }
 

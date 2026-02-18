@@ -10,6 +10,7 @@ type ModelArchetype = 'kimi' | 'llama' | 'claude' | 'openai' | 'minimax';
 interface Settings {
   endpoint?: string;
   model_archetype?: string;
+  model?: string | null;
   max_response_tokens?: number;
   max_context_tokens?: number;
   has_secret_key?: boolean;
@@ -63,8 +64,9 @@ export default function AgentSettings() {
     try {
       const data = await getAgentSettings() as Settings;
 
-      // Determine which endpoint option is being used
-      const matchedPreset = loadedPresets.find(p => p.endpoint === data.endpoint);
+      // Determine which endpoint option is being used (match by endpoint + model)
+      const matchedPreset = loadedPresets.find(p => p.endpoint === data.endpoint && p.model === data.model)
+        ?? loadedPresets.find(p => p.endpoint === data.endpoint);
       if (matchedPreset) {
         setEndpointOption(matchedPreset.id);
       } else if (data.endpoint) {
@@ -151,12 +153,14 @@ export default function AgentSettings() {
       const payload: {
         endpoint: string;
         model_archetype: string;
+        model?: string | null;
         max_response_tokens: number;
         max_context_tokens: number;
         secret_key?: string;
       } = {
         endpoint,
         model_archetype: archetype,
+        model: selectedPreset?.model ?? null,
         max_response_tokens: maxResponseTokens,
         max_context_tokens: contextTokens,
       };

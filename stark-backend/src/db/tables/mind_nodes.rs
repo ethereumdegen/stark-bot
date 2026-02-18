@@ -317,12 +317,26 @@ impl Database {
     }
 
     /// Get the full mind map graph (nodes + connections)
+    /// Filters out non-trunk nodes with empty bodies (accidental/unfilled nodes)
     pub fn get_mind_graph(&self) -> SqliteResult<MindGraphResponse> {
         // Ensure trunk exists
         let _ = self.get_or_create_trunk_node();
 
-        let nodes = self.list_mind_nodes()?;
-        let connections = self.list_mind_node_connections()?;
+        let all_nodes = self.list_mind_nodes()?;
+
+        // Skip empty non-trunk nodes
+        let nodes: Vec<MindNode> = all_nodes
+            .into_iter()
+            .filter(|n| n.is_trunk || !n.body.trim().is_empty())
+            .collect();
+
+        // Only include connections between visible nodes
+        let valid_ids: std::collections::HashSet<i64> = nodes.iter().map(|n| n.id).collect();
+        let connections: Vec<MindNodeConnection> = self
+            .list_mind_node_connections()?
+            .into_iter()
+            .filter(|c| valid_ids.contains(&c.parent_id) && valid_ids.contains(&c.child_id))
+            .collect();
 
         Ok(MindGraphResponse { nodes, connections })
     }

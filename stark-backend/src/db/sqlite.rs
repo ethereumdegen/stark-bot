@@ -256,6 +256,20 @@ impl Database {
             conn.execute("ALTER TABLE agent_settings ADD COLUMN secret_key TEXT", [])?;
         }
 
+        // Migration: Add model column for unified router dispatch
+        let has_model: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('agent_settings') WHERE name='model'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap_or(false);
+
+        if !has_model {
+            conn.execute("ALTER TABLE agent_settings ADD COLUMN model TEXT", [])?;
+        }
+
         // Migration: Add web3_tx_requires_confirmation column to bot_settings if it doesn't exist
         let has_web3_tx_confirmation: bool = conn
             .query_row(

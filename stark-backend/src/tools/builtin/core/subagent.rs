@@ -53,7 +53,13 @@ impl SpawnSubagentsTool {
                     read_only (boolean) — restrict to read-only tools (default false); \
                     context (string) — additional context to pass.".to_string(),
                 default: None,
-                items: None,
+                items: Some(Box::new(PropertySchema {
+                    schema_type: "object".to_string(),
+                    description: "Sub-agent specification with task, label, agent_subtype, model, thinking, timeout, read_only, and context fields".to_string(),
+                    default: None,
+                    items: None,
+                    enum_values: None,
+                })),
                 enum_values: None,
             },
         );

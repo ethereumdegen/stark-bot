@@ -7,7 +7,7 @@ pub struct SpecialRole {
     pub name: String,
     /// Individual tool names granted to this role (e.g. ["x402_preset_fetch", "web_fetch"])
     pub allowed_tools: Vec<String>,
-    /// Individual skill names granted to this role (e.g. ["super_router", "weather"])
+    /// Individual skill names granted to this role (e.g. ["image_generation", "weather"])
     pub allowed_skills: Vec<String>,
     pub description: Option<String>,
     pub created_at: String,
@@ -33,7 +33,7 @@ pub struct SpecialRoleGrants {
     pub description: Option<String>,
     /// Individual tool names granted (e.g. ["x402_preset_fetch"])
     pub extra_tools: Vec<String>,
-    /// Individual skill names granted (e.g. ["super_router"])
+    /// Individual skill names granted (e.g. ["image_generation"])
     pub extra_skills: Vec<String>,
 }
 

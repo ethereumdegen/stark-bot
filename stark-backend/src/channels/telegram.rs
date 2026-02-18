@@ -478,6 +478,27 @@ pub async fn start_telegram_listener(
                         let verbosity = ToolOutputVerbosity::MinimalThrottled;
                         let mut throttler = util::StatusThrottler::default_for_gateway();
 
+                        // Send an immediate "thinking" message so users see feedback right away
+                        match bot_for_events
+                            .send_message(telegram_chat_id, "💭 Thinking...")
+                            .await
+                        {
+                            Ok(sent_msg) => {
+                                status_message_id = Some(sent_msg.id);
+                                throttler.record_success();
+                                log::debug!(
+                                    "Telegram: Created initial thinking message {:?}",
+                                    sent_msg.id
+                                );
+                            }
+                            Err(e) => {
+                                log::error!(
+                                    "Telegram: Failed to send thinking message: {}",
+                                    e
+                                );
+                            }
+                        }
+
                         while let Some(event) = event_rx.recv().await {
                             if !util::event_matches_session(
                                 &event.data,

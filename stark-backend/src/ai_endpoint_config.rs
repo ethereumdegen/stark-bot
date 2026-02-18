@@ -10,6 +10,9 @@ pub struct AiEndpointPreset {
     pub display_name: String,
     pub endpoint: String,
     pub model_archetype: String,
+    /// Model name to send in request body (for unified router dispatch)
+    #[serde(default)]
+    pub model: Option<String>,
     #[serde(default)]
     pub x402_cost: Option<u64>,
 }
@@ -51,21 +54,13 @@ pub fn load_ai_endpoints(config_dir: &Path) {
 fn default_endpoints() -> HashMap<String, AiEndpointPreset> {
     let mut endpoints = HashMap::new();
     endpoints.insert(
-        "kimi".to_string(),
+        "kimi-turbo".to_string(),
         AiEndpointPreset {
-            display_name: "kimi.defirelay.com".to_string(),
-            endpoint: "https://kimi.defirelay.com/api/v1/chat/completions".to_string(),
+            display_name: "Kimi K2 Turbo".to_string(),
+            endpoint: "https://inference.defirelay.com/api/v1/chat/completions".to_string(),
             model_archetype: "kimi".to_string(),
-            x402_cost: None,
-        },
-    );
-    endpoints.insert(
-        "llama".to_string(),
-        AiEndpointPreset {
-            display_name: "llama.defirelay.com".to_string(),
-            endpoint: "https://llama.defirelay.com/api/v1/chat/completions".to_string(),
-            model_archetype: "llama".to_string(),
-            x402_cost: None,
+            model: Some("kimi-turbo".to_string()),
+            x402_cost: Some(5000),
         },
     );
     endpoints

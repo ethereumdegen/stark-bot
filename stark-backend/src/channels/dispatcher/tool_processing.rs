@@ -377,12 +377,16 @@ impl MessageDispatcher {
                             log::info!("[SUBTYPE] '{}' has skip_task_planner=true, staying in Assistant mode", new_key);
                             orchestrator.transition_to_assistant();
                         }
-                    } else {
+                    } else if !orchestrator.context().planner_completed {
                         // Re-enter TaskPlanner so this subtype plans its work
+                        // (only if no prior planning phase has completed — otherwise
+                        // the existing task queue should be preserved)
                         log::info!("[SUBTYPE] '{}' entering TaskPlanner mode for task planning", new_key);
                         let ctx = orchestrator.context_mut();
                         ctx.planner_completed = false;
                         ctx.mode = AgentMode::TaskPlanner;
+                    } else {
+                        log::info!("[SUBTYPE] '{}' keeping Assistant mode — tasks already planned", new_key);
                     }
 
                     // Refresh tools for new subtype
@@ -570,22 +574,17 @@ impl MessageDispatcher {
                     TaskAdvanceResult::AllTasksComplete => {
                         processed.orchestrator_complete = true;
                         processed.final_summary = Some(summary.clone());
-                        // If say_to_user was never called, use the summary as user-visible content
-                        // so it gets sent to Discord/Telegram/etc.
-                        if last_say_to_user_content.is_empty() {
-                            log::info!("[ORCHESTRATED_LOOP] No say_to_user called — using task_fully_completed summary as user response");
-                            *last_say_to_user_content = summary.clone();
-                        }
+                        // Don't set last_say_to_user_content here — task_fully_completed
+                        // was NOT broadcast via tool.result as say_to_user. The summary
+                        // will flow through final_summary → finalize_tool_loop → dispatch()
+                        // → agent.response event. Setting last_say_to_user_content would
+                        // incorrectly mark the response as "already delivered" and suppress
+                        // the agent.response broadcast.
                     }
                     TaskAdvanceResult::InconsistentState => {
                         log::warn!("[ORCHESTRATED_LOOP] task_fully_completed: inconsistent task state, terminating");
                         processed.orchestrator_complete = true;
                         processed.final_summary = Some(summary.clone());
-                        // If say_to_user was never called, use the summary as user-visible content
-                        if last_say_to_user_content.is_empty() {
-                            log::info!("[ORCHESTRATED_LOOP] No say_to_user called — using task_fully_completed summary as user response");
-                            *last_say_to_user_content = summary.clone();
-                        }
                     }
                     TaskAdvanceResult::NextTaskStarted => {
                         // Continue loop for next task

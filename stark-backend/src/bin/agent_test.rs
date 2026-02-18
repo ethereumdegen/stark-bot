@@ -1,17 +1,30 @@
 //! Agent Test Fixture
 //!
-//! Tests the agent loop with REAL tool implementations for CodeEngineer tasks.
-//! This is a standalone test binary that implements the tools directly.
+//! Tests the agent loop via the external channel gateway (default) or with
+//! direct LLM calls using REAL tool implementations.
 //!
-//! Usage:
-//!   TEST_QUERY="build a simple todo app" \
+//! ## Gateway Mode (default when EXT_CHANNEL_API_TOKEN is set)
+//!
+//!   EXT_CHANNEL_API_TOKEN="your-token" \
+//!   TEST_QUERY="tell me the price of bitcoin" \
+//!   cargo run --bin agent_test
+//!
+//! ## Direct Mode (legacy, requires TEST_AGENT_ENDPOINT)
+//!
 //!   TEST_AGENT_ENDPOINT="https://api.openai.com/v1/chat/completions" \
 //!   TEST_AGENT_SECRET="your-api-key" \
-//!   TEST_WORKSPACE="/tmp/agent-test-workspace" \
+//!   TEST_QUERY="build a simple todo app" \
 //!   cargo run --bin agent_test
 //!
 //! Environment variables:
-//!   TEST_QUERY           - The user query to test
+//!   --- Gateway mode ---
+//!   EXT_CHANNEL_API_TOKEN - External channel API token (enables gateway mode)
+//!   EXT_CHANNEL_URL       - Gateway base URL (default: http://localhost:8080)
+//!   TEST_QUERY            - The user query to test
+//!   TEST_SESSION           - Session ID for persistent conversations
+//!   TEST_STREAM            - Use SSE streaming (default: false)
+//!
+//!   --- Direct mode ---
 //!   TEST_AGENT_ENDPOINT  - LLM API endpoint (OpenAI-compatible)
 //!   TEST_AGENT_SECRET    - API key for the LLM
 //!   TEST_AGENT_MODEL     - Model name (auto-detected from endpoint, or specify manually)
@@ -1368,6 +1381,177 @@ async fn run_agent_loop(
 // Main
 // ============================================================================
 
+// ============================================================================
+// Gateway Mode - test via external channel endpoint
+// ============================================================================
+
+async fn run_gateway_test(
+    client: &Client,
+    base_url: &str,
+    token: &str,
+    query: &str,
+    session_id: Option<&str>,
+    use_stream: bool,
+) -> Result<String, String> {
+    if use_stream {
+        run_gateway_stream(client, base_url, token, query, session_id).await
+    } else {
+        run_gateway_chat(client, base_url, token, query, session_id).await
+    }
+}
+
+async fn run_gateway_chat(
+    client: &Client,
+    base_url: &str,
+    token: &str,
+    query: &str,
+    session_id: Option<&str>,
+) -> Result<String, String> {
+    let url = format!("{}/api/gateway/chat", base_url);
+
+    let mut body = json!({ "message": query });
+    if let Some(sid) = session_id {
+        body["session_id"] = json!(sid);
+    }
+
+    println!("📤 POST {}", url);
+    println!("   Message: {}", query);
+
+    let start = std::time::Instant::now();
+    let response = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    let status = response.status();
+    let response_text = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+    let elapsed = start.elapsed();
+
+    println!("\n📊 Response (HTTP {} in {:.1}s):", status, elapsed.as_secs_f64());
+
+    if !status.is_success() {
+        println!("❌ Error: {}", response_text);
+        return Err(format!("HTTP {}: {}", status, response_text));
+    }
+
+    let parsed: Value = serde_json::from_str(&response_text)
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    let success = parsed.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    let response_content = parsed.get("response").and_then(|v| v.as_str()).unwrap_or("");
+    let session = parsed.get("session_id").and_then(|v| v.as_i64());
+    let error = parsed.get("error").and_then(|v| v.as_str());
+
+    if let Some(sid) = session {
+        println!("   Session: {}", sid);
+    }
+
+    if success {
+        println!("\n{}", response_content);
+        Ok(response_content.to_string())
+    } else {
+        let err = error.unwrap_or("Unknown error");
+        println!("❌ {}", err);
+        Err(err.to_string())
+    }
+}
+
+async fn run_gateway_stream(
+    client: &Client,
+    base_url: &str,
+    token: &str,
+    query: &str,
+    session_id: Option<&str>,
+) -> Result<String, String> {
+    let url = format!("{}/api/gateway/chat/stream", base_url);
+
+    let mut body = json!({ "message": query });
+    if let Some(sid) = session_id {
+        body["session_id"] = json!(sid);
+    }
+
+    println!("📤 POST {} (streaming)", url);
+    println!("   Message: {}", query);
+
+    let start = std::time::Instant::now();
+    let response = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let text = response.text().await.unwrap_or_default();
+        return Err(format!("HTTP {}: {}", status, text));
+    }
+
+    println!("\n📊 Streaming response:");
+
+    let mut collected_text = Vec::new();
+    let mut bytes_stream = response.bytes_stream();
+
+    use futures_util::StreamExt;
+    let mut buffer = String::new();
+    while let Some(chunk) = bytes_stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Stream error: {}", e))?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        // Process complete SSE events
+        while let Some(pos) = buffer.find("\n\n") {
+            let event_str = buffer[..pos].to_string();
+            buffer = buffer[pos + 2..].to_string();
+
+            for line in event_str.lines() {
+                if let Some(data) = line.strip_prefix("data: ") {
+                    if let Ok(parsed) = serde_json::from_str::<Value>(data) {
+                        let event_type = parsed.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        match event_type {
+                            "text" => {
+                                let content = parsed.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                                print!("{}", content);
+                                collected_text.push(content.to_string());
+                            }
+                            "tool_call" => {
+                                let tool = parsed.get("tool_name").and_then(|v| v.as_str()).unwrap_or("?");
+                                println!("   🔧 Tool call: {}", tool);
+                            }
+                            "tool_result" => {
+                                let tool = parsed.get("tool_name").and_then(|v| v.as_str()).unwrap_or("?");
+                                println!("   ✅ Tool result: {}", tool);
+                            }
+                            "done" => {
+                                println!("\n   📍 Stream complete");
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let elapsed = start.elapsed();
+    println!("\n\n⏱️  Completed in {:.1}s", elapsed.as_secs_f64());
+
+    let full_response = collected_text.join("\n\n");
+    if full_response.is_empty() {
+        Err("No text response received from stream".to_string())
+    } else {
+        Ok(full_response)
+    }
+}
+
 #[tokio::main]
 async fn main() {
     dotenv::dotenv().ok();
@@ -1375,123 +1559,175 @@ async fn main() {
     println!("🤖 StarkBot Agent Test");
     println!("======================\n");
 
-    // Read environment variables
-    let query = env::var("TEST_QUERY").unwrap_or_else(|_| {
-        "Build a simple todo app with TypeScript. Create a basic CLI todo app with add, list, and remove commands.".to_string()
-    });
+    // Check for gateway mode (default when EXT_CHANNEL_API_TOKEN is set)
+    let gateway_token = env::var("EXT_CHANNEL_API_TOKEN").ok();
 
-    let endpoint = env::var("TEST_AGENT_ENDPOINT").unwrap_or_else(|_| {
-        eprintln!("❌ TEST_AGENT_ENDPOINT not set!");
-        eprintln!("   Example: https://api.openai.com/v1/chat/completions");
-        std::process::exit(1);
-    });
+    if let Some(token) = gateway_token {
+        // ── Gateway mode ──────────────────────────────────────────
+        let base_url = env::var("EXT_CHANNEL_URL")
+            .unwrap_or_else(|_| "http://localhost:8080".to_string());
+        let query = env::var("TEST_QUERY").unwrap_or_else(|_| {
+            "tell me the price of bitcoin".to_string()
+        });
+        let session_id = env::var("TEST_SESSION").ok();
+        let use_stream = env::var("TEST_STREAM")
+            .map(|v| v == "true" || v == "1")
+            .unwrap_or(false);
 
-    let secret = env::var("TEST_AGENT_SECRET").unwrap_or_else(|_| {
-        eprintln!("❌ TEST_AGENT_SECRET not set!");
-        std::process::exit(1);
-    });
-
-    let model = env::var("TEST_AGENT_MODEL").unwrap_or_else(|_| {
-        // Auto-detect model based on endpoint
-        if endpoint.contains("moonshot") {
-            "moonshot-v1-128k".to_string()
-        } else if endpoint.contains("anthropic") {
-            "claude-sonnet-4-20250514".to_string()
-        } else {
-            "gpt-4o".to_string()
+        println!("📝 Mode: Gateway (External Channel)");
+        println!("   URL:     {}", base_url);
+        println!("   Token:   {}...{}", &token[..8.min(token.len())], &token[token.len().saturating_sub(4)..]);
+        println!("   Query:   {}", query);
+        println!("   Stream:  {}", use_stream);
+        if let Some(ref sid) = session_id {
+            println!("   Session: {}", sid);
         }
-    });
 
-    let workspace_str = env::var("TEST_WORKSPACE").unwrap_or_else(|_| {
-        "/tmp/agent-test-workspace".to_string()
-    });
-    let workspace = PathBuf::from(&workspace_str);
+        let client = Client::builder()
+            .timeout(Duration::from_secs(600))
+            .build()
+            .expect("Failed to create HTTP client");
 
-    let skills_dir = env::var("TEST_SKILLS_DIR").unwrap_or_else(|_| {
-        if Path::new("skills").exists() {
-            "skills".to_string()
-        } else if Path::new("../skills").exists() {
-            "../skills".to_string()
-        } else {
-            "./skills".to_string()
+        println!("\n🚀 Sending to gateway...\n");
+
+        match run_gateway_test(
+            &client,
+            &base_url,
+            &token,
+            &query,
+            session_id.as_deref(),
+            use_stream,
+        ).await {
+            Ok(response) => {
+                println!("\n============================================================");
+                println!("🎉 SUCCESS");
+                println!("============================================================");
+                println!("{}", response);
+            }
+            Err(e) => {
+                println!("\n============================================================");
+                println!("❌ ERROR");
+                println!("============================================================");
+                println!("{}", e);
+                std::process::exit(1);
+            }
         }
-    });
+    } else {
+        // ── Direct mode (legacy) ──────────────────────────────────
+        let query = env::var("TEST_QUERY").unwrap_or_else(|_| {
+            "Build a simple todo app with TypeScript. Create a basic CLI todo app with add, list, and remove commands.".to_string()
+        });
 
-    let max_iterations: usize = env::var("TEST_MAX_ITERATIONS")
-        .unwrap_or_else(|_| "25".to_string())
-        .parse()
-        .unwrap_or(25);
+        let endpoint = env::var("TEST_AGENT_ENDPOINT").unwrap_or_else(|_| {
+            eprintln!("❌ Neither EXT_CHANNEL_API_TOKEN nor TEST_AGENT_ENDPOINT is set!");
+            eprintln!("   Gateway mode: set EXT_CHANNEL_API_TOKEN");
+            eprintln!("   Direct mode:  set TEST_AGENT_ENDPOINT and TEST_AGENT_SECRET");
+            std::process::exit(1);
+        });
 
-    let skills = list_available_skills(&skills_dir);
+        let secret = env::var("TEST_AGENT_SECRET").unwrap_or_else(|_| {
+            eprintln!("❌ TEST_AGENT_SECRET not set!");
+            std::process::exit(1);
+        });
 
-    println!("📝 Configuration:");
-    println!("   Query:      {}", query);
-    println!("   Endpoint:   {}", endpoint);
-    println!("   Model:      {}", model);
-    println!("   Workspace:  {}", workspace.display());
-    println!("   Skills:     {} ({} found)", skills_dir, skills.len());
-    println!("   Max Iters:  {}", max_iterations);
+        let model = env::var("TEST_AGENT_MODEL").unwrap_or_else(|_| {
+            if endpoint.contains("moonshot") {
+                "moonshot-v1-128k".to_string()
+            } else if endpoint.contains("anthropic") {
+                "claude-sonnet-4-20250514".to_string()
+            } else {
+                "gpt-4o".to_string()
+            }
+        });
 
-    // Clean and create workspace
-    if workspace.exists() {
-        println!("\n🧹 Cleaning existing workspace...");
-        let _ = fs::remove_dir_all(&workspace);
-    }
-    if let Err(e) = fs::create_dir_all(&workspace) {
-        eprintln!("❌ Failed to create workspace: {}", e);
-        std::process::exit(1);
-    }
-    println!("✅ Workspace ready: {}", workspace.display());
+        let workspace_str = env::var("TEST_WORKSPACE").unwrap_or_else(|_| {
+            "/tmp/agent-test-workspace".to_string()
+        });
+        let workspace = PathBuf::from(&workspace_str);
 
-    // Create HTTP client
-    let client = Client::builder()
-        .timeout(Duration::from_secs(300))
-        .build()
-        .expect("Failed to create HTTP client");
+        let skills_dir = env::var("TEST_SKILLS_DIR").unwrap_or_else(|_| {
+            if Path::new("skills").exists() {
+                "skills".to_string()
+            } else if Path::new("../skills").exists() {
+                "../skills".to_string()
+            } else {
+                "./skills".to_string()
+            }
+        });
 
-    // Run the agent loop
-    println!("\n🚀 Starting agent loop...\n");
+        let max_iterations: usize = env::var("TEST_MAX_ITERATIONS")
+            .unwrap_or_else(|_| "25".to_string())
+            .parse()
+            .unwrap_or(25);
 
-    match run_agent_loop(
-        &client,
-        &endpoint,
-        &secret,
-        &model,
-        &query,
-        &workspace,
-        &skills,
-        max_iterations,
-    ).await {
-        Ok(response) => {
-            println!("\n============================================================");
-            println!("🎉 SUCCESS");
-            println!("============================================================");
-            println!("{}", response);
+        let skills = list_available_skills(&skills_dir);
 
-            // Show what was created
-            println!("\n📁 Workspace contents:");
-            fn list_recursive(path: &Path, prefix: &str) {
-                if let Ok(entries) = fs::read_dir(path) {
-                    for entry in entries.flatten() {
-                        let p = entry.path();
-                        let name = p.file_name().unwrap_or_default().to_string_lossy();
-                        if p.is_dir() {
-                            println!("{}📁 {}/", prefix, name);
-                            list_recursive(&p, &format!("{}  ", prefix));
-                        } else {
-                            println!("{}📄 {}", prefix, name);
+        println!("📝 Mode: Direct (LLM endpoint)");
+        println!("   Query:      {}", query);
+        println!("   Endpoint:   {}", endpoint);
+        println!("   Model:      {}", model);
+        println!("   Workspace:  {}", workspace.display());
+        println!("   Skills:     {} ({} found)", skills_dir, skills.len());
+        println!("   Max Iters:  {}", max_iterations);
+
+        // Clean and create workspace
+        if workspace.exists() {
+            println!("\n🧹 Cleaning existing workspace...");
+            let _ = fs::remove_dir_all(&workspace);
+        }
+        if let Err(e) = fs::create_dir_all(&workspace) {
+            eprintln!("❌ Failed to create workspace: {}", e);
+            std::process::exit(1);
+        }
+        println!("✅ Workspace ready: {}", workspace.display());
+
+        let client = Client::builder()
+            .timeout(Duration::from_secs(300))
+            .build()
+            .expect("Failed to create HTTP client");
+
+        println!("\n🚀 Starting agent loop...\n");
+
+        match run_agent_loop(
+            &client,
+            &endpoint,
+            &secret,
+            &model,
+            &query,
+            &workspace,
+            &skills,
+            max_iterations,
+        ).await {
+            Ok(response) => {
+                println!("\n============================================================");
+                println!("🎉 SUCCESS");
+                println!("============================================================");
+                println!("{}", response);
+
+                println!("\n📁 Workspace contents:");
+                fn list_recursive(path: &Path, prefix: &str) {
+                    if let Ok(entries) = fs::read_dir(path) {
+                        for entry in entries.flatten() {
+                            let p = entry.path();
+                            let name = p.file_name().unwrap_or_default().to_string_lossy();
+                            if p.is_dir() {
+                                println!("{}📁 {}/", prefix, name);
+                                list_recursive(&p, &format!("{}  ", prefix));
+                            } else {
+                                println!("{}📄 {}", prefix, name);
+                            }
                         }
                     }
                 }
+                list_recursive(&workspace, "   ");
             }
-            list_recursive(&workspace, "   ");
-        }
-        Err(e) => {
-            println!("\n============================================================");
-            println!("❌ ERROR");
-            println!("============================================================");
-            println!("{}", e);
-            std::process::exit(1);
+            Err(e) => {
+                println!("\n============================================================");
+                println!("❌ ERROR");
+                println!("============================================================");
+                println!("{}", e);
+                std::process::exit(1);
+            }
         }
     }
 }

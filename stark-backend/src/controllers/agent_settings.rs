@@ -165,7 +165,7 @@ pub async fn update_agent_settings(
         request.secret_key.is_some()
     );
 
-    match state.db.save_agent_settings(&request.endpoint, &request.model_archetype, request.max_response_tokens, request.max_context_tokens, request.secret_key.as_deref()) {
+    match state.db.save_agent_settings(&request.endpoint, &request.model_archetype, request.model.as_deref(), request.max_response_tokens, request.max_context_tokens, request.secret_key.as_deref()) {
         Ok(settings) => {
             log::info!("Updated agent settings to use {} endpoint with {} archetype", request.endpoint, request.model_archetype);
             let response: AgentSettingsResponse = settings.into();
@@ -383,6 +383,7 @@ pub async fn get_ai_endpoint_presets(
                 "display_name": preset.display_name,
                 "endpoint": preset.endpoint,
                 "model_archetype": preset.model_archetype,
+                "model": preset.model,
                 "x402_cost": preset.x402_cost,
             })
         })

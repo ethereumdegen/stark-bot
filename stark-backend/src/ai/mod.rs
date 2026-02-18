@@ -150,7 +150,9 @@ impl AiClient {
         let archetype_id = Self::infer_archetype(settings);
         let registry = ArchetypeRegistry::new();
         let archetype = registry.get(archetype_id).unwrap_or_else(|| registry.default_archetype());
-        let model = archetype.default_model();
+
+        // Use settings.model if available, fall back to archetype default
+        let model = settings.model.as_deref().unwrap_or_else(|| archetype.default_model());
 
         // Determine API key: x402 endpoints don't need one, others use secret_key
         let api_key = if is_x402_endpoint(&settings.endpoint) {
@@ -192,7 +194,9 @@ impl AiClient {
         let archetype_id = Self::infer_archetype(settings);
         let registry = ArchetypeRegistry::new();
         let archetype = registry.get(archetype_id).unwrap_or_else(|| registry.default_archetype());
-        let model = archetype.default_model();
+
+        // Use settings.model if available, fall back to archetype default
+        let model = settings.model.as_deref().unwrap_or_else(|| archetype.default_model());
 
         // Determine API key: x402 endpoints don't need one, others use secret_key
         let api_key = if is_x402_endpoint(&settings.endpoint) {

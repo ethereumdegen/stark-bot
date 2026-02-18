@@ -6630,7 +6630,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stark-backend"
-version = "0.5.53"
+version = "0.5.54"
 dependencies = [
  "actix-cors",
  "actix-files",

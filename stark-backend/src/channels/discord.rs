@@ -324,6 +324,17 @@ impl DiscordHandler {
             // Track the status message ID - we'll edit this instead of sending new messages
             let mut status_message_id: Option<MessageId> = None;
 
+            // Send an immediate "thinking" message so users see feedback right away
+            match discord_channel_id.say(&http, "💭 **Thinking...**").await {
+                Ok(msg) => {
+                    status_message_id = Some(msg.id);
+                    log::debug!("Discord: Created initial thinking message {}", msg.id);
+                }
+                Err(e) => {
+                    log::error!("Discord: Failed to send thinking message: {}", e);
+                }
+            }
+
             while let Some(event) = event_rx.recv().await {
                 if !util::event_matches_session(
                     &event.data,

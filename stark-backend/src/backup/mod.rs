@@ -326,6 +326,7 @@ pub struct SkillScriptEntry {
 pub struct AgentSettingsEntry {
     pub endpoint: String,
     pub model_archetype: String,
+    pub model: Option<String>,
     pub max_response_tokens: i32,
     pub max_context_tokens: i32,
     pub enabled: bool,
@@ -672,6 +673,7 @@ pub async fn collect_backup_data(
             .map(|s| AgentSettingsEntry {
                 endpoint: s.endpoint.clone(),
                 model_archetype: s.model_archetype.clone(),
+                model: s.model.clone(),
                 max_response_tokens: s.max_response_tokens,
                 max_context_tokens: s.max_context_tokens,
                 enabled: s.enabled,

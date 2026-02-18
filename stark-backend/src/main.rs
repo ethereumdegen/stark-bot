@@ -712,6 +712,7 @@ async fn restore_backup_data(
             match db.save_agent_settings(
                 &entry.endpoint,
                 &entry.model_archetype,
+                entry.model.as_deref(),
                 entry.max_response_tokens,
                 entry.max_context_tokens,
                 entry.secret_key.as_deref(),

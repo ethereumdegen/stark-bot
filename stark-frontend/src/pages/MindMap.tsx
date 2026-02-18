@@ -41,6 +41,7 @@ export default function MindMap() {
   const longPressRef = useRef<{ timer: number | null; triggered: boolean; startX: number; startY: number }>({
     timer: null, triggered: false, startX: 0, startY: 0
   });
+  const draggedRef = useRef(false);
 
   const [nodes, setNodes] = useState<MindNodeInfo[]>([]);
   const [connections, setConnections] = useState<MindConnectionInfo[]>([]);
@@ -448,19 +449,8 @@ export default function MindMap() {
     return () => clearInterval(interval);
   }, [nextBeatAt, heartbeatEnabled, loadHeartbeatConfig]);
 
-  // Handle click on node to create child
-  const handleNodeClick = useCallback(async (node: D3Node) => {
-    try {
-      await createMindNode({ parent_id: node.id });
-      await loadGraph();
-    } catch (e) {
-      console.error('Failed to create node:', e);
-    }
-  }, [loadGraph]);
-
-  // Handle right-click to edit node
-  const handleNodeRightClick = useCallback((event: MouseEvent, node: D3Node) => {
-    event.preventDefault();
+  // Handle click on node to open edit modal
+  const handleNodeEdit = useCallback((node: D3Node) => {
     const nodeInfo = nodes.find(n => n.id === node.id);
     if (nodeInfo) {
       setEditingNode(nodeInfo);
@@ -477,6 +467,20 @@ export default function MindMap() {
       await loadGraph();
     } catch (e) {
       console.error('Failed to update node:', e);
+    }
+  };
+
+  // Handle add child from edit modal — opens edit on the new child immediately
+  const handleAddChild = async () => {
+    if (!editingNode) return;
+    try {
+      const newNode = await createMindNode({ parent_id: editingNode.id });
+      await loadGraph();
+      // Open edit modal on the new child so user fills in content
+      setEditingNode(newNode);
+      setEditBody(newNode.body);
+    } catch (e) {
+      console.error('Failed to create child node:', e);
     }
   };
 
@@ -551,13 +555,15 @@ export default function MindMap() {
     // Center the view initially
     svg.call(zoom.transform, d3.zoomIdentity.translate(width / 2, height / 2));
 
-    // Prepare data for D3
+    // Prepare data for D3 - pin nodes that have saved positions
     const d3Nodes: D3Node[] = nodes.map(n => ({
       id: n.id,
       body: n.body,
       is_trunk: n.is_trunk,
       x: n.position_x ?? undefined,
       y: n.position_y ?? undefined,
+      fx: n.position_x != null ? n.position_x : undefined,
+      fy: n.position_y != null ? n.position_y : undefined,
     }));
 
     const d3Links: D3Link[] = connections.map(c => ({
@@ -659,36 +665,44 @@ export default function MindMap() {
       setHoveredNode(null);
     });
 
-    // Click handler for creating children
+    // Click handler - opens edit modal (with drag guard)
     node.on('click', (event, d) => {
       event.stopPropagation();
+      if (draggedRef.current) {
+        draggedRef.current = false;
+        return;
+      }
       if (longPressRef.current.triggered) {
         longPressRef.current.triggered = false;
         return;
       }
-      handleNodeClick(d);
+      handleNodeEdit(d);
     });
 
-    // Right-click handler for editing
-    node.on('contextmenu', (event: MouseEvent, d: D3Node) => {
-      handleNodeRightClick(event, d);
+    // Suppress browser context menu on nodes
+    node.on('contextmenu', (event: MouseEvent) => {
+      event.preventDefault();
     });
 
-    // Drag behavior
+    // Drag behavior with drag guard to distinguish click vs drag
     const drag = d3.drag<SVGGElement, D3Node>()
       .on('start', (event, d) => {
+        draggedRef.current = false;
         if (!event.active) simulation.alphaTarget(0.3).restart();
         d.fx = d.x;
         d.fy = d.y;
       })
       .on('drag', (event, d) => {
+        draggedRef.current = true;
         d.fx = event.x;
         d.fy = event.y;
       })
       .on('end', (event, d) => {
         if (!event.active) simulation.alphaTarget(0);
-        // Keep position fixed after drag
-        handleDragEnd(d);
+        // Only save position if actually dragged
+        if (draggedRef.current) {
+          handleDragEnd(d);
+        }
       });
 
     (node as d3.Selection<SVGGElement, D3Node, SVGGElement, unknown>).call(drag);
@@ -709,8 +723,8 @@ export default function MindMap() {
         longPressRef.current.triggered = true;
         // Haptic feedback
         if (navigator.vibrate) navigator.vibrate(50);
-        // Open edit modal (reuse right-click handler)
-        handleNodeRightClick(event as unknown as MouseEvent, d);
+        // Open edit modal
+        handleNodeEdit(d);
       }, 500);
     });
 
@@ -747,7 +761,7 @@ export default function MindMap() {
     return () => {
       simulation.stop();
     };
-  }, [loading, nodes, connections, handleNodeClick, handleNodeRightClick, handleDragEnd]);
+  }, [loading, nodes, connections, handleNodeEdit, handleDragEnd]);
 
   // Effect to highlight nodes when hovering over sessions
   useEffect(() => {
@@ -803,7 +817,7 @@ export default function MindMap() {
         <div>
           <h1 className="text-xl font-semibold text-white">Mind Map</h1>
           <p className="text-sm text-gray-400">
-            Add nodes to specify random actions to be performed on heartbeat pulse.
+            Tap a node to edit, drag to move. Add child nodes from the edit modal.
           </p>
         </div>
         <div className="flex items-center gap-4">
@@ -1027,17 +1041,27 @@ export default function MindMap() {
             />
 
             <div className="flex items-center justify-between mt-4">
-              {!editingNode.is_trunk && (
+              <div className="flex gap-2">
                 <Button
                   variant="ghost"
-                  onClick={handleDeleteNode}
-                  className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                  onClick={handleAddChild}
+                  className="text-blue-400 hover:text-blue-300 hover:bg-blue-500/10"
                 >
-                  <Trash2 size={16} className="mr-2" />
-                  Delete
+                  <GitBranch size={16} className="mr-2" />
+                  Add Child
                 </Button>
-              )}
-              <div className={`flex gap-2 ${editingNode.is_trunk ? 'ml-auto' : ''}`}>
+                {!editingNode.is_trunk && (
+                  <Button
+                    variant="ghost"
+                    onClick={handleDeleteNode}
+                    className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                  >
+                    <Trash2 size={16} className="mr-2" />
+                    Delete
+                  </Button>
+                )}
+              </div>
+              <div className="flex gap-2">
                 <Button variant="secondary" onClick={() => setEditingNode(null)}>
                   Cancel
                 </Button>

@@ -7,6 +7,8 @@ pub struct AgentSettings {
     pub id: i64,
     pub endpoint: String,
     pub model_archetype: String,
+    /// Model name sent in request body for unified router dispatch
+    pub model: Option<String>,
     pub max_response_tokens: i32,
     pub max_context_tokens: i32,
     pub enabled: bool,
@@ -21,13 +23,14 @@ pub const MIN_CONTEXT_TOKENS: i32 = 80_000;
 pub const DEFAULT_CONTEXT_TOKENS: i32 = 100_000;
 
 impl Default for AgentSettings {
-    /// Returns default kimi agent settings (used when no agent is configured)
+    /// Returns default kimi-turbo agent settings (used when no agent is configured)
     fn default() -> Self {
         let now = Utc::now();
         Self {
             id: 0,
-            endpoint: "https://kimi2turbo.defirelay.com/api/v1/chat/completions".to_string(),
+            endpoint: "https://inference.defirelay.com/api/v1/chat/completions".to_string(),
             model_archetype: "kimi".to_string(),
+            model: Some("kimi-turbo".to_string()),
             max_response_tokens: 40000,
             max_context_tokens: DEFAULT_CONTEXT_TOKENS,
             enabled: true,
@@ -44,6 +47,7 @@ pub struct AgentSettingsResponse {
     pub id: i64,
     pub endpoint: String,
     pub model_archetype: String,
+    pub model: Option<String>,
     pub max_response_tokens: i32,
     pub max_context_tokens: i32,
     pub enabled: bool,
@@ -58,6 +62,7 @@ impl From<AgentSettings> for AgentSettingsResponse {
             id: settings.id,
             endpoint: settings.endpoint,
             model_archetype: settings.model_archetype,
+            model: settings.model,
             max_response_tokens: settings.max_response_tokens,
             max_context_tokens: settings.max_context_tokens,
             enabled: settings.enabled,
@@ -74,6 +79,8 @@ pub struct UpdateAgentSettingsRequest {
     pub endpoint: String,
     #[serde(default = "default_archetype")]
     pub model_archetype: String,
+    /// Model name for unified router dispatch (e.g. "kimi-turbo", "gpt-5-mini")
+    pub model: Option<String>,
     #[serde(default = "default_max_response_tokens")]
     pub max_response_tokens: i32,
     #[serde(default = "default_max_context_tokens")]

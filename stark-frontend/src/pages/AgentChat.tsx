@@ -1427,8 +1427,9 @@ export default function AgentChat() {
       if (response.response.trim()) {
         // Check if say_to_user already delivered this content via real-time event
         setMessages((prev) => {
+          const trimmedResponse = response.response.trim();
           const alreadyDelivered = prev.some(
-            (m) => m.role === 'assistant' && m.content === response.response.trim()
+            (m) => m.role === 'assistant' && m.content.trim() === trimmedResponse
           );
           if (alreadyDelivered) return prev;
           return [...prev, {

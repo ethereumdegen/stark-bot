@@ -1,26 +1,37 @@
 {
-    "kimi": (
-        display_name: "kimi2.defirelay.com",
-        endpoint: "https://kimi2.defirelay.com/api/v1/chat/completions",
+    "kimi-k2.5": (
+        display_name: "Kimi K2.5",
+        endpoint: "https://inference.defirelay.com/api/v1/chat/completions",
         model_archetype: "kimi",
+        model: Some("kimi-k2.5"),
         x402_cost: Some(10000),
     ),
     "kimi-turbo": (
-        display_name: "kimi2turbo.defirelay.com",
-        endpoint: "https://kimi2turbo.defirelay.com/api/v1/chat/completions",
+        display_name: "Kimi K2 Turbo",
+        endpoint: "https://inference.defirelay.com/api/v1/chat/completions",
         model_archetype: "kimi",
+        model: Some("kimi-turbo"),
         x402_cost: Some(5000),
     ),
-    "gpt5-mini": (
-        display_name: "openai-gpt5-mini.defirelay.com",
-        endpoint: "https://openai-gpt5-mini.defirelay.com/api/v1/chat/completions",
+    "gpt-5-mini": (
+        display_name: "GPT-5 Mini",
+        endpoint: "https://inference.defirelay.com/api/v1/chat/completions",
         model_archetype: "openai",
+        model: Some("gpt-5-mini"),
         x402_cost: Some(7500),
     ),
     "minimax": (
-        display_name: "minimax25.defirelay.com",
-        endpoint: "https://minimax25.defirelay.com/api/v1/chat/completions",
+        display_name: "MiniMax M2.5",
+        endpoint: "https://inference.defirelay.com/api/v1/chat/completions",
         model_archetype: "minimax",
+        model: Some("MiniMax-M2.5"),
         x402_cost: Some(5000),
+    ),
+    "morpheus": (
+        display_name: "Morpheus M2.5 (free)",
+        endpoint: "https://inference.defirelay.com/api/v1/chat/completions",
+        model_archetype: "minimax",
+        model: Some("morpheus-m2.5"),
+        x402_cost: Some(0),
     ),
 }

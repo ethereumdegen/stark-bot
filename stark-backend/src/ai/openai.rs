@@ -210,24 +210,16 @@ impl OpenAIClient {
             None
         };
 
-        // Determine model: defirelay endpoints omit model (relay picks its own default)
+        // Determine model: use provided model, or infer from endpoint URL
         let effective_model = match model {
-            Some(m) if !m.is_empty() => {
-                if endpoint_url.contains("defirelay.com") {
-                    None // relay handles model selection
-                } else {
-                    Some(m.to_string())
-                }
-            }
+            Some(m) if !m.is_empty() => Some(m.to_string()),
             _ => {
-                if endpoint_url.contains("defirelay.com") {
-                    None // relay handles model selection
-                } else if endpoint_url.contains("openai.com") {
+                if endpoint_url.contains("openai.com") {
                     Some("gpt-4o".to_string())
                 } else if endpoint_url.contains("kimi") || endpoint_url.contains("moonshot") {
                     Some("kimi-k2-turbo-preview".to_string())
                 } else {
-                    Some("default".to_string())
+                    None
                 }
             }
         };
@@ -294,20 +286,16 @@ impl OpenAIClient {
             None
         };
 
-        // Determine model: defirelay endpoints omit model (relay picks its own default)
+        // Determine model: use provided model, or infer from endpoint URL
         let model_name = match model {
-            Some(m) if !m.is_empty() => {
-                if endpoint_url.contains("defirelay.com") {
-                    None // relay handles model selection
-                } else {
-                    Some(m.to_string())
-                }
-            }
+            Some(m) if !m.is_empty() => Some(m.to_string()),
             _ => {
-                if endpoint_url.contains("defirelay.com") {
-                    None // relay handles model selection
-                } else {
+                if endpoint_url.contains("openai.com") {
                     Some("gpt-4o".to_string())
+                } else if endpoint_url.contains("kimi") || endpoint_url.contains("moonshot") {
+                    Some("kimi-k2-turbo-preview".to_string())
+                } else {
+                    None
                 }
             }
         };
@@ -669,7 +657,7 @@ impl OpenAIClient {
 
         messages.push(OpenAIMessage {
             role: "assistant".to_string(),
-            content: None, // Content must be None (not empty string) for tool call messages - Kimi rejects empty assistant content
+            content: Some("\n".to_string()), // Must be non-empty: Kimi rejects "", MiniMax/litellm rejects omitted field
             tool_calls: Some(openai_tool_calls),
             tool_call_id: None,
         });
