@@ -13,6 +13,7 @@ use crate::db::Database;
 use crate::gateway::events::EventBroadcaster;
 use crate::gateway::protocol::GatewayEvent;
 use crate::models::{AgentSettings, MessageRole as DbMessageRole, SessionScope};
+use crate::notes::NoteStore;
 use crate::tools::{ToolContext, ToolDefinition, ToolRegistry};
 use crate::skills::SkillRegistry;
 
@@ -79,6 +80,8 @@ pub struct SubAgentManager {
     process_manager: OnceLock<Arc<crate::execution::ProcessManager>>,
     /// Disk quota manager for usage limits
     disk_quota: OnceLock<Arc<crate::disk_quota::DiskQuotaManager>>,
+    /// Notes store for Obsidian-compatible notes
+    notes_store: OnceLock<Arc<NoteStore>>,
 }
 
 impl SubAgentManager {
@@ -115,6 +118,7 @@ impl SubAgentManager {
             tx_queue: OnceLock::new(),
             process_manager: OnceLock::new(),
             disk_quota: OnceLock::new(),
+            notes_store: OnceLock::new(),
         }
     }
 
@@ -136,6 +140,11 @@ impl SubAgentManager {
     /// Set the disk quota manager for sub-agent tool contexts (can be called after Arc wrapping)
     pub fn set_disk_quota(&self, dq: Arc<crate::disk_quota::DiskQuotaManager>) {
         let _ = self.disk_quota.set(dq);
+    }
+
+    /// Set the notes store for sub-agent tool contexts (can be called after Arc wrapping)
+    pub fn set_notes_store(&self, store: Arc<NoteStore>) {
+        let _ = self.notes_store.set(store);
     }
 
     /// Generate a unique sub-agent ID
@@ -210,6 +219,7 @@ impl SubAgentManager {
         let tx_queue = self.tx_queue.get().cloned();
         let process_manager = self.process_manager.get().cloned();
         let disk_quota = self.disk_quota.get().cloned();
+        let notes_store = self.notes_store.get().cloned();
         let active_agents = self.active_agents.clone();
         let last_activity = self.last_activity.clone();
         let subagent_id_for_cleanup = subagent_id.clone();
@@ -243,6 +253,7 @@ impl SubAgentManager {
                 tx_queue,
                 process_manager,
                 disk_quota,
+                notes_store,
                 last_activity.clone(),
             );
 
@@ -334,6 +345,7 @@ impl SubAgentManager {
         tx_queue: Option<Arc<crate::tx_queue::TxQueueManager>>,
         process_manager: Option<Arc<crate::execution::ProcessManager>>,
         disk_quota: Option<Arc<crate::disk_quota::DiskQuotaManager>>,
+        notes_store: Option<Arc<NoteStore>>,
         last_activity: Arc<DashMap<String, chrono::DateTime<chrono::Utc>>>,
     ) -> Result<String, String> {
         log::info!("[SUBAGENT] Starting execution for {}", context.id);
@@ -466,6 +478,9 @@ impl SubAgentManager {
         }
         if let Some(dq) = disk_quota {
             tool_context = tool_context.with_disk_quota(dq);
+        }
+        if let Some(ns) = notes_store {
+            tool_context = tool_context.with_notes_store(ns);
         }
 
         // Load API keys from database so sub-agent tools can call external services

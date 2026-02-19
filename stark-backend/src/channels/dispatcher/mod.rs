@@ -149,6 +149,9 @@ impl MessageDispatcher {
         if let Some(ref registry) = skill_registry {
             subagent_manager.set_skill_registry(registry.clone());
         }
+        if let Some(ref store) = notes_store {
+            subagent_manager.set_notes_store(store.clone());
+        }
         log::info!("[DISPATCHER] SubAgentManager initialized");
 
         // Create context manager
