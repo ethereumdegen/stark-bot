@@ -802,7 +802,12 @@ impl MessageDispatcher {
         }
 
         // Save tool result to session via async writer (non-blocking)
-        if !is_duplicate_say_to_user {
+        // Skip ALL successful say_to_user results — the content is returned as the final
+        // response by finalize_tool_loop and stored once as an Assistant message by dispatch().
+        // Storing it here as ToolResult too would create duplicate assistant bubbles when
+        // the frontend loads the transcript from the database.
+        let skip_say_to_user_result = tool_name == "say_to_user" && result.success;
+        if !is_duplicate_say_to_user && !skip_say_to_user_result {
             let tool_result_content = format!(
                 "**{}:** {}\n{}",
                 if result.success { "Result" } else { "Error" },

@@ -1443,6 +1443,23 @@ impl MessageDispatcher {
                 // mode_iterations/actual_tool_calls/no_tool_warnings are per-turn state,
                 // not cumulative session state.
                 orch.reset_turn_counters();
+                // Reset subtype back to director on each new message so the
+                // director can re-evaluate and route to the correct subagent.
+                // Without this, a stale subtype (e.g. "finance") persists and
+                // the agent skips director routing on subsequent messages.
+                let prev_subtype = orch.context().subtype.clone();
+                let default_key = agent_types::default_subtype_key();
+                orch.set_subtype(Some(default_key.clone()));
+                // Reset planner state so the new subtype can plan fresh
+                orch.context_mut().planner_completed = false;
+                orch.context_mut().mode = AgentMode::TaskPlanner;
+                orch.context_mut().task_queue = Default::default();
+                if prev_subtype.as_deref() != Some(&default_key) {
+                    log::info!(
+                        "[MULTI_AGENT] Reset subtype from {:?} to '{}' for new message",
+                        prev_subtype, default_key
+                    );
+                }
                 orch
             }
             Ok(None) => {

@@ -254,18 +254,16 @@ export default function AgentChat() {
             if (transcript.messages.length > 0) {
               // Convert DB messages to frontend format
               // Map tool_call and tool_result to 'tool' role for consistent styling
-              // Special case: say_to_user tool results render as assistant bubbles
-              const dbMessages: ChatMessageType[] = transcript.messages.map((msg, index) => {
+              // Skip say_to_user tool_result entries — the same content is already stored
+              // as an Assistant message, so including both would create duplicate bubbles.
+              const dbMessages: ChatMessageType[] = transcript.messages
+                .filter(msg => !(msg.role === 'tool_result' && msg.content.startsWith('**Result:** say_to_user\n')))
+                .map((msg, index) => {
                 let role: MessageRole = msg.role as MessageRole;
-                let content = msg.content;
+                const content = msg.content;
 
-                // Check if this is a say_to_user tool result - render as assistant bubble
-                if (msg.role === 'tool_result' && msg.content.startsWith('**Result:** say_to_user\n')) {
-                  role = 'assistant';
-                  // Extract the actual message content (after the header line)
-                  content = msg.content.replace('**Result:** say_to_user\n', '');
-                } else if (msg.role === 'tool_call' || msg.role === 'tool_result') {
-                  // Map other tool messages to 'tool' role
+                if (msg.role === 'tool_call' || msg.role === 'tool_result') {
+                  // Map tool messages to 'tool' role
                   role = 'tool';
                 }
                 return {
