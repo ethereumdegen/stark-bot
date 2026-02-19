@@ -327,6 +327,8 @@ pub struct SkillScriptEntry {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentSettingsEntry {
+    /// Preset key from ai_endpoints.ron (e.g. "kimi-k2.5"), None for custom endpoints
+    pub endpoint_name: Option<String>,
     pub endpoint: String,
     pub model_archetype: String,
     pub model: Option<String>,
@@ -677,6 +679,7 @@ pub async fn collect_backup_data(
         backup.agent_settings = settings
             .iter()
             .map(|s| AgentSettingsEntry {
+                endpoint_name: s.endpoint_name.clone(),
                 endpoint: s.endpoint.clone(),
                 model_archetype: s.model_archetype.clone(),
                 model: s.model.clone(),

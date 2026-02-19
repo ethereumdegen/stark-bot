@@ -270,6 +270,20 @@ impl Database {
             conn.execute("ALTER TABLE agent_settings ADD COLUMN model TEXT", [])?;
         }
 
+        // Migration: Add endpoint_name column (preset key from ai_endpoints.ron)
+        let has_endpoint_name: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('agent_settings') WHERE name='endpoint_name'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap_or(false);
+
+        if !has_endpoint_name {
+            conn.execute("ALTER TABLE agent_settings ADD COLUMN endpoint_name TEXT", [])?;
+        }
+
         // Migration: Add web3_tx_requires_confirmation column to bot_settings if it doesn't exist
         let has_web3_tx_confirmation: bool = conn
             .query_row(
@@ -561,42 +575,26 @@ impl Database {
                 importance INTEGER NOT NULL DEFAULT 5,
                 identity_id TEXT,
                 session_id INTEGER,
-                source_channel_type TEXT,
-                source_message_id TEXT,
                 log_date TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                expires_at TEXT,
-                -- Phase 2: Enhanced memory fields
                 entity_type TEXT,
                 entity_name TEXT,
-                confidence REAL DEFAULT 1.0,
                 source_type TEXT DEFAULT 'inferred',
-                last_referenced_at TEXT,
-                -- Phase 4: Consolidation fields
                 superseded_by INTEGER,
-                superseded_at TEXT,
-                -- Phase 7: Temporal reasoning fields
-                valid_from TEXT,
-                valid_until TEXT,
-                temporal_type TEXT,
+                last_accessed TEXT,
                 FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE SET NULL,
                 FOREIGN KEY (superseded_by) REFERENCES memories(id) ON DELETE SET NULL
             )",
             [],
         )?;
 
-        // Migration: Add new memory columns if they don't exist
+        // Migration: Add columns if they don't exist (for existing databases)
         let _ = conn.execute("ALTER TABLE memories ADD COLUMN entity_type TEXT", []);
         let _ = conn.execute("ALTER TABLE memories ADD COLUMN entity_name TEXT", []);
-        let _ = conn.execute("ALTER TABLE memories ADD COLUMN confidence REAL DEFAULT 1.0", []);
         let _ = conn.execute("ALTER TABLE memories ADD COLUMN source_type TEXT DEFAULT 'inferred'", []);
-        let _ = conn.execute("ALTER TABLE memories ADD COLUMN last_referenced_at TEXT", []);
         let _ = conn.execute("ALTER TABLE memories ADD COLUMN superseded_by INTEGER", []);
-        let _ = conn.execute("ALTER TABLE memories ADD COLUMN superseded_at TEXT", []);
-        let _ = conn.execute("ALTER TABLE memories ADD COLUMN valid_from TEXT", []);
-        let _ = conn.execute("ALTER TABLE memories ADD COLUMN valid_until TEXT", []);
-        let _ = conn.execute("ALTER TABLE memories ADD COLUMN temporal_type TEXT", []);
+        let _ = conn.execute("ALTER TABLE memories ADD COLUMN last_accessed TEXT", []);
 
         // FTS5 virtual table for full-text search on memories
         conn.execute(

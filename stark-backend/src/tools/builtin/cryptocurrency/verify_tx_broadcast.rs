@@ -323,7 +323,7 @@ impl Tool for VerifyTxBroadcastTool {
                 final_status == "confirmed",
                 duration_ms,
                 &msg,
-                false,
+                false, None,
             ));
         }
 

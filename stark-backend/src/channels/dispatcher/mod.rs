@@ -1207,7 +1207,7 @@ impl MessageDispatcher {
         };
 
         match final_response {
-            Ok((response, delivered_via_say_to_user)) => {
+            Ok((response, delivered_via_say_to_user, message_id)) => {
                 // Estimate tokens for the response
                 let response_tokens = estimate_tokens(&response);
 
@@ -1339,7 +1339,7 @@ impl MessageDispatcher {
                     _ => {} // Already finalized (Complete/Failed/Cancelled) or DB error
                 }
 
-                DispatchResult::success(response)
+                DispatchResult::success_with_message_id(response, message_id)
             }
             Err(e) => {
                 let mut error = format!("AI generation error ({}): {}", archetype_id, e);

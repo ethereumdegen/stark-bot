@@ -335,7 +335,7 @@ impl Tool for ImportIdentityTool {
                 ch_id, None, "import_identity",
                 true, 0,
                 &format!("Agent #{} imported successfully", agent_id),
-                false,
+                false, None,
             ));
         }
 

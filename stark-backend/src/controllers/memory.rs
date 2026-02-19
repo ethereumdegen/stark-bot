@@ -103,6 +103,8 @@ struct SearchResult {
     importance: i64,
     score: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    identity_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     log_date: Option<String>,
 }
 
@@ -156,6 +158,7 @@ struct SearchQuery {
     query: String,
     #[serde(default = "default_search_limit")]
     limit: i32,
+    identity_id: Option<String>,
 }
 
 fn default_search_limit() -> i32 {
@@ -258,7 +261,7 @@ async fn search(
 
     let limit = query.limit.clamp(1, 100);
 
-    match data.db.search_memories_fts(&query.query, None, limit) {
+    match data.db.search_memories_fts(&query.query, query.identity_id.as_deref(), limit) {
         Ok(results) => {
             let results: Vec<SearchResult> = results
                 .into_iter()
@@ -273,6 +276,7 @@ async fn search(
                     memory_type: mem.memory_type,
                     importance: mem.importance,
                     score: -rank, // Negate BM25 (returns negative)
+                    identity_id: mem.identity_id,
                     log_date: mem.log_date,
                 })
                 .collect();
@@ -1006,6 +1010,41 @@ async fn backfill_embeddings(data: web::Data<AppState>, req: HttpRequest) -> imp
     })
 }
 
+/// POST /api/memory/associations/rebuild - Trigger association discovery pass
+async fn rebuild_associations(data: web::Data<AppState>, req: HttpRequest) -> impl Responder {
+    if let Err(resp) = validate_session_from_request(&data, &req) {
+        return resp;
+    }
+
+    let engine = match &data.hybrid_search {
+        Some(engine) => engine,
+        None => {
+            return HttpResponse::ServiceUnavailable().json(BackfillResponse {
+                success: false,
+                message: None,
+                error: Some("Hybrid search engine not initialized. Association rebuild requires an embedding provider.".to_string()),
+            });
+        }
+    };
+
+    let db = data.db.clone();
+    let embedding_generator = engine.embedding_generator().clone();
+    let config = crate::memory::association_loop::AssociationLoopConfig::default();
+
+    tokio::spawn(async move {
+        match crate::memory::association_loop::run_association_pass(&db, &embedding_generator, &config).await {
+            Ok(()) => log::info!("[ASSOCIATIONS] Rebuild pass complete"),
+            Err(e) => log::error!("[ASSOCIATIONS] Rebuild pass failed: {}", e),
+        }
+    });
+
+    HttpResponse::Ok().json(BackfillResponse {
+        success: true,
+        message: Some("Association rebuild started in background".to_string()),
+        error: None,
+    })
+}
+
 /// Configure memory routes
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(
@@ -1026,6 +1065,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
             .route("/associations/{id}", web::delete().to(delete_association))
             .route("/hybrid-search", web::get().to(hybrid_search))
             .route("/embeddings/stats", web::get().to(embedding_stats))
-            .route("/embeddings/backfill", web::post().to(backfill_embeddings)),
+            .route("/embeddings/backfill", web::post().to(backfill_embeddings))
+            .route("/associations/rebuild", web::post().to(rebuild_associations)),
     );
 }

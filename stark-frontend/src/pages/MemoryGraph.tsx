@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as d3 from 'd3';
-import { RefreshCw, Database, Search, X, Circle, ArrowRight, ExternalLink } from 'lucide-react';
+import { RefreshCw, Database, Search, X, Circle, ArrowRight, ExternalLink, Link } from 'lucide-react';
 import Button from '@/components/ui/Button';
-import { getMemoryGraph, getHybridSearch, getEmbeddingStats, backfillEmbeddings } from '@/lib/api';
+import { getMemoryGraph, getHybridSearch, getEmbeddingStats, backfillEmbeddings, rebuildAssociations } from '@/lib/api';
 import type {
   GraphNode,
   MemoryGraphResponse,
@@ -119,6 +119,7 @@ export default function MemoryGraph() {
   const [embeddingStats, setEmbeddingStats] = useState<EmbeddingStatsResponse | null>(null);
   const [backfillLoading, setBackfillLoading] = useState(false);
   const [backfillMessage, setBackfillMessage] = useState<string | null>(null);
+  const [rebuildLoading, setRebuildLoading] = useState(false);
 
   // ── Data loading ──
 
@@ -169,6 +170,21 @@ export default function MemoryGraph() {
       setBackfillLoading(false);
     }
   }, [loadEmbeddingStats]);
+
+  const handleRebuildAssociations = useCallback(async () => {
+    setRebuildLoading(true);
+    setBackfillMessage(null);
+    try {
+      const result = await rebuildAssociations();
+      setBackfillMessage(result.message);
+      // Refresh graph to show new associations
+      await loadGraph();
+    } catch (e) {
+      setBackfillMessage(e instanceof Error ? e.message : 'Association rebuild failed');
+    } finally {
+      setRebuildLoading(false);
+    }
+  }, [loadGraph]);
 
   const handleSearch = useCallback(async () => {
     const trimmed = searchQuery.trim();
@@ -536,6 +552,15 @@ export default function MemoryGraph() {
           >
             <Database size={14} className="mr-1.5" />
             Backfill Embeddings
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleRebuildAssociations}
+            isLoading={rebuildLoading}
+          >
+            <Link size={14} className="mr-1.5" />
+            Rebuild Associations
           </Button>
         </div>
       </div>

@@ -107,6 +107,7 @@ async fn dev_chat(
             message: None,
             error: Some(error),
             session_id,
+            message_id: None,
         });
     }
 
@@ -118,5 +119,6 @@ async fn dev_chat(
         }),
         error: None,
         session_id,
+        message_id: result.message_id,
     })
 }

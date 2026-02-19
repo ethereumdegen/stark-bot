@@ -130,14 +130,15 @@ impl MessageDispatcher {
         waiting_for_user_response: bool,
         memory_suppressed: bool,
         last_say_to_user_content: &str,
+        last_say_to_user_id: Option<&str>,
         tool_call_log: &[String],
         final_summary: &str,
         user_question_content: &str,
         max_tool_iterations: usize,
         iterations: usize,
         watchdog: &Arc<Watchdog>,
-    ) -> Result<(String, bool), String> {
-        // Returns (response_text, already_delivered_via_say_to_user)
+    ) -> Result<(String, bool, Option<String>), String> {
+        // Returns (response_text, already_delivered_via_say_to_user, message_id)
         // Clear active skill when the orchestrator loop completes
         if orchestrator_complete || was_cancelled {
             if orchestrator.context().active_skill.is_some() {
@@ -211,7 +212,7 @@ impl MessageDispatcher {
             max_tool_iterations as u32,
         );
 
-        // Build final return: (response, already_delivered_via_say_to_user)
+        // Build final return: (response, already_delivered_via_say_to_user, message_id)
         if waiting_for_user_response {
             // Save the tool call log to the orchestrator context
             if !tool_call_log.is_empty() {
@@ -224,14 +225,14 @@ impl MessageDispatcher {
                     log::warn!("[MULTI_AGENT] Failed to save context with user_context: {}", e);
                 }
             }
-            Ok((user_question_content.to_string(), false))
+            Ok((user_question_content.to_string(), false, None))
         } else if !last_say_to_user_content.is_empty() {
             // say_to_user content IS the final result — already broadcast via tool.result event.
             // dispatch() will store it as assistant message but should NOT re-broadcast.
             log::info!("[ORCHESTRATED_LOOP] Returning say_to_user content as final result ({} chars)", last_say_to_user_content.len());
-            Ok((last_say_to_user_content.to_string(), true))
+            Ok((last_say_to_user_content.to_string(), true, last_say_to_user_id.map(|s| s.to_string())))
         } else if orchestrator_complete {
-            Ok((final_summary.to_string(), false))
+            Ok((final_summary.to_string(), false, None))
         } else if tool_call_log.is_empty() {
             // Mark session as Failed — hit max iterations with no work done
             let _ = self.db.update_session_completion_status(session_id, CompletionStatus::Failed);

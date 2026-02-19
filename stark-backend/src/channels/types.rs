@@ -119,6 +119,10 @@ impl ChannelHandle {
 pub struct DispatchResult {
     pub response: String,
     pub error: Option<String>,
+    /// Stable UUID for deduplication — set when the response was already delivered
+    /// via a say_to_user WebSocket event. The frontend can use this ID to avoid
+    /// rendering the same message twice.
+    pub message_id: Option<String>,
 }
 
 impl DispatchResult {
@@ -126,6 +130,15 @@ impl DispatchResult {
         Self {
             response,
             error: None,
+            message_id: None,
+        }
+    }
+
+    pub fn success_with_message_id(response: String, message_id: Option<String>) -> Self {
+        Self {
+            response,
+            error: None,
+            message_id,
         }
     }
 
@@ -133,6 +146,7 @@ impl DispatchResult {
         Self {
             response: String::new(),
             error: Some(error),
+            message_id: None,
         }
     }
 }

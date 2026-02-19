@@ -8,6 +8,7 @@ import { getAgentSettings, updateAgentSettings, getBotSettings, updateBotSetting
 type ModelArchetype = 'kimi' | 'llama' | 'claude' | 'openai' | 'minimax';
 
 interface Settings {
+  endpoint_name?: string | null;
   endpoint?: string;
   model_archetype?: string;
   model?: string | null;
@@ -64,12 +65,9 @@ export default function AgentSettings() {
     try {
       const data = await getAgentSettings() as Settings;
 
-      // Determine which endpoint option is being used (match by endpoint + model)
-      // Only match on both endpoint AND model to avoid false positives when
-      // multiple presets share the same endpoint URL.
-      const matchedPreset = loadedPresets.find(p => p.endpoint === data.endpoint && p.model === data.model);
-      if (matchedPreset) {
-        setEndpointOption(matchedPreset.id);
+      // Match dropdown by endpoint_name (the preset key from ai_endpoints.ron)
+      if (data.endpoint_name && loadedPresets.some(p => p.id === data.endpoint_name)) {
+        setEndpointOption(data.endpoint_name);
       } else if (data.endpoint) {
         setEndpointOption('custom');
         setCustomEndpoint(data.endpoint);
@@ -152,6 +150,7 @@ export default function AgentSettings() {
 
       // Only include secret_key for custom endpoints, and only if provided
       const payload: {
+        endpoint_name?: string | null;
         endpoint: string;
         model_archetype: string;
         model?: string | null;
@@ -159,6 +158,7 @@ export default function AgentSettings() {
         max_context_tokens: number;
         secret_key?: string;
       } = {
+        endpoint_name: selectedPreset ? selectedPreset.id : null,
         endpoint,
         model_archetype: archetype,
         model: selectedPreset?.model ?? null,

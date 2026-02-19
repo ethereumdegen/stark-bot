@@ -37,6 +37,10 @@ pub struct ChatResponse {
     /// Session ID for persistent conversations
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<i64>,
+    /// Stable UUID for dedup — if set, this response was already delivered via
+    /// a say_to_user WebSocket event carrying the same ID.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -159,6 +163,7 @@ async fn chat(
                 message: None,
                 error: Some("No authorization token provided".to_string()),
                 session_id: None,
+                message_id: None,
             });
         }
     };
@@ -172,6 +177,7 @@ async fn chat(
                 message: None,
                 error: Some("Invalid or expired session".to_string()),
                 session_id: None,
+                message_id: None,
             });
         }
         Err(e) => {
@@ -181,6 +187,7 @@ async fn chat(
                 message: None,
                 error: Some("Internal server error".to_string()),
                 session_id: None,
+                message_id: None,
             });
         }
     };
@@ -194,6 +201,7 @@ async fn chat(
                 message: None,
                 error: Some("No user message provided".to_string()),
                 session_id: None,
+                message_id: None,
             });
         }
     };
@@ -230,6 +238,7 @@ async fn chat(
             message: None,
             error: Some(error),
             session_id: None,
+            message_id: None,
         });
     }
 
@@ -240,7 +249,8 @@ async fn chat(
             content: result.response,
         }),
         error: None,
-        session_id: None, // Could return session ID if needed
+        session_id: None,
+        message_id: result.message_id,
     })
 }
 

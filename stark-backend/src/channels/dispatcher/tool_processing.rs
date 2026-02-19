@@ -70,6 +70,7 @@ impl MessageDispatcher {
         tools: &mut Vec<ToolDefinition>,
         batch_state: &mut BatchState,
         last_say_to_user_content: &mut String,
+        last_say_to_user_id: &mut Option<String>,
         memory_suppressed: &mut bool,
         tool_call_log: &mut Vec<String>,
         orchestrator: &mut Orchestrator,
@@ -597,11 +598,19 @@ impl MessageDispatcher {
         // Skip duplicate say_to_user calls within the same batch — AI sometimes returns
         // multiple say_to_user calls in a single response, causing duplicate messages.
         let is_duplicate_say_to_user = tool_name == "say_to_user" && result.success && batch_state.had_say_to_user;
+        // Generate a stable message_id for say_to_user so both WebSocket and HTTP paths
+        // carry the same UUID — the frontend deduplicates by ID instead of content matching.
+        let say_to_user_msg_id: Option<String> = if tool_name == "say_to_user" && result.success && !is_duplicate_say_to_user {
+            Some(uuid::Uuid::new_v4().to_string())
+        } else {
+            None
+        };
         if tool_name == "say_to_user" && result.success {
             if is_duplicate_say_to_user {
                 log::warn!("[ORCHESTRATED_LOOP] Skipping duplicate say_to_user in same batch (already broadcast)");
             } else {
                 *last_say_to_user_content = result.content.clone();
+                *last_say_to_user_id = say_to_user_msg_id.clone();
                 batch_state.had_say_to_user = true;
                 // Content will be returned as the final result by finalize_tool_loop
                 // and stored as assistant message by dispatch() — no need to store here.
@@ -772,6 +781,7 @@ impl MessageDispatcher {
                 duration_ms,
                 &result.content,
                 is_safe_mode,
+                say_to_user_msg_id.as_deref(),
             ));
         }
 

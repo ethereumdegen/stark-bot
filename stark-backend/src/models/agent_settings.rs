@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentSettings {
     pub id: i64,
+    /// Preset key from ai_endpoints.ron (e.g. "kimi-k2.5"), None for custom endpoints
+    pub endpoint_name: Option<String>,
     pub endpoint: String,
     pub model_archetype: String,
     /// Model name sent in request body for unified router dispatch
@@ -28,6 +30,7 @@ impl Default for AgentSettings {
         let now = Utc::now();
         Self {
             id: 0,
+            endpoint_name: Some("kimi-turbo".to_string()),
             endpoint: "https://inference.defirelay.com/api/v1/chat/completions".to_string(),
             model_archetype: "kimi".to_string(),
             model: Some("kimi-turbo".to_string()),
@@ -45,6 +48,7 @@ impl Default for AgentSettings {
 #[derive(Debug, Clone, Serialize)]
 pub struct AgentSettingsResponse {
     pub id: i64,
+    pub endpoint_name: Option<String>,
     pub endpoint: String,
     pub model_archetype: String,
     pub model: Option<String>,
@@ -60,6 +64,7 @@ impl From<AgentSettings> for AgentSettingsResponse {
     fn from(settings: AgentSettings) -> Self {
         Self {
             id: settings.id,
+            endpoint_name: settings.endpoint_name,
             endpoint: settings.endpoint,
             model_archetype: settings.model_archetype,
             model: settings.model,
@@ -76,6 +81,8 @@ impl From<AgentSettings> for AgentSettingsResponse {
 /// Request type for updating agent settings
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateAgentSettingsRequest {
+    /// Preset key from ai_endpoints.ron (e.g. "kimi-k2.5"), None for custom endpoints
+    pub endpoint_name: Option<String>,
     pub endpoint: String,
     #[serde(default = "default_archetype")]
     pub model_archetype: String,

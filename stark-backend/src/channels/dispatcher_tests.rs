@@ -57,6 +57,7 @@ impl TestHarness {
         // Insert minimal agent settings so dispatch() can proceed.
         // Use a dummy endpoint — the mock client will be used instead.
         db.save_agent_settings(
+            None, // no preset
             "http://mock.test/v1/chat/completions",
             "kimi",
             None,
@@ -141,6 +142,7 @@ impl TestHarness {
         let db = Arc::new(Database::new(":memory:").expect("in-memory db"));
 
         db.save_agent_settings(
+            None, // no preset
             "http://mock.test/v1/chat/completions",
             "kimi",
             None,
@@ -846,6 +848,7 @@ async fn swap_flow_realistic() {
     // === Setup: in-memory DB + agent settings ===
     let db = Arc::new(Database::new(":memory:").expect("in-memory db"));
     db.save_agent_settings(
+        None, // no preset
         &endpoint,
         &archetype,
         None,
@@ -1577,6 +1580,7 @@ async fn build_tool_list_harness() -> MessageDispatcher {
 
     let db = Arc::new(Database::new(":memory:").expect("in-memory db"));
     db.save_agent_settings(
+        None, // no preset
         "http://mock.test/v1/chat/completions",
         "kimi",
         None,

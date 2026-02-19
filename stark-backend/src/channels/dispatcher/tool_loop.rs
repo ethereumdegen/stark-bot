@@ -86,6 +86,7 @@ impl MessageDispatcher {
         let mut user_question_content = String::new();
         let mut was_cancelled = false;
         let mut last_say_to_user_content = String::new();
+        let mut last_say_to_user_id: Option<String> = None;
 
         // Loop detection: track recent tool call signatures to detect repetitive behavior
         let mut recent_call_signatures: Vec<String> = Vec::new();
@@ -665,6 +666,7 @@ impl MessageDispatcher {
                     &mut tools,
                     &mut batch_state,
                     &mut last_say_to_user_content,
+                    &mut last_say_to_user_id,
                     &mut memory_suppressed,
                     &mut tool_call_log,
                     orchestrator,
@@ -740,6 +742,7 @@ impl MessageDispatcher {
             waiting_for_user_response,
             memory_suppressed,
             &last_say_to_user_content,
+            last_say_to_user_id.as_deref(),
             &tool_call_log,
             &final_summary,
             &user_question_content,
@@ -820,6 +823,7 @@ impl MessageDispatcher {
         let mut user_question_content = String::new();
         let mut was_cancelled = false;
         let mut last_say_to_user_content = String::new();
+        let mut last_say_to_user_id: Option<String> = None;
 
         // Loop detection: track recent tool call signatures to detect repetitive behavior
         let mut recent_call_signatures: Vec<String> = Vec::new();
@@ -1030,6 +1034,7 @@ impl MessageDispatcher {
                             &mut tools,
                             &mut batch_state,
                             &mut last_say_to_user_content,
+                            &mut last_say_to_user_id,
                             &mut memory_suppressed,
                             &mut tool_call_log,
                             orchestrator,
@@ -1210,6 +1215,7 @@ impl MessageDispatcher {
             waiting_for_user_response,
             memory_suppressed,
             &last_say_to_user_content,
+            last_say_to_user_id.as_deref(),
             &tool_call_log,
             &final_response,
             &user_question_content,

@@ -3,7 +3,7 @@ name: impulse_evolver
 description: "Automated impulse map evolution based on goals, memories, and learnings"
 version: 1.0.0
 author: starkbot
-requires_tools: [impulse_map_manage, qmd_memory_search, qmd_memory_read]
+requires_tools: [impulse_map_manage, memory_search, memory_read]
 tags: [system, impulse_map, automation, heartbeat]
 ---
 
@@ -18,7 +18,7 @@ with your goals, identity, and what you've learned.
 Read SOUL.md to understand your core identity and goals.
 
 ### 2. Search recent memories
-Use `qmd_memory_search` to find recent learnings, events, and themes.
+Use `memory_search` to find recent learnings, events, and themes.
 Look for: new topics, completed goals, recurring interests, emerging projects.
 
 ### 3. Review the impulse map

@@ -9,4 +9,5 @@ workspace/
 journal/
 soul/
 /memory/
+stark-backend/memory.migrated/
 /test_output

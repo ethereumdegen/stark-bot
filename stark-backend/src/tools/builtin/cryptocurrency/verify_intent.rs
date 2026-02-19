@@ -148,7 +148,7 @@ fn broadcast_tool_result(context: &ToolContext, result: &Result<(), String>, dur
             Err(reason) => (false, reason.clone()),
         };
         broadcaster.broadcast(GatewayEvent::tool_result(
-            channel_id, None, "verify_intent", success, duration_ms, &content, false,
+            channel_id, None, "verify_intent", success, duration_ms, &content, false, None,
         ));
     }
 }

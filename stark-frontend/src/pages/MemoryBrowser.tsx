@@ -64,6 +64,7 @@ interface SearchResult {
   memory_type: string;
   importance: number;
   score: number;
+  identity_id?: string | null;
   log_date?: string | null;
 }
 
@@ -121,8 +122,10 @@ async function getMemoryEntries(identityId?: string): Promise<ListFilesResponse>
   return apiFetch(`/memory/files${params}`);
 }
 
-async function searchMemory(query: string, limit = 20): Promise<SearchResponse> {
-  return apiFetch(`/memory/search?query=${encodeURIComponent(query)}&limit=${limit}`);
+async function searchMemory(query: string, limit = 20, identityId?: string): Promise<SearchResponse> {
+  const params = new URLSearchParams({ query, limit: String(limit) });
+  if (identityId) params.set('identity_id', identityId);
+  return apiFetch(`/memory/search?${params.toString()}`);
 }
 
 async function getMemoryStats(): Promise<MemoryStatsResponse> {
@@ -256,7 +259,7 @@ function CalendarView({
   );
 }
 
-function SearchView({ onSelectMemory }: { onSelectMemory: (id: number) => void }) {
+function SearchView({ onSelectMemory, identityFilter }: { onSelectMemory: (id: number) => void; identityFilter?: string }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -267,7 +270,7 @@ function SearchView({ onSelectMemory }: { onSelectMemory: (id: number) => void }
     setIsSearching(true);
     setError(null);
     try {
-      const response = await searchMemory(query, 30);
+      const response = await searchMemory(query, 30, identityFilter);
       if (response.success) {
         setResults(response.results);
       } else {
@@ -321,6 +324,7 @@ function SearchView({ onSelectMemory }: { onSelectMemory: (id: number) => void }
                 <span className="text-xs text-slate-500">{result.memory_type}</span>
                 {result.log_date && <span className="text-xs text-slate-500">{result.log_date}</span>}
                 {importanceBadge(result.importance)}
+                <ModeBadge identityId={result.identity_id} />
                 <span className="text-xs text-slate-500 ml-auto flex items-center gap-1" title={`BM25 score: ${result.score.toFixed(4)}`}>
                   <span className="inline-block w-12 h-1.5 bg-slate-700 rounded-full overflow-hidden">
                     <span className="block h-full bg-stark-400 rounded-full" style={{ width: `${Math.min(100, result.score * 8)}%` }} />
@@ -506,7 +510,7 @@ export default function MemoryBrowser() {
   const [error, setError] = useState<string | null>(null);
 
   // View state
-  const [viewMode, setViewMode] = useState<ViewMode>('browse');
+  const [viewMode, setViewMode] = useState<ViewMode>('graph');
   const [selectedMemories, setSelectedMemories] = useState<MemoryItem[]>([]);
   const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
   const [loadingContent, setLoadingContent] = useState(false);
@@ -612,10 +616,10 @@ export default function MemoryBrowser() {
   }
 
   const tabs: { key: ViewMode; icon: React.ReactNode; label: string }[] = [
+    { key: 'graph', icon: <Share2 className="w-4 h-4 inline mr-1.5" />, label: 'Graph' },
     { key: 'browse', icon: <FolderOpen className="w-4 h-4 inline mr-1.5" />, label: 'Browse' },
     { key: 'calendar', icon: <Calendar className="w-4 h-4 inline mr-1.5" />, label: 'Calendar' },
     { key: 'search', icon: <Search className="w-4 h-4 inline mr-1.5" />, label: 'Search' },
-    { key: 'graph', icon: <Share2 className="w-4 h-4 inline mr-1.5" />, label: 'Graph' },
     { key: 'stats', icon: <BarChart3 className="w-4 h-4 inline mr-1.5" />, label: 'Stats' },
   ];
 
@@ -817,7 +821,7 @@ export default function MemoryBrowser() {
             )}
 
             {viewMode === 'search' && (
-              <SearchView onSelectMemory={(id) => {
+              <SearchView identityFilter={identityFilter} onSelectMemory={(id) => {
                 // For now, just log. Could expand to show the specific memory.
                 console.log('Selected memory:', id);
               }} />

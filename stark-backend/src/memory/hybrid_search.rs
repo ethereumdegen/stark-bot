@@ -41,6 +41,11 @@ impl HybridSearchEngine {
         }
     }
 
+    /// Get a reference to the embedding generator.
+    pub fn embedding_generator(&self) -> &Arc<dyn EmbeddingGenerator + Send + Sync> {
+        &self.embedding_generator
+    }
+
     /// Run a full hybrid search combining FTS5, vector similarity, and graph associations.
     pub async fn search(
         &self,

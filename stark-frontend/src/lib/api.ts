@@ -2112,6 +2112,10 @@ export async function backfillEmbeddings(): Promise<{ success: boolean; message:
   return apiFetch('/memory/embeddings/backfill', { method: 'POST' });
 }
 
+export async function rebuildAssociations(): Promise<{ success: boolean; message: string }> {
+  return apiFetch('/memory/associations/rebuild', { method: 'POST' });
+}
+
 export async function getCortexBulletin(): Promise<CortexBulletin> {
   return apiFetch('/bulletin');
 }

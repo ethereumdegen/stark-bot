@@ -57,7 +57,7 @@ pub fn spawn_association_loop(
 }
 
 /// Execute a single association discovery pass.
-async fn run_association_pass(
+pub async fn run_association_pass(
     db: &Database,
     embedding_generator: &Arc<dyn EmbeddingGenerator + Send + Sync>,
     config: &AssociationLoopConfig,

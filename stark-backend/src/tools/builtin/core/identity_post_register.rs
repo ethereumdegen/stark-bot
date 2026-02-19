@@ -330,7 +330,7 @@ impl Tool for IdentityPostRegisterTool {
                 ch_id, None, "identity_post_register",
                 true, 0,
                 &format!("Agent #{} registered on-chain", registered.agent_id),
-                false,
+                false, None,
             ));
         }
 

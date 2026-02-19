@@ -484,19 +484,20 @@ impl GatewayEvent {
 
     /// The `chat_id` is the platform-specific conversation ID (e.g., Discord channel snowflake)
     /// `safe_mode` indicates if this is a safe mode query (affects Discord output behavior)
-    pub fn tool_result(channel_id: i64, chat_id: Option<&str>, tool_name: &str, success: bool, duration_ms: i64, content: &str, safe_mode: bool) -> Self {
-        Self::new(
-            EventType::ToolResult,
-            serde_json::json!({
-                "channel_id": channel_id,
-                "chat_id": chat_id,
-                "tool_name": tool_name,
-                "success": success,
-                "duration_ms": duration_ms,
-                "content": content,
-                "safe_mode": safe_mode
-            }),
-        )
+    pub fn tool_result(channel_id: i64, chat_id: Option<&str>, tool_name: &str, success: bool, duration_ms: i64, content: &str, safe_mode: bool, message_id: Option<&str>) -> Self {
+        let mut data = serde_json::json!({
+            "channel_id": channel_id,
+            "chat_id": chat_id,
+            "tool_name": tool_name,
+            "success": success,
+            "duration_ms": duration_ms,
+            "content": content,
+            "safe_mode": safe_mode
+        });
+        if let Some(id) = message_id {
+            data["message_id"] = serde_json::json!(id);
+        }
+        Self::new(EventType::ToolResult, data)
     }
 
     /// Tool is waiting for retry after transient network error (exponential backoff)

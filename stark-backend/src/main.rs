@@ -711,6 +711,7 @@ async fn restore_backup_data(
         }
         for entry in &backup_data.agent_settings {
             match db.save_agent_settings(
+                entry.endpoint_name.as_deref(),
                 &entry.endpoint,
                 &entry.model_archetype,
                 entry.model.as_deref(),
@@ -723,7 +724,7 @@ async fn restore_backup_data(
                         let _ = db.disable_agent_settings();
                     }
                     restored_agent_settings += 1;
-                    log::info!("[Keystore] Restored agent settings: {} ({})", saved.endpoint, saved.model_archetype);
+                    log::info!("[Keystore] Restored agent settings: {:?} / {} ({})", saved.endpoint_name, saved.endpoint, saved.model_archetype);
                 }
                 Err(e) => {
                     log::warn!("[Keystore] Failed to restore agent settings for {}: {}", entry.endpoint, e);

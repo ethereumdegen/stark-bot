@@ -163,7 +163,8 @@ pub async fn update_agent_settings(
 
     // Save settings
     log::info!(
-        "Saving agent settings: endpoint={}, archetype={}, max_response_tokens={}, max_context_tokens={}, has_secret_key={}",
+        "Saving agent settings: endpoint_name={:?}, endpoint={}, archetype={}, max_response_tokens={}, max_context_tokens={}, has_secret_key={}",
+        request.endpoint_name,
         request.endpoint,
         request.model_archetype,
         request.max_response_tokens,
@@ -171,9 +172,9 @@ pub async fn update_agent_settings(
         request.secret_key.is_some()
     );
 
-    match state.db.save_agent_settings(&request.endpoint, &request.model_archetype, request.model.as_deref(), request.max_response_tokens, request.max_context_tokens, request.secret_key.as_deref()) {
+    match state.db.save_agent_settings(request.endpoint_name.as_deref(), &request.endpoint, &request.model_archetype, request.model.as_deref(), request.max_response_tokens, request.max_context_tokens, request.secret_key.as_deref()) {
         Ok(settings) => {
-            log::info!("Updated agent settings to use {} endpoint with {} archetype", request.endpoint, request.model_archetype);
+            log::info!("Updated agent settings to use {:?} / {} endpoint with {} archetype", request.endpoint_name, request.endpoint, request.model_archetype);
             let response: AgentSettingsResponse = settings.into();
             HttpResponse::Ok().json(response)
         }

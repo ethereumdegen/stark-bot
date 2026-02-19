@@ -146,6 +146,10 @@ export default function AgentChat() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Track the last say_to_user content to prevent duplicate messages.
+  // say_to_user is delivered via two paths (WebSocket tool.result + HTTP response),
+  // and without this guard the race between them can cause duplicates.
+  const lastSayToUserRef = useRef<string>('');
   // Track spawn message IDs so we can update them when session_ready fires
   const subagentSpawnMsgIds = useRef<Map<string, string>>(new Map());
   const navigate = useNavigate();
@@ -347,14 +351,23 @@ export default function AgentChat() {
       // Show say_to_user messages immediately as assistant bubbles
       if (event.tool_name === 'say_to_user') {
         if (event.success && event.content.trim()) {
-          const message: ChatMessageType = {
-            id: crypto.randomUUID(),
-            role: 'assistant' as MessageRole,
-            content: event.content,
-            timestamp: new Date(),
-            sessionId,
-          };
-          setMessages((prev) => [...prev, message]);
+          const trimmed = event.content.trim();
+          // Deduplicate: say_to_user content is also returned in the HTTP response.
+          // If the HTTP response won the race and was already added, skip.
+          lastSayToUserRef.current = trimmed;
+          setMessages((prev) => {
+            const alreadyExists = prev.some(
+              (m) => m.role === 'assistant' && m.content.trim() === trimmed
+            );
+            if (alreadyExists) return prev;
+            return [...prev, {
+              id: crypto.randomUUID(),
+              role: 'assistant' as MessageRole,
+              content: event.content,
+              timestamp: new Date(),
+              sessionId,
+            }];
+          });
         }
         return;
       }
@@ -1492,21 +1505,26 @@ export default function AgentChat() {
       ));
       // Skip empty responses and responses already delivered via say_to_user WebSocket event
       if (response.response.trim()) {
-        // Check if say_to_user already delivered this content via real-time event
-        setMessages((prev) => {
-          const trimmedResponse = response.response.trim();
-          const alreadyDelivered = prev.some(
-            (m) => m.role === 'assistant' && m.content.trim() === trimmedResponse
-          );
-          if (alreadyDelivered) return prev;
-          return [...prev, {
-            id: crypto.randomUUID(),
-            role: 'assistant' as MessageRole,
-            content: response.response,
-            timestamp: new Date(),
-            sessionId,
-          }];
-        });
+        const trimmedResponse = response.response.trim();
+        // Fast path: if the ref matches, say_to_user WebSocket already delivered it
+        if (trimmedResponse === lastSayToUserRef.current) {
+          lastSayToUserRef.current = '';  // reset for next interaction
+        } else {
+          // Fallback: scan messages for exact content match
+          setMessages((prev) => {
+            const alreadyDelivered = prev.some(
+              (m) => m.role === 'assistant' && m.content.trim() === trimmedResponse
+            );
+            if (alreadyDelivered) return prev;
+            return [...prev, {
+              id: crypto.randomUUID(),
+              role: 'assistant' as MessageRole,
+              content: response.response,
+              timestamp: new Date(),
+              sessionId,
+            }];
+          });
+        }
       }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to send message';

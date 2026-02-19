@@ -1638,6 +1638,7 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
         }
         for entry in &backup_data.agent_settings {
             match state.db.save_agent_settings(
+                entry.endpoint_name.as_deref(),
                 &entry.endpoint,
                 &entry.model_archetype,
                 entry.model.as_deref(),
@@ -1653,7 +1654,7 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
                         let _ = state.db.disable_agent_settings();
                     }
                     restored_agent_settings += 1;
-                    log::info!("Restored agent settings: {} ({})", saved.endpoint, saved.model_archetype);
+                    log::info!("Restored agent settings: {:?} / {} ({})", saved.endpoint_name, saved.endpoint, saved.model_archetype);
                 }
                 Err(e) => {
                     log::warn!("Failed to restore agent settings for {}: {}", entry.endpoint, e);

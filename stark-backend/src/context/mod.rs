@@ -272,24 +272,9 @@ impl ContextManager {
             message_count, session_id
         );
 
-        // Phase 1: Pre-compaction memory flush (writes to markdown files)
-        if self.memory_config.enable_pre_compaction_flush {
-            match self.flush_memories_before_compaction(
-                session_id,
-                client,
-                identity_id,
-                &messages_to_compact,
-            ).await {
-                Ok(count) => {
-                    if count > 0 {
-                        log::info!("[INCREMENTAL_COMPACT] Pre-flush saved {} memory sections", count);
-                    }
-                }
-                Err(e) => {
-                    log::warn!("[INCREMENTAL_COMPACT] Pre-flush failed (continuing): {}", e);
-                }
-            }
-        }
+        // Skip pre-compaction flush — the compaction summary and
+        // session_completion_memory are the intended memory sources.
+        // The flush created noisy per-tool-result entries.
 
         // Generate a shorter summary for incremental compaction
         let summary = self.generate_incremental_summary(client, &messages_to_compact).await?;
@@ -443,18 +428,20 @@ impl ContextManager {
         log::info!("[PRE_FLUSH] Starting memory flush for session {} ({} messages)",
             session_id, messages_to_compact.len());
 
-        // Filter out messages from memory-excluded tools (e.g. install_api_key)
-        // so secrets never leak into memory
+        // Only extract memories from User/Assistant messages — skip raw ToolCall
+        // and ToolResult entries so individual tool outputs don't pollute memory.
+        // The final summary/output captured by save_session_completion_memory is
+        // the intended memory source.
         let messages_filtered: Vec<&SessionMessage> = messages_to_compact.iter()
             .filter(|m| {
-                if m.role == DbMessageRole::ToolCall || m.role == DbMessageRole::ToolResult {
-                    !crate::tools::types::MEMORY_EXCLUDE_TOOL_LIST.iter()
-                        .any(|t| m.content.contains(&format!("`{}`", t)))
-                } else {
-                    true
-                }
+                matches!(m.role, DbMessageRole::User | DbMessageRole::Assistant)
             })
             .collect();
+
+        if messages_filtered.is_empty() {
+            log::info!("[PRE_FLUSH] No user/assistant messages to extract memories from");
+            return Ok(0);
+        }
 
         // Build conversation text
         let conversation_text = messages_filtered.iter()
@@ -462,9 +449,7 @@ impl ContextManager {
                 let role = match m.role {
                     DbMessageRole::User => "User",
                     DbMessageRole::Assistant => "Assistant",
-                    DbMessageRole::System => "System",
-                    DbMessageRole::ToolCall => "Tool Call",
-                    DbMessageRole::ToolResult => "Tool Result",
+                    _ => unreachable!(),
                 };
                 format!("{}: {}", role, m.content)
             })
@@ -584,24 +569,9 @@ impl ContextManager {
         let message_count = messages_to_compact.len() as i32;
         log::info!("[COMPACTION] Compacting {} messages for session {}", message_count, session_id);
 
-        // Phase 1: Pre-compaction memory flush (writes to markdown files)
-        if self.memory_config.enable_pre_compaction_flush {
-            match self.flush_memories_before_compaction(
-                session_id,
-                client,
-                identity_id,
-                &messages_to_compact,
-            ).await {
-                Ok(count) => {
-                    if count > 0 {
-                        log::info!("[COMPACTION] Pre-flush saved {} memory sections", count);
-                    }
-                }
-                Err(e) => {
-                    log::warn!("[COMPACTION] Pre-flush failed (continuing with compaction): {}", e);
-                }
-            }
-        }
+        // Skip pre-compaction flush — the compaction summary and
+        // session_completion_memory are the intended memory sources.
+        // The flush created noisy per-tool-result entries.
 
         // Build the conversation text for summarization
         let conversation_text = messages_to_compact.iter()
@@ -900,7 +870,8 @@ pub async fn save_session_memory(
 
     log::info!("[SESSION_MEMORY] Saving session memory for {} messages", messages.len());
 
-    // Build conversation text
+    // Build conversation text (all roles — the AI summarizes into a single
+    // TITLE+SUMMARY entry so individual tool results don't leak into memory)
     let conversation_text = messages.iter()
         .map(|m| {
             let role = match m.role {
