@@ -1,8 +1,18 @@
 use crate::skills::types::{Skill, SkillMetadata, SkillSource};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Parse a SKILL.md file content into a Skill
 pub fn parse_skill_file(content: &str, path: &str, source: SkillSource) -> Result<Skill, String> {
+    parse_skill_file_with_dir(content, path, source, None)
+}
+
+/// Parse a SKILL.md file content into a Skill, with optional skill directory
+pub fn parse_skill_file_with_dir(
+    content: &str,
+    path: &str,
+    source: SkillSource,
+    skill_dir: Option<PathBuf>,
+) -> Result<Skill, String> {
     // SKILL.md format:
     // ---
     // YAML frontmatter
@@ -41,16 +51,26 @@ pub fn parse_skill_file(content: &str, path: &str, source: SkillSource) -> Resul
         source,
         path: path.to_string(),
         enabled: true,
+        skill_dir,
     })
 }
 
 /// Load a skill from a SKILL.md file path
 pub async fn load_skill_from_file(path: &Path, source: SkillSource) -> Result<Skill, String> {
+    load_skill_from_file_with_dir(path, source, None).await
+}
+
+/// Load a skill from a file path, with optional skill directory
+pub async fn load_skill_from_file_with_dir(
+    path: &Path,
+    source: SkillSource,
+    skill_dir: Option<PathBuf>,
+) -> Result<Skill, String> {
     let content = tokio::fs::read_to_string(path)
         .await
         .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
 
-    parse_skill_file(&content, &path.to_string_lossy(), source)
+    parse_skill_file_with_dir(&content, &path.to_string_lossy(), source, skill_dir)
 }
 
 /// Load all skills from a directory
@@ -99,26 +119,38 @@ pub async fn load_skills_from_directory(
                 }
             }
         }
-        // Check for subdirectories with SKILL.md
+        // Check for subdirectories with {name}/{name}.md or SKILL.md
         else if path.is_dir() {
             // Skip inactive/disabled directories
             if let Some(dir_name) = path.file_name() {
                 let dir_name_str = dir_name.to_string_lossy();
-                if dir_name_str == "inactive" || dir_name_str == "disabled" || dir_name_str.starts_with('_') {
+                if dir_name_str == "inactive" || dir_name_str == "disabled" || dir_name_str.starts_with('_') || dir_name_str == "managed" {
                     log::debug!("Skipping inactive skills directory: {}", path.display());
                     continue;
                 }
-            }
 
-            let skill_file = path.join("SKILL.md");
-            if skill_file.exists() {
-                match load_skill_from_file(&skill_file, source.clone()).await {
-                    Ok(skill) => {
-                        log::info!("Loaded skill '{}' from {}", skill.metadata.name, skill_file.display());
-                        skills.push(skill);
-                    }
-                    Err(e) => {
-                        log::warn!("Failed to load skill from {}: {}", skill_file.display(), e);
+                // Priority: {name}/{name}.md > {name}/SKILL.md
+                let named_file = path.join(format!("{}.md", dir_name_str));
+                let legacy_file = path.join("SKILL.md");
+                let skill_dir = Some(path.clone());
+
+                let skill_file = if named_file.exists() {
+                    Some(named_file)
+                } else if legacy_file.exists() {
+                    Some(legacy_file)
+                } else {
+                    None
+                };
+
+                if let Some(skill_file) = skill_file {
+                    match load_skill_from_file_with_dir(&skill_file, source.clone(), skill_dir).await {
+                        Ok(skill) => {
+                            log::info!("Loaded skill '{}' from {}", skill.metadata.name, skill_file.display());
+                            skills.push(skill);
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to load skill from {}: {}", skill_file.display(), e);
+                        }
                     }
                 }
             }
@@ -129,8 +161,9 @@ pub async fn load_skills_from_directory(
 }
 
 /// Simple YAML parser for skill metadata
-/// This is a minimal implementation that handles the specific YAML format we use
-fn serde_yaml_parse(yaml: &str) -> Result<SkillMetadata, String> {
+/// This is a minimal implementation that handles the specific YAML format we use.
+/// Also used by zip_parser for consistent frontmatter parsing.
+pub fn serde_yaml_parse(yaml: &str) -> Result<SkillMetadata, String> {
     use std::collections::HashMap;
 
     let mut metadata = SkillMetadata::default();
@@ -205,6 +238,22 @@ fn serde_yaml_parse(yaml: &str) -> Result<SkillMetadata, String> {
                             metadata.tags = parse_inline_list(value);
                         }
                     }
+                    "scripts" => {
+                        if value.starts_with('[') {
+                            metadata.scripts = Some(parse_inline_list(value));
+                        }
+                    }
+                    "abis" => {
+                        if value.starts_with('[') {
+                            metadata.abis = Some(parse_inline_list(value));
+                        }
+                    }
+                    "presets_file" => {
+                        let v = unquote(value);
+                        if !v.is_empty() {
+                            metadata.presets_file = Some(v);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -216,6 +265,8 @@ fn serde_yaml_parse(yaml: &str) -> Result<SkillMetadata, String> {
                     "requires_tools" => metadata.requires_tools.push(unquote(value)),
                     "requires_binaries" => metadata.requires_binaries.push(unquote(value)),
                     "tags" => metadata.tags.push(unquote(value)),
+                    "scripts" => metadata.scripts.get_or_insert_with(Vec::new).push(unquote(value)),
+                    "abis" => metadata.abis.get_or_insert_with(Vec::new).push(unquote(value)),
                     _ => {}
                 }
             } else if in_arguments {

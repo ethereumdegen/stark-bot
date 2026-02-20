@@ -3,6 +3,13 @@ use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use zip::ZipArchive;
 
+/// Parsed ABI from ZIP file or disk
+#[derive(Debug, Clone)]
+pub struct ParsedAbi {
+    pub name: String,
+    pub content: String,
+}
+
 /// Parsed skill from ZIP file
 #[derive(Debug, Clone)]
 pub struct ParsedSkill {
@@ -20,6 +27,8 @@ pub struct ParsedSkill {
     pub subagent_type: Option<String>,
     pub requires_api_keys: HashMap<String, SkillApiKey>,
     pub scripts: Vec<ParsedScript>,
+    pub abis: Vec<ParsedAbi>,
+    pub presets_content: Option<String>,
 }
 
 /// Parsed script from ZIP file
@@ -106,10 +115,13 @@ pub fn parse_skill_zip(data: &[u8]) -> Result<ParsedSkill, String> {
     };
     let (metadata, body) = parse_skill_md(&skill_md)?;
 
-    // Third pass: collect scripts
+    // Third pass: collect scripts, ABIs, and presets
     let base_dir = skill_md_path.as_ref()
         .and_then(|p| p.rsplit('/').nth(1))
         .unwrap_or("");
+
+    let mut abis: Vec<ParsedAbi> = Vec::new();
+    let mut presets_content: Option<String> = None;
 
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)
@@ -122,13 +134,29 @@ pub fn parse_skill_zip(data: &[u8]) -> Result<ParsedSkill, String> {
             continue;
         }
 
-        // Check if this is a script file in a scripts/ subdirectory
         let normalized = normalize_zip_path(&name);
+
+        // Check if this is a script file in a scripts/ subdirectory
         let is_script = if base_dir.is_empty() {
             normalized.starts_with("scripts/")
         } else {
             normalized.starts_with(&format!("{}/scripts/", base_dir)) ||
             normalized.starts_with("scripts/")
+        };
+
+        // Check if this is an ABI file in an abis/ subdirectory
+        let is_abi = if base_dir.is_empty() {
+            normalized.starts_with("abis/") && normalized.ends_with(".json")
+        } else {
+            (normalized.starts_with(&format!("{}/abis/", base_dir)) || normalized.starts_with("abis/"))
+                && normalized.ends_with(".json")
+        };
+
+        // Check if this is a presets.ron file
+        let is_presets = if base_dir.is_empty() {
+            normalized == "presets.ron"
+        } else {
+            normalized == format!("{}/presets.ron", base_dir) || normalized == "presets.ron"
         };
 
         if is_script {
@@ -150,6 +178,24 @@ pub fn parse_skill_zip(data: &[u8]) -> Result<ParsedSkill, String> {
                 code: content,
                 language,
             });
+        } else if is_abi {
+            let abi_filename = name.rsplit('/').next().unwrap_or(&name);
+            let abi_name = abi_filename.strip_suffix(".json").unwrap_or(abi_filename);
+
+            let mut content = String::new();
+            file.read_to_string(&mut content)
+                .map_err(|e| format!("Failed to read ABI {}: {}", abi_filename, e))?;
+
+            abis.push(ParsedAbi {
+                name: abi_name.to_string(),
+                content,
+            });
+        } else if is_presets {
+            let mut content = String::new();
+            file.read_to_string(&mut content)
+                .map_err(|e| format!("Failed to read presets.ron: {}", e))?;
+
+            presets_content = Some(content);
         }
     }
 
@@ -168,6 +214,8 @@ pub fn parse_skill_zip(data: &[u8]) -> Result<ParsedSkill, String> {
         subagent_type: metadata.subagent_type,
         requires_api_keys: metadata.requires_api_keys,
         scripts,
+        abis,
+        presets_content,
     })
 }
 
@@ -192,8 +240,8 @@ pub fn parse_skill_md(content: &str) -> Result<(SkillMetadata, String), String> 
     let frontmatter = rest[..end_idx].trim();
     let body = rest[end_idx + 3..].trim().to_string();
 
-    // Parse YAML frontmatter
-    let metadata = parse_yaml_frontmatter(frontmatter)?;
+    // Parse YAML frontmatter (use shared parser from loader)
+    let metadata = crate::skills::loader::serde_yaml_parse(frontmatter)?;
 
     if metadata.name.is_empty() {
         return Err("Skill name is required in frontmatter".to_string());
@@ -204,181 +252,6 @@ pub fn parse_skill_md(content: &str) -> Result<(SkillMetadata, String), String> 
     }
 
     Ok((metadata, body))
-}
-
-/// Parse YAML frontmatter into SkillMetadata
-fn parse_yaml_frontmatter(yaml: &str) -> Result<SkillMetadata, String> {
-    let mut metadata = SkillMetadata::default();
-    let mut current_key = String::new();
-    let mut in_arguments = false;
-    let mut in_api_keys = false;
-    let mut current_arg_name = String::new();
-    let mut current_arg = SkillArgument {
-        description: String::new(),
-        required: false,
-        default: None,
-    };
-    let mut current_api_key_name = String::new();
-    let mut current_api_key = SkillApiKey {
-        description: String::new(),
-        secret: true,
-    };
-
-    for line in yaml.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-
-        // Check indentation level
-        let indent = line.len() - line.trim_start().len();
-
-        if indent == 0 {
-            // Flush pending argument/api_key before switching sections
-            if in_arguments && !current_arg_name.is_empty() {
-                metadata.arguments.insert(current_arg_name.clone(), current_arg.clone());
-                current_arg_name.clear();
-            }
-            if in_api_keys && !current_api_key_name.is_empty() {
-                metadata.requires_api_keys.insert(current_api_key_name.clone(), current_api_key.clone());
-                current_api_key_name.clear();
-            }
-
-            // Top-level key
-            if let Some((key, value)) = trimmed.split_once(':') {
-                let key = key.trim();
-                let value = value.trim();
-                current_key = key.to_string();
-                in_arguments = key == "arguments";
-                in_api_keys = key == "requires_api_keys";
-
-                match key {
-                    "name" => metadata.name = unquote(value),
-                    "description" => metadata.description = unquote(value),
-                    "version" => metadata.version = unquote(value),
-                    "author" => metadata.author = Some(unquote(value)),
-                    "homepage" => metadata.homepage = Some(unquote(value)),
-                    "metadata" => {
-                        let value_str = unquote(value);
-                        if !value_str.is_empty() {
-                            metadata.metadata = Some(value_str);
-                        }
-                    }
-                    "requires_tools" => {
-                        if value.starts_with('[') {
-                            metadata.requires_tools = parse_inline_list(value);
-                        }
-                    }
-                    "requires_binaries" => {
-                        if value.starts_with('[') {
-                            metadata.requires_binaries = parse_inline_list(value);
-                        }
-                    }
-                    "tags" => {
-                        if value.starts_with('[') {
-                            metadata.tags = parse_inline_list(value);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        } else if indent == 2 {
-            // Second-level (list items or argument/api_key names)
-            if trimmed.starts_with("- ") {
-                let value = trimmed[2..].trim();
-                match current_key.as_str() {
-                    "requires_tools" => metadata.requires_tools.push(unquote(value)),
-                    "requires_binaries" => metadata.requires_binaries.push(unquote(value)),
-                    "tags" => metadata.tags.push(unquote(value)),
-                    _ => {}
-                }
-            } else if in_arguments {
-                // Argument name
-                if let Some((arg_name, _)) = trimmed.split_once(':') {
-                    if !current_arg_name.is_empty() {
-                        metadata
-                            .arguments
-                            .insert(current_arg_name.clone(), current_arg.clone());
-                    }
-                    current_arg_name = arg_name.trim().to_string();
-                    current_arg = SkillArgument {
-                        description: String::new(),
-                        required: false,
-                        default: None,
-                    };
-                }
-            } else if in_api_keys {
-                // API key name
-                if let Some((key_name, _)) = trimmed.split_once(':') {
-                    if !current_api_key_name.is_empty() {
-                        metadata.requires_api_keys.insert(current_api_key_name.clone(), current_api_key.clone());
-                    }
-                    current_api_key_name = key_name.trim().to_string();
-                    current_api_key = SkillApiKey {
-                        description: String::new(),
-                        secret: true,
-                    };
-                }
-            }
-        } else if indent >= 4 {
-            if in_arguments {
-                // Argument properties
-                if let Some((key, value)) = trimmed.split_once(':') {
-                    let key = key.trim();
-                    let value = value.trim();
-                    match key {
-                        "description" => current_arg.description = unquote(value),
-                        "required" => current_arg.required = value == "true",
-                        "default" => current_arg.default = Some(unquote(value)),
-                        _ => {}
-                    }
-                }
-            } else if in_api_keys {
-                // API key properties
-                if let Some((key, value)) = trimmed.split_once(':') {
-                    let key = key.trim();
-                    let value = value.trim();
-                    match key {
-                        "description" => current_api_key.description = unquote(value),
-                        "secret" => current_api_key.secret = value != "false",
-                        _ => {}
-                    }
-                }
-            }
-        }
-    }
-
-    // Don't forget the last argument/api_key
-    if in_arguments && !current_arg_name.is_empty() {
-        metadata.arguments.insert(current_arg_name, current_arg);
-    }
-    if in_api_keys && !current_api_key_name.is_empty() {
-        metadata.requires_api_keys.insert(current_api_key_name, current_api_key);
-    }
-
-    Ok(metadata)
-}
-
-fn unquote(s: &str) -> String {
-    let s = s.trim();
-    if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
-        s[1..s.len() - 1].to_string()
-    } else {
-        s.to_string()
-    }
-}
-
-fn parse_inline_list(s: &str) -> Vec<String> {
-    let s = s.trim();
-    if s.starts_with('[') && s.ends_with(']') {
-        s[1..s.len() - 1]
-            .split(',')
-            .map(|item| unquote(item.trim()))
-            .filter(|item| !item.is_empty())
-            .collect()
-    } else {
-        vec![]
-    }
 }
 
 #[cfg(test)]

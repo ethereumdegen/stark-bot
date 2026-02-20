@@ -107,6 +107,16 @@ impl Database {
         Ok(count > 0)
     }
 
+    /// Delete all associations involving a specific skill
+    pub fn delete_skill_associations_for(&self, skill_id: i64) -> Result<usize, rusqlite::Error> {
+        let conn = self.conn();
+        let count = conn.execute(
+            "DELETE FROM skill_associations WHERE source_skill_id = ?1 OR target_skill_id = ?1",
+            rusqlite::params![skill_id],
+        )?;
+        Ok(count)
+    }
+
     /// Delete all skill associations (for rebuild)
     pub fn delete_all_skill_associations(&self) -> Result<usize, rusqlite::Error> {
         let conn = self.conn();

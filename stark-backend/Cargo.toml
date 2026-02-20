@@ -1,6 +1,6 @@
 [package]
 name = "stark-backend"
-version = "0.5.59"
+version = "0.5.60"
 edition = "2024"
 default-run = "stark-backend"
 
@@ -99,9 +99,9 @@ flate2 = "1"
 tar = "0.4"
 
 # Module plugin shared types
-wallet-monitor-types = { path = "../modules/wallet-monitor-types" }
-discord-tipping-types = { path = "../modules/discord-tipping-types" }
-social-monitor-types = { path = "../modules/social-monitor-types" }
+wallet-monitor-types = { path = "../modules/wallet-monitor/types" }
+discord-tipping-types = { path = "../modules/discord-tipping/types" }
+social-monitor-types = { path = "../modules/social-monitor/types" }
 
 # Polymarket CLOB client (rs-clob-client)
 # Full-featured SDK for trading on Polymarket prediction markets

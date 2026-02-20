@@ -1,0 +1,39 @@
+// WETH wrap/unwrap presets
+{
+    "weth_deposit": (
+        abi: "weth",
+        contracts: {
+            "base": "0x4200000000000000000000000000000000000006",
+            "mainnet": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        },
+        function: "deposit",
+        params_registers: [],
+        value_register: Some("wrap_amount"),
+        static_params: [],
+        description: "Wrap ETH to WETH",
+    ),
+    "weth_withdraw": (
+        abi: "weth",
+        contracts: {
+            "base": "0x4200000000000000000000000000000000000006",
+            "mainnet": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        },
+        function: "withdraw",
+        params_registers: ["unwrap_amount"],
+        value_register: None,
+        static_params: [],
+        description: "Unwrap WETH to ETH",
+    ),
+    "weth_balance": (
+        abi: "weth",
+        contracts: {
+            "base": "0x4200000000000000000000000000000000000006",
+            "mainnet": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        },
+        function: "balanceOf",
+        params_registers: ["wallet_address"],
+        value_register: None,
+        static_params: [],
+        description: "Get WETH balance of wallet",
+    ),
+}

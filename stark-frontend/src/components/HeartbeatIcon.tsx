@@ -14,7 +14,7 @@ interface HeartbeatIconProps {
 export default function HeartbeatIcon({ enabled, size = 16, className = '' }: HeartbeatIconProps) {
   const { isPulsing } = useHeartbeatPulse();
 
-  const colorClass = enabled ? 'text-red-500 fill-red-500' : 'text-slate-500';
+  const colorClass = enabled ? 'text-white fill-white' : 'text-slate-500';
   const animateClass = isPulsing ? 'animate-heartbeat' : 'group-hover:animate-heartbeat';
 
   return (

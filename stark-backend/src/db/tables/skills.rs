@@ -3,7 +3,7 @@
 use chrono::Utc;
 use rusqlite::Result as SqliteResult;
 
-use crate::skills::{DbSkill, DbSkillScript};
+use crate::skills::{DbSkill, DbSkillAbi, DbSkillPreset, DbSkillScript};
 use super::super::Database;
 
 /// Compare two semantic version strings (e.g., "1.0.0", "2.1.3")
@@ -351,5 +351,147 @@ impl Database {
             [skill_id],
         )?;
         Ok(rows_affected as i64)
+    }
+
+    // ============================================
+    // Skill ABIs CRUD methods
+    // ============================================
+
+    /// Create or update a skill ABI
+    pub fn create_skill_abi(&self, abi: &DbSkillAbi) -> SqliteResult<i64> {
+        let conn = self.conn();
+        let now = Utc::now().to_rfc3339();
+
+        conn.execute(
+            "INSERT INTO skill_abis (skill_id, name, content, created_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(skill_id, name) DO UPDATE SET
+                content = excluded.content",
+            rusqlite::params![
+                abi.skill_id,
+                abi.name,
+                abi.content,
+                now
+            ],
+        )?;
+
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Get all ABIs for a skill
+    pub fn get_skill_abis(&self, skill_id: i64) -> SqliteResult<Vec<DbSkillAbi>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, skill_id, name, content, created_at
+             FROM skill_abis WHERE skill_id = ?1 ORDER BY name"
+        )?;
+
+        let abis: Vec<DbSkillAbi> = stmt
+            .query_map([skill_id], |row| {
+                Ok(DbSkillAbi {
+                    id: row.get(0)?,
+                    skill_id: row.get(1)?,
+                    name: row.get(2)?,
+                    content: row.get(3)?,
+                    created_at: row.get(4)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(abis)
+    }
+
+    /// Get all ABIs across all skills (for loading into memory at startup)
+    pub fn get_all_skill_abis(&self) -> SqliteResult<Vec<DbSkillAbi>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, skill_id, name, content, created_at
+             FROM skill_abis ORDER BY name"
+        )?;
+
+        let abis: Vec<DbSkillAbi> = stmt
+            .query_map([], |row| {
+                Ok(DbSkillAbi {
+                    id: row.get(0)?,
+                    skill_id: row.get(1)?,
+                    name: row.get(2)?,
+                    content: row.get(3)?,
+                    created_at: row.get(4)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(abis)
+    }
+
+    // ============================================
+    // Skill Presets CRUD methods
+    // ============================================
+
+    /// Create or update a skill preset
+    pub fn create_skill_preset(&self, preset: &DbSkillPreset) -> SqliteResult<i64> {
+        let conn = self.conn();
+        let now = Utc::now().to_rfc3339();
+
+        conn.execute(
+            "INSERT INTO skill_presets (skill_id, content, created_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(skill_id) DO UPDATE SET
+                content = excluded.content",
+            rusqlite::params![
+                preset.skill_id,
+                preset.content,
+                now
+            ],
+        )?;
+
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Get preset for a skill
+    pub fn get_skill_preset(&self, skill_id: i64) -> SqliteResult<Option<DbSkillPreset>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, skill_id, content, created_at
+             FROM skill_presets WHERE skill_id = ?1"
+        )?;
+
+        let preset = stmt
+            .query_row([skill_id], |row| {
+                Ok(DbSkillPreset {
+                    id: row.get(0)?,
+                    skill_id: row.get(1)?,
+                    content: row.get(2)?,
+                    created_at: row.get(3)?,
+                })
+            })
+            .ok();
+
+        Ok(preset)
+    }
+
+    /// Get all presets across all skills (for loading into memory at startup)
+    pub fn get_all_skill_presets(&self) -> SqliteResult<Vec<DbSkillPreset>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, skill_id, content, created_at
+             FROM skill_presets ORDER BY skill_id"
+        )?;
+
+        let presets: Vec<DbSkillPreset> = stmt
+            .query_map([], |row| {
+                Ok(DbSkillPreset {
+                    id: row.get(0)?,
+                    skill_id: row.get(1)?,
+                    content: row.get(2)?,
+                    created_at: row.get(3)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(presets)
     }
 }

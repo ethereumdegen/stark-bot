@@ -1,6 +1,7 @@
 use crate::db::Database;
 use crate::skills::types::{DbSkill, DbSkillScript, Skill, SkillSource};
 use crate::skills::zip_parser::{parse_skill_md, parse_skill_zip, ParsedSkill};
+use crate::skills::types::{DbSkillAbi, DbSkillPreset};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -120,6 +121,8 @@ impl SkillRegistry {
             subagent_type: metadata.subagent_type,
             requires_api_keys: metadata.requires_api_keys,
             scripts: Vec::new(),
+            abis: Vec::new(),
+            presets_content: None,
         };
 
         self.create_skill_from_parsed_force(parsed)
@@ -144,6 +147,8 @@ impl SkillRegistry {
             subagent_type: metadata.subagent_type,
             requires_api_keys: metadata.requires_api_keys,
             scripts: Vec::new(), // No scripts for plain markdown
+            abis: Vec::new(),
+            presets_content: None,
         };
 
         self.create_skill_from_parsed(parsed)
@@ -151,6 +156,15 @@ impl SkillRegistry {
 
     /// Create a skill from parsed skill data
     pub fn create_skill_from_parsed(&self, parsed: ParsedSkill) -> Result<DbSkill, String> {
+        self.create_skill_from_parsed_internal(parsed, false)
+    }
+
+    /// Create a skill from parsed skill data, bypassing version checks (force update)
+    pub fn create_skill_from_parsed_force(&self, parsed: ParsedSkill) -> Result<DbSkill, String> {
+        self.create_skill_from_parsed_internal(parsed, true)
+    }
+
+    fn create_skill_from_parsed_internal(&self, parsed: ParsedSkill, force: bool) -> Result<DbSkill, String> {
         let now = chrono::Utc::now().to_rfc3339();
 
         let db_skill = DbSkill {
@@ -174,8 +188,11 @@ impl SkillRegistry {
         };
 
         // Insert skill into database
-        let skill_id = self.db.create_skill(&db_skill)
-            .map_err(|e| format!("Failed to create skill: {}", e))?;
+        let skill_id = if force {
+            self.db.create_skill_force(&db_skill)
+        } else {
+            self.db.create_skill(&db_skill)
+        }.map_err(|e| format!("Failed to create skill: {}", e))?;
 
         // Insert scripts
         for script in parsed.scripts {
@@ -191,52 +208,29 @@ impl SkillRegistry {
                 .map_err(|e| format!("Failed to create skill script: {}", e))?;
         }
 
-        // Return the created skill
-        self.db.get_skill(&parsed.name)
-            .map_err(|e| format!("Failed to retrieve created skill: {}", e))?
-            .ok_or_else(|| "Skill not found after creation".to_string())
-    }
-
-    /// Create a skill from parsed skill data, bypassing version checks (force update)
-    pub fn create_skill_from_parsed_force(&self, parsed: ParsedSkill) -> Result<DbSkill, String> {
-        let now = chrono::Utc::now().to_rfc3339();
-
-        let db_skill = DbSkill {
-            id: None,
-            name: parsed.name.clone(),
-            description: parsed.description,
-            body: parsed.body,
-            version: parsed.version,
-            author: parsed.author,
-            homepage: parsed.homepage,
-            metadata: parsed.metadata,
-            enabled: true,
-            requires_tools: parsed.requires_tools,
-            requires_binaries: parsed.requires_binaries,
-            arguments: parsed.arguments,
-            tags: parsed.tags,
-            subagent_type: parsed.subagent_type,
-            requires_api_keys: parsed.requires_api_keys,
-            created_at: now.clone(),
-            updated_at: now.clone(),
-        };
-
-        // Insert skill into database (force - bypass version check)
-        let skill_id = self.db.create_skill_force(&db_skill)
-            .map_err(|e| format!("Failed to create skill: {}", e))?;
-
-        // Insert scripts
-        for script in parsed.scripts {
-            let db_script = DbSkillScript {
+        // Insert ABIs
+        for abi in parsed.abis {
+            let db_abi = DbSkillAbi {
                 id: None,
                 skill_id,
-                name: script.name,
-                code: script.code,
-                language: script.language,
+                name: abi.name,
+                content: abi.content,
                 created_at: now.clone(),
             };
-            self.db.create_skill_script(&db_script)
-                .map_err(|e| format!("Failed to create skill script: {}", e))?;
+            self.db.create_skill_abi(&db_abi)
+                .map_err(|e| format!("Failed to create skill ABI: {}", e))?;
+        }
+
+        // Insert preset
+        if let Some(presets_content) = parsed.presets_content {
+            let db_preset = DbSkillPreset {
+                id: None,
+                skill_id,
+                content: presets_content,
+                created_at: now.clone(),
+            };
+            self.db.create_skill_preset(&db_preset)
+                .map_err(|e| format!("Failed to create skill preset: {}", e))?;
         }
 
         // Return the created skill
@@ -348,48 +342,143 @@ impl SkillRegistry {
         let skill_id = self.db.create_skill(&db_skill)
             .map_err(|e| format!("Failed to create skill in database: {}", e))?;
 
-        // Scan scripts/ subdirectory alongside SKILL.md and import into DB
+        // Import scripts: if frontmatter declares scripts:, import only those from skill dir root.
+        // Otherwise fall back to scanning scripts/ subfolder (legacy).
         if !skill.path.is_empty() {
             let skill_md_path = std::path::Path::new(&skill.path);
             if let Some(parent) = skill_md_path.parent() {
-                let scripts_dir = parent.join("scripts");
-                if scripts_dir.is_dir() {
-                    if let Ok(entries) = std::fs::read_dir(&scripts_dir) {
-                        for entry in entries.flatten() {
-                            let path = entry.path();
-                            if !path.is_file() {
+                if let Some(ref script_names) = skill.metadata.scripts {
+                    // New convention: import named scripts from skill folder root
+                    for script_name in script_names {
+                        let script_path = parent.join(script_name);
+                        if !script_path.is_file() {
+                            log::warn!(
+                                "Declared script '{}' not found at {} for skill '{}'",
+                                script_name, script_path.display(), skill.metadata.name
+                            );
+                            continue;
+                        }
+                        let language = crate::skills::zip_parser::ParsedScript::detect_language(script_name);
+                        if language == "unknown" {
+                            continue;
+                        }
+                        let code = match std::fs::read_to_string(&script_path) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                log::warn!("Failed to read script {}: {}", script_path.display(), e);
                                 continue;
                             }
-                            let file_name = match path.file_name() {
-                                Some(n) => n.to_string_lossy().to_string(),
-                                None => continue,
-                            };
-                            let language = crate::skills::zip_parser::ParsedScript::detect_language(&file_name);
-                            if language == "unknown" {
-                                continue; // skip non-script files (e.g. requirements.txt)
-                            }
-                            let code = match std::fs::read_to_string(&path) {
-                                Ok(c) => c,
-                                Err(e) => {
-                                    log::warn!("Failed to read script {}: {}", path.display(), e);
+                        };
+                        let db_script = DbSkillScript {
+                            id: None,
+                            skill_id,
+                            name: script_name.clone(),
+                            code,
+                            language,
+                            created_at: now.clone(),
+                        };
+                        if let Err(e) = self.db.create_skill_script(&db_script) {
+                            log::warn!("Failed to import script '{}' for skill '{}': {}", script_name, skill.metadata.name, e);
+                        } else {
+                            log::info!("Imported script '{}' for skill '{}'", script_name, skill.metadata.name);
+                        }
+                    }
+                } else {
+                    // Legacy: scan scripts/ subdirectory
+                    let scripts_dir = parent.join("scripts");
+                    if scripts_dir.is_dir() {
+                        if let Ok(entries) = std::fs::read_dir(&scripts_dir) {
+                            for entry in entries.flatten() {
+                                let path = entry.path();
+                                if !path.is_file() {
                                     continue;
                                 }
-                            };
-                            let db_script = DbSkillScript {
-                                id: None,
-                                skill_id,
-                                name: file_name.clone(),
-                                code,
-                                language,
-                                created_at: now.clone(),
-                            };
-                            if let Err(e) = self.db.create_skill_script(&db_script) {
-                                log::warn!("Failed to import script '{}' for skill '{}': {}", file_name, skill.metadata.name, e);
-                            } else {
-                                log::info!("Imported script '{}' for skill '{}'", file_name, skill.metadata.name);
+                                let file_name = match path.file_name() {
+                                    Some(n) => n.to_string_lossy().to_string(),
+                                    None => continue,
+                                };
+                                let language = crate::skills::zip_parser::ParsedScript::detect_language(&file_name);
+                                if language == "unknown" {
+                                    continue;
+                                }
+                                let code = match std::fs::read_to_string(&path) {
+                                    Ok(c) => c,
+                                    Err(e) => {
+                                        log::warn!("Failed to read script {}: {}", path.display(), e);
+                                        continue;
+                                    }
+                                };
+                                let db_script = DbSkillScript {
+                                    id: None,
+                                    skill_id,
+                                    name: file_name.clone(),
+                                    code,
+                                    language,
+                                    created_at: now.clone(),
+                                };
+                                if let Err(e) = self.db.create_skill_script(&db_script) {
+                                    log::warn!("Failed to import script '{}' for skill '{}': {}", file_name, skill.metadata.name, e);
+                                } else {
+                                    log::info!("Imported script '{}' for skill '{}'", file_name, skill.metadata.name);
+                                }
                             }
                         }
                     }
+                }
+            }
+        }
+
+        // Import ABIs from {skill_dir}/abis/ into DB
+        if let Some(ref sd) = skill.skill_dir {
+            let abis_dir = sd.join("abis");
+            if abis_dir.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(&abis_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.extension().map_or(false, |e| e == "json") {
+                            if let Some(stem) = path.file_stem() {
+                                let abi_name = stem.to_string_lossy().to_string();
+                                match std::fs::read_to_string(&path) {
+                                    Ok(content) => {
+                                        let db_abi = DbSkillAbi {
+                                            id: None,
+                                            skill_id,
+                                            name: abi_name.clone(),
+                                            content,
+                                            created_at: now.clone(),
+                                        };
+                                        if let Err(e) = self.db.create_skill_abi(&db_abi) {
+                                            log::warn!("Failed to import ABI '{}' for skill '{}': {}", abi_name, skill.metadata.name, e);
+                                        } else {
+                                            log::debug!("Imported ABI '{}' for skill '{}'", abi_name, skill.metadata.name);
+                                        }
+                                    }
+                                    Err(e) => log::warn!("Failed to read ABI {}: {}", path.display(), e),
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Import presets.ron into DB
+            let presets_path = sd.join("presets.ron");
+            if presets_path.exists() {
+                match std::fs::read_to_string(&presets_path) {
+                    Ok(content) => {
+                        let db_preset = DbSkillPreset {
+                            id: None,
+                            skill_id,
+                            content,
+                            created_at: now.clone(),
+                        };
+                        if let Err(e) = self.db.create_skill_preset(&db_preset) {
+                            log::warn!("Failed to import presets for skill '{}': {}", skill.metadata.name, e);
+                        } else {
+                            log::debug!("Imported presets for skill '{}'", skill.metadata.name);
+                        }
+                    }
+                    Err(e) => log::warn!("Failed to read presets {}: {}", presets_path.display(), e),
                 }
             }
         }
@@ -399,9 +488,16 @@ impl SkillRegistry {
 
     /// Reload all skills from disk (clear and re-import from files)
     pub async fn reload(&self) -> Result<usize, String> {
+        // Clear in-memory indexes before reloading
+        crate::tools::presets::clear_skill_web3_presets();
+        crate::web3::clear_abi_index();
         // Note: This doesn't clear the database - file-based skills will just be updated
         // Database-only skills (uploaded via ZIP) are preserved
-        self.load_all().await
+        let result = self.load_all().await;
+        // Reload ABIs and presets from DB into in-memory indexes
+        crate::web3::load_all_abis_from_db(&self.db);
+        crate::tools::presets::load_all_skill_presets_from_db(&self.db);
+        result
     }
 
     /// Get skills that require specific tools

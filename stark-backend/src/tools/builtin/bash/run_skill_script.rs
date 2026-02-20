@@ -203,11 +203,17 @@ impl Tool for RunSkillScriptTool {
         };
 
         // 4. Find script on disk first, then fall back to DB
+        //    Resolution order: {skill}/script.py > {skill}/scripts/script.py > DB
         let skills_dir = crate::config::skills_dir();
-        let disk_path = PathBuf::from(&skills_dir)
-            .join(&skill_name)
-            .join("scripts")
-            .join(&params.script);
+        let skill_root = PathBuf::from(&skills_dir).join(&skill_name);
+        let disk_path_root = skill_root.join(&params.script);
+        let disk_path_legacy = skill_root.join("scripts").join(&params.script);
+
+        let disk_path = if disk_path_root.exists() {
+            disk_path_root
+        } else {
+            disk_path_legacy
+        };
 
         // Track whether we need to clean up a temp file
         let mut temp_file: Option<PathBuf> = None;

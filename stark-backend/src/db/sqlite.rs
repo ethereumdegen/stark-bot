@@ -751,6 +751,33 @@ impl Database {
             [],
         )?;
 
+        // Skill ABIs (ABI JSON content stored in DB, single source of truth)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS skill_abis (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                skill_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE,
+                UNIQUE(skill_id, name)
+            )",
+            [],
+        )?;
+
+        // Skill presets (RON preset content stored in DB, single source of truth)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS skill_presets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                skill_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE,
+                UNIQUE(skill_id)
+            )",
+            [],
+        )?;
+
         // Skill embeddings (vector search for skill discovery)
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skill_embeddings (

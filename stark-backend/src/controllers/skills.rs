@@ -398,12 +398,25 @@ async fn reload_skills(state: web::Data<AppState>, req: HttpRequest) -> impl Res
     }
 
     match state.skill_registry.reload().await {
-        Ok(count) => HttpResponse::Ok().json(OperationResponse {
-            success: true,
-            message: Some(format!("Loaded {} skills from disk", count)),
-            error: None,
-            count: Some(state.skill_registry.len()),
-        }),
+        Ok(count) => {
+            // Background-backfill embeddings for any newly loaded skills
+            if let Some(ref engine) = state.hybrid_search {
+                let emb_gen = engine.embedding_generator().clone();
+                let db = state.db.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = crate::skills::embeddings::backfill_skill_embeddings(&db, &emb_gen).await {
+                        log::warn!("[SKILL-EMB] Post-reload backfill failed: {}", e);
+                    }
+                });
+            }
+
+            HttpResponse::Ok().json(OperationResponse {
+                success: true,
+                message: Some(format!("Loaded {} skills from disk", count)),
+                error: None,
+                count: Some(state.skill_registry.len()),
+            })
+        }
         Err(e) => {
             log::error!("Failed to reload skills: {}", e);
             HttpResponse::InternalServerError().json(OperationResponse {
@@ -502,7 +515,19 @@ async fn upload_skill(
 
     match result {
         Ok(db_skill) => {
-            // Auto-generate embedding for the new skill
+            // Load the new skill's ABIs and presets into memory
+            if let Some(skill_id) = db_skill.id {
+                // Load ABIs for this skill into the in-memory index
+                if let Ok(abis) = state.db.get_skill_abis(skill_id) {
+                    for abi in abis {
+                        crate::web3::register_abi_content(&abi.name, &abi.content);
+                    }
+                }
+                // Load presets for this skill into the in-memory index
+                crate::tools::presets::load_skill_presets_from_db(&state.db, skill_id);
+            }
+
+            // Auto-generate embedding + rebuild associations for the new skill
             if let Some(skill_id) = db_skill.id {
                 if let Some(ref engine) = state.hybrid_search {
                     let emb_gen = engine.embedding_generator().clone();
@@ -516,6 +541,10 @@ async fn upload_skill(
                                 log::warn!("[SKILL-EMB] Failed to auto-embed skill '{}': {}", skill_name, e);
                             } else {
                                 log::info!("[SKILL-EMB] Auto-embedded skill '{}'", skill_name);
+                                // Rebuild associations for this skill
+                                if let Err(e) = crate::skills::embeddings::rebuild_associations_for_skill(&db, skill_id, 0.30).await {
+                                    log::warn!("[SKILL-ASSOC] Failed to rebuild associations for '{}': {}", skill_name, e);
+                                }
                             }
                         }
                     });
@@ -596,7 +625,7 @@ async fn update_skill(
         });
     }
 
-    // Auto-regenerate embedding for the updated skill
+    // Auto-regenerate embedding + rebuild associations for the updated skill
     if let Some(ref engine) = state.hybrid_search {
         if let Ok(Some(updated)) = state.db.get_skill(&name) {
             if let Some(skill_id) = updated.id {
@@ -609,6 +638,11 @@ async fn update_skill(
                         let dims = embedding.len() as i32;
                         if let Err(e) = db.upsert_skill_embedding(skill_id, &embedding, "remote", dims) {
                             log::warn!("[SKILL-EMB] Failed to re-embed skill '{}': {}", skill_name, e);
+                        } else {
+                            // Rebuild associations for this skill
+                            if let Err(e) = crate::skills::embeddings::rebuild_associations_for_skill(&db, skill_id, 0.30).await {
+                                log::warn!("[SKILL-ASSOC] Failed to rebuild associations for '{}': {}", skill_name, e);
+                            }
                         }
                     }
                 });
@@ -649,7 +683,10 @@ async fn delete_skill(
 
     let name = path.into_inner();
 
-    if !state.skill_registry.has_skill(&name) {
+    // Get skill ID before deleting (for association cleanup)
+    let skill_id = state.db.get_skill(&name).ok().flatten().and_then(|s| s.id);
+
+    if skill_id.is_none() && !state.skill_registry.has_skill(&name) {
         return HttpResponse::NotFound().json(OperationResponse {
             success: false,
             message: None,
@@ -659,12 +696,20 @@ async fn delete_skill(
     }
 
     match state.skill_registry.delete_skill(&name) {
-        Ok(true) => HttpResponse::Ok().json(OperationResponse {
-            success: true,
-            message: Some(format!("Skill '{}' deleted", name)),
-            error: None,
-            count: None,
-        }),
+        Ok(true) => {
+            // Clean up associations for the deleted skill
+            if let Some(sid) = skill_id {
+                if let Err(e) = state.db.delete_skill_associations_for(sid) {
+                    log::warn!("[SKILL-ASSOC] Failed to clean up associations for deleted skill '{}': {}", name, e);
+                }
+            }
+            HttpResponse::Ok().json(OperationResponse {
+                success: true,
+                message: Some(format!("Skill '{}' deleted", name)),
+                error: None,
+                count: None,
+            })
+        }
         Ok(false) => HttpResponse::NotFound().json(OperationResponse {
             success: false,
             message: None,
@@ -777,21 +822,42 @@ async fn search_skills_by_embedding(
         return resp;
     }
 
-    let engine = match &state.hybrid_search {
-        Some(e) => e,
-        None => {
-            return HttpResponse::ServiceUnavailable().json(SkillSearchResponse {
-                success: false,
-                results: vec![],
-                error: Some("Embedding engine not configured".to_string()),
-            });
-        }
-    };
-
-    let emb_gen = engine.embedding_generator().clone();
     let limit = query.limit.unwrap_or(5);
 
-    match crate::skills::embeddings::search_skills(&state.db, &emb_gen, &query.query, limit, 0.20).await {
+    // Try embedding search first if engine is available
+    if let Some(ref engine) = state.hybrid_search {
+        let emb_gen = engine.embedding_generator().clone();
+        // Check if any embeddings exist
+        let has_embeddings = state.db.count_skill_embeddings().unwrap_or(0) > 0;
+
+        if has_embeddings {
+            match crate::skills::embeddings::search_skills(&state.db, &emb_gen, &query.query, limit, 0.20).await {
+                Ok(matches) if !matches.is_empty() => {
+                    let results: Vec<SkillSearchResult> = matches
+                        .into_iter()
+                        .map(|(skill, sim)| SkillSearchResult {
+                            skill_id: skill.id.unwrap_or(0),
+                            name: skill.name,
+                            description: skill.description,
+                            similarity: sim,
+                        })
+                        .collect();
+                    return HttpResponse::Ok().json(SkillSearchResponse {
+                        success: true,
+                        results,
+                        error: None,
+                    });
+                }
+                Ok(_) => { /* empty results — fall through to text search */ }
+                Err(e) => {
+                    log::warn!("[SKILL-SEARCH] Embedding search failed, falling back to text: {}", e);
+                }
+            }
+        }
+    }
+
+    // Fallback: text-based search (works without embeddings)
+    match crate::skills::embeddings::search_skills_text(&state.db, &query.query, limit) {
         Ok(matches) => {
             let results: Vec<SkillSearchResult> = matches
                 .into_iter()

@@ -1673,6 +1673,31 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
                         log::warn!("Failed to restore script '{}' for skill '{}': {}", script.name, skill_entry.name, e);
                     }
                 }
+                // Restore ABIs for this skill
+                for abi in &skill_entry.abis {
+                    let db_abi = crate::skills::DbSkillAbi {
+                        id: None,
+                        skill_id,
+                        name: abi.name.clone(),
+                        content: abi.content.clone(),
+                        created_at: now.clone(),
+                    };
+                    if let Err(e) = state.db.create_skill_abi(&db_abi) {
+                        log::warn!("Failed to restore ABI '{}' for skill '{}': {}", abi.name, skill_entry.name, e);
+                    }
+                }
+                // Restore preset for this skill
+                if let Some(ref presets_content) = skill_entry.presets_content {
+                    let db_preset = crate::skills::DbSkillPreset {
+                        id: None,
+                        skill_id,
+                        content: presets_content.clone(),
+                        created_at: now.clone(),
+                    };
+                    if let Err(e) = state.db.create_skill_preset(&db_preset) {
+                        log::warn!("Failed to restore presets for skill '{}': {}", skill_entry.name, e);
+                    }
+                }
                 restored_skills += 1;
             }
             Err(e) => {
@@ -1683,8 +1708,8 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
 
     // Re-apply bundled skills from disk to ensure newer versions aren't downgraded by cloud restore
     if restored_skills > 0 {
-        match state.skill_registry.load_all().await {
-            Ok(count) => log::info!("Re-applied {} file-based skills after cloud restore", count),
+        match state.skill_registry.reload().await {
+            Ok(count) => log::info!("Re-applied {} file-based skills after cloud restore (ABIs/presets reloaded)", count),
             Err(e) => log::warn!("Failed to re-apply file-based skills after restore: {}", e),
         }
     }

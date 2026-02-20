@@ -32,6 +32,7 @@ export default function BotSettings() {
   const [chatSessionMemoryGeneration, setChatSessionMemoryGeneration] = useState(true);
   const [guestDashboardEnabled, setGuestDashboardEnabled] = useState(false);
   const [autoSyncStatus, setAutoSyncStatus] = useState<AutoSyncStatus | null>(null);
+  const [autoSyncDismissed, setAutoSyncDismissed] = useState(false);
   const [walletAddress, setWalletAddress] = useState<string>('');
   const [walletMode, setWalletMode] = useState<string>('');
   const [walletCopied, setWalletCopied] = useState(false);
@@ -94,6 +95,10 @@ export default function BotSettings() {
     try {
       const status = await getAutoSyncStatus();
       setAutoSyncStatus(status);
+      // Auto-dismiss success banner after 8 seconds
+      if (status.status === 'success') {
+        setTimeout(() => setAutoSyncDismissed(true), 8000);
+      }
     } catch (err) {
       console.error('Failed to load auto-sync status:', err);
     }
@@ -202,7 +207,7 @@ export default function BotSettings() {
 
   // Render auto-sync status banner
   const renderAutoSyncBanner = () => {
-    if (!autoSyncStatus || autoSyncStatus.status === null || autoSyncStatus.status === 'skipped') {
+    if (!autoSyncStatus || autoSyncStatus.status === null || autoSyncStatus.status === 'skipped' || autoSyncDismissed) {
       return null;
     }
 
@@ -260,6 +265,14 @@ export default function BotSettings() {
               </p>
             )}
           </div>
+          <button
+            type="button"
+            onClick={() => setAutoSyncDismissed(true)}
+            className="text-slate-500 hover:text-slate-300 transition-colors shrink-0"
+            title="Dismiss"
+          >
+            <XCircle className="w-4 h-4" />
+          </button>
         </div>
       </div>
     );

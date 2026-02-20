@@ -618,6 +618,44 @@ async fn notes_by_tag(data: web::Data<AppState>, req: HttpRequest) -> impl Respo
     }
 }
 
+// --- Delete note ---
+
+#[derive(Debug, Deserialize)]
+struct DeleteNoteQuery {
+    path: String,
+}
+
+async fn delete_note(
+    data: web::Data<AppState>,
+    req: HttpRequest,
+    query: web::Query<DeleteNoteQuery>,
+) -> impl Responder {
+    if let Err(resp) = validate_session_from_request(&data, &req) {
+        return resp;
+    }
+
+    let notes_store = match data.dispatcher.notes_store() {
+        Some(store) => store,
+        None => {
+            return HttpResponse::ServiceUnavailable().json(serde_json::json!({
+                "success": false,
+                "error": "Notes store not initialized"
+            }));
+        }
+    };
+
+    match notes_store.delete_note(&query.path) {
+        Ok(()) => HttpResponse::Ok().json(serde_json::json!({
+            "success": true,
+            "message": format!("Deleted {}", query.path)
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "error": e
+        })),
+    }
+}
+
 // --- Export all notes as ZIP ---
 
 async fn export_notes(data: web::Data<AppState>, req: HttpRequest) -> impl Responder {
@@ -694,6 +732,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
             .route("/info", web::get().to(notes_info))
             .route("/tags", web::get().to(list_tags))
             .route("/by-tag", web::get().to(notes_by_tag))
-            .route("/export", web::get().to(export_notes)),
+            .route("/export", web::get().to(export_notes))
+            .route("/delete", web::delete().to(delete_note)),
     );
 }

@@ -1622,6 +1622,10 @@ export async function exportNotesZip(): Promise<Blob> {
   return response.blob();
 }
 
+export async function deleteNote(path: string): Promise<{ success: boolean; error?: string }> {
+  return apiFetch(`/notes/delete?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
+}
+
 // Transaction Queue API
 export interface QueuedTransactionInfo {
   uuid: string;

@@ -164,7 +164,10 @@ impl TestHarness {
             .unwrap_or(std::path::Path::new("."))
             .join("skills");
         for name in skill_names {
-            let path = skills_dir.join(format!("{}.md", name));
+            // Try {name}/{name}.md first, then flat {name}.md (legacy)
+            let named_path = skills_dir.join(name).join(format!("{}.md", name));
+            let flat_path = skills_dir.join(format!("{}.md", name));
+            let path = if named_path.exists() { named_path } else { flat_path };
             let content = std::fs::read_to_string(&path)
                 .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
             let skill = skill_registry.create_skill_from_markdown_force(&content)
@@ -868,7 +871,7 @@ async fn swap_flow_realistic() {
     let skill_md_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap_or(std::path::Path::new("."))
-        .join("skills/swap.md");
+        .join("skills/swap/swap.md");
     let skill_content = std::fs::read_to_string(&skill_md_path)
         .unwrap_or_else(|e| panic!("Failed to read {}: {}", skill_md_path.display(), e));
 

@@ -344,6 +344,47 @@ impl NoteStore {
         file_ops::read_note(&full_path).map_err(|e| format!("Failed to read note: {}", e))
     }
 
+    /// Delete a note file and remove it from the FTS index
+    pub fn delete_note(&self, rel_path: &str) -> Result<(), String> {
+        let full_path = self.notes_dir.join(rel_path);
+
+        // Security: ensure path is within notes dir
+        let canonical_notes = self.notes_dir.canonicalize()
+            .map_err(|e| format!("Failed to resolve notes dir: {}", e))?;
+        let canonical_path = full_path.canonicalize()
+            .map_err(|_| "Note not found".to_string())?;
+        if !canonical_path.starts_with(&canonical_notes) {
+            return Err("Access denied: path outside notes".to_string());
+        }
+
+        // Delete the file
+        std::fs::remove_file(&canonical_path)
+            .map_err(|e| format!("Failed to delete note: {}", e))?;
+
+        // Remove from FTS index
+        let conn = self.conn.lock().unwrap();
+        let _ = conn.execute(
+            "DELETE FROM notes_fts WHERE file_path = ?1",
+            rusqlite::params![rel_path],
+        );
+
+        // Clean up empty parent directories (up to notes_dir)
+        let mut parent = canonical_path.parent();
+        while let Some(dir) = parent {
+            if dir == canonical_notes {
+                break;
+            }
+            if std::fs::read_dir(dir).map(|mut d| d.next().is_none()).unwrap_or(false) {
+                let _ = std::fs::remove_dir(dir);
+            } else {
+                break;
+            }
+            parent = dir.parent();
+        }
+
+        Ok(())
+    }
+
     /// List all note files (relative paths)
     pub fn list_files(&self) -> std::io::Result<Vec<String>> {
         let files = file_ops::list_notes(&self.notes_dir)?;

@@ -54,25 +54,20 @@ impl MessageDispatcher {
             }
         };
 
-        // All enabled skills are available (no tag filtering).
-        // In safe mode with role grants, only show granted skills.
-        let skills: Vec<_> = if tool_config.profile == ToolProfile::SafeMode
-            && !tool_config.extra_skill_names.is_empty()
-        {
-            skills
-                .into_iter()
-                .filter(|skill| tool_config.extra_skill_names.contains(&skill.name))
-                .collect()
-        } else {
-            skills
-        };
-
-        // In safe mode, additionally filter out skills whose requires_tools
-        // include tools that aren't available under the safe mode config
+        // Safe mode: only show explicitly granted skills (via special role).
+        // Without grants, no skills are available in safe mode.
         if tool_config.profile == ToolProfile::SafeMode {
-            skills
+            if tool_config.extra_skill_names.is_empty() {
+                return vec![];
+            }
+            return skills
                 .into_iter()
                 .filter(|skill| {
+                    // Must be explicitly granted
+                    if !tool_config.extra_skill_names.contains(&skill.name) {
+                        return false;
+                    }
+                    // And requires_tools must all be available
                     skill.requires_tools.is_empty()
                         || skill.requires_tools.iter().all(|tool_name| {
                             self.tool_registry
@@ -86,10 +81,11 @@ impl MessageDispatcher {
                                 .unwrap_or(false)
                         })
                 })
-                .collect()
-        } else {
-            skills
+                .collect();
         }
+
+        // Standard mode: all enabled skills are available (no tag filtering)
+        skills
     }
 
     /// Build a `use_skill` definition showing ALL enabled skills (no subtype filtering).

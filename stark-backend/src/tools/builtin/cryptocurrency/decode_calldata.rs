@@ -89,17 +89,15 @@ impl DecodeCalldataTool {
         }
     }
 
-    /// Load ABI from file
+    /// Load ABI from file — checks global abis/ dir then skill ABI index
     fn load_abi(&self, abis_dir: &PathBuf, name: &str) -> Result<AbiFile, String> {
-        let path = abis_dir.join(format!("{}.json", name));
-
-        let content = std::fs::read_to_string(&path)
-            .map_err(|e| format!("Failed to load ABI '{}': {}. Available ABIs are in the /abis folder.", name, e))?;
-
-        let abi_file: AbiFile = serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse ABI '{}': {}", name, e))?;
-
-        Ok(abi_file)
+        let web3_abi = crate::web3::load_abi(abis_dir, name)?;
+        Ok(AbiFile {
+            name: web3_abi.name,
+            description: web3_abi.description,
+            abi: web3_abi.abi,
+            address: web3_abi.address,
+        })
     }
 
     /// Parse ethers Abi from our ABI file format

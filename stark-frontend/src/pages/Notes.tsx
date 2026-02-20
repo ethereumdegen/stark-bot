@@ -14,6 +14,7 @@ import {
   Download,
   List,
   Hash,
+  Trash2,
 } from 'lucide-react';
 import {
   listNotes,
@@ -22,6 +23,7 @@ import {
   getNotesTags,
   getNotesByTag,
   exportNotesZip,
+  deleteNote,
   NoteEntry,
   TagItem,
   NotesByTagGroup,
@@ -88,6 +90,10 @@ export default function Notes() {
 
   // Export
   const [isExporting, setIsExporting] = useState(false);
+
+  // Delete
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
   const loadDirectory = async (path?: string): Promise<TreeNode[]> => {
     const response = await listNotes(path);
@@ -269,6 +275,32 @@ export default function Notes() {
       console.error('Export failed:', err);
     } finally {
       setIsExporting(false);
+    }
+  };
+
+  const handleDelete = async (path: string) => {
+    if (deleteConfirm !== path) {
+      setDeleteConfirm(path);
+      return;
+    }
+    setIsDeleting(true);
+    try {
+      const res = await deleteNote(path);
+      if (res.success) {
+        // Clear selection and refresh
+        setSelectedFile(null);
+        setFileContent(null);
+        setFileMeta(null);
+        setDeleteConfirm(null);
+        await loadRoot();
+        if (viewMode === 'tags') {
+          loadTagGroups();
+        }
+      }
+    } catch (err) {
+      console.error('Delete failed:', err);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -721,11 +753,38 @@ export default function Notes() {
                 >
                   <ArrowLeft className="w-4 h-4" />
                 </button>
-                <FileText className="w-4 h-4 text-slate-400" />
-                <span className="text-sm text-slate-300 font-mono truncate">
+                <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                <span className="text-sm text-slate-300 font-mono truncate flex-1">
                   {selectedFile}
                 </span>
+                <button
+                  onClick={() => handleDelete(selectedFile!)}
+                  disabled={isDeleting}
+                  className={`p-1.5 rounded-lg transition-colors flex-shrink-0 ${
+                    deleteConfirm === selectedFile
+                      ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
+                      : 'text-slate-500 hover:text-red-400 hover:bg-slate-700'
+                  }`}
+                  title={deleteConfirm === selectedFile ? 'Click again to confirm delete' : 'Delete note'}
+                >
+                  {isDeleting ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-4 h-4" />
+                  )}
+                </button>
               </div>
+              {deleteConfirm === selectedFile && (
+                <div className="px-4 py-2 bg-red-500/10 border-b border-red-500/20 flex items-center justify-between">
+                  <span className="text-xs text-red-400">Click delete again to confirm</span>
+                  <button
+                    onClick={() => setDeleteConfirm(null)}
+                    className="text-xs text-slate-500 hover:text-slate-300"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
 
               {/* Metadata header */}
               {fileMeta && (fileMeta.title || fileMeta.tags) && (

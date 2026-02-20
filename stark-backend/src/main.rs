@@ -739,6 +739,31 @@ async fn restore_backup_data(
                         log::warn!("[Keystore] Failed to restore script '{}' for skill '{}': {}", script.name, skill_entry.name, e);
                     }
                 }
+                // Restore ABIs
+                for abi in &skill_entry.abis {
+                    let db_abi = skills::DbSkillAbi {
+                        id: None,
+                        skill_id,
+                        name: abi.name.clone(),
+                        content: abi.content.clone(),
+                        created_at: now.clone(),
+                    };
+                    if let Err(e) = db.create_skill_abi(&db_abi) {
+                        log::warn!("[Keystore] Failed to restore ABI '{}' for skill '{}': {}", abi.name, skill_entry.name, e);
+                    }
+                }
+                // Restore preset
+                if let Some(ref presets_content) = skill_entry.presets_content {
+                    let db_preset = skills::DbSkillPreset {
+                        id: None,
+                        skill_id,
+                        content: presets_content.clone(),
+                        created_at: now.clone(),
+                    };
+                    if let Err(e) = db.create_skill_preset(&db_preset) {
+                        log::warn!("[Keystore] Failed to restore presets for skill '{}': {}", skill_entry.name, e);
+                    }
+                }
                 result.skills += 1;
             }
             Err(e) => {
@@ -1360,6 +1385,10 @@ async fn main() -> std::io::Result<()> {
         }
     }
 
+    // Load skill ABIs and presets from DB into in-memory indexes
+    web3::load_all_abis_from_db(&db);
+    tools::presets::load_all_skill_presets_from_db(&db);
+
     // Initialize Transaction Queue Manager with DB for persistent broadcast history
     // NOTE: Must be created before Gateway so channels can use it for web3 transactions
     log::info!("Initializing transaction queue manager");
@@ -1535,6 +1564,21 @@ async fn main() -> std::io::Result<()> {
         let config = memory::association_loop::AssociationLoopConfig::default();
         let _assoc_handle = memory::association_loop::spawn_association_loop(db_loop, emb_loop, config);
         log::info!("Background association loop spawned");
+    }
+
+    // One-time skill embedding backfill (generates embeddings for any skills missing them)
+    {
+        let db_emb = db.clone();
+        let emb_gen = embedding_generator.clone();
+        tokio::spawn(async move {
+            // Small delay to let other startup tasks finish
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            match crate::skills::embeddings::backfill_skill_embeddings(&db_emb, &emb_gen).await {
+                Ok(0) => log::debug!("[SKILL-EMB] All skills already have embeddings"),
+                Ok(n) => log::info!("[SKILL-EMB] Startup backfill: generated {} skill embeddings", n),
+                Err(e) => log::warn!("[SKILL-EMB] Startup backfill failed: {}", e),
+            }
+        });
     }
 
     // Spawn background memory decay/pruning task (runs every 6 hours)

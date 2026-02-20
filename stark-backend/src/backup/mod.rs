@@ -318,6 +318,12 @@ pub struct SkillEntry {
     #[serde(default)]
     pub requires_api_keys: String,
     pub scripts: Vec<SkillScriptEntry>,
+    /// ABI files bundled with this skill
+    #[serde(default)]
+    pub abis: Vec<SkillAbiEntry>,
+    /// Presets RON content for this skill
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presets_content: Option<String>,
 }
 
 /// Skill script entry in backup
@@ -327,6 +333,14 @@ pub struct SkillScriptEntry {
     pub name: String,
     pub code: String,
     pub language: String,
+}
+
+/// Skill ABI entry in backup
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SkillAbiEntry {
+    pub name: String,
+    pub content: String,
 }
 
 /// AI model / agent settings entry in backup
@@ -685,6 +699,22 @@ pub async fn collect_backup_data(
                 })
                 .collect();
 
+            let abis = db
+                .get_skill_abis(skill_id)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|a| SkillAbiEntry {
+                    name: a.name,
+                    content: a.content,
+                })
+                .collect();
+
+            let presets_content = db
+                .get_skill_preset(skill_id)
+                .ok()
+                .flatten()
+                .map(|p| p.content);
+
             backup.skills.push(SkillEntry {
                 name: skill.name,
                 description: skill.description,
@@ -702,6 +732,8 @@ pub async fn collect_backup_data(
                 requires_api_keys: serde_json::to_string(&skill.requires_api_keys)
                     .unwrap_or_default(),
                 scripts,
+                abis,
+                presets_content,
             });
         }
     }

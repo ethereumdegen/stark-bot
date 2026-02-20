@@ -862,9 +862,10 @@ fn execute_use_skill(args: &Value) -> String {
 
     // Try to find the skill file
     let skill_paths = [
+        format!("../skills/{0}/{0}.md", skill_name),
+        format!("skills/{0}/{0}.md", skill_name),
         format!("../skills/{}.md", skill_name),
         format!("skills/{}.md", skill_name),
-        format!("./skills/{}.md", skill_name),
     ];
 
     for skill_path in &skill_paths {

@@ -1,0 +1,23 @@
+// ERC20 balance and transfer presets
+{
+    "erc20_balance": (
+        abi: "erc20",
+        contracts: {},
+        contract_register: Some("token_address"),
+        function: "balanceOf",
+        params_registers: ["wallet_address"],
+        value_register: None,
+        static_params: [],
+        description: "Get ERC20 token balance. Set token_address register first.",
+    ),
+    "erc20_transfer": (
+        abi: "erc20",
+        contracts: {},
+        contract_register: Some("token_address"),
+        function: "transfer",
+        params_registers: ["recipient_address", "transfer_amount"],
+        value_register: None,
+        static_params: [],
+        description: "Transfer ERC20 tokens. Set token_address, recipient_address, transfer_amount registers first.",
+    ),
+}

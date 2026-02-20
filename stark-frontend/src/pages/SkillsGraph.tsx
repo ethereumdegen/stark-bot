@@ -73,6 +73,7 @@ const EDGE_TYPE_COLORS: Record<string, string> = {
   alternative: '#f97316',  // orange-500
   prerequisite: '#ef4444', // red-500
   supersedes: '#eab308',   // yellow-500
+  category: '#8b5cf6',     // violet-500
 };
 
 const EDGE_TYPE_LABELS: Record<string, string> = {
@@ -81,6 +82,7 @@ const EDGE_TYPE_LABELS: Record<string, string> = {
   alternative: 'Alternative',
   prerequisite: 'Prerequisite',
   supersedes: 'Supersedes',
+  category: 'Category',
 };
 
 // ── Helpers ──
@@ -123,6 +125,9 @@ export default function SkillsGraph() {
 
   // Mobile sidebar
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Category edge toggle
+  const [showCategoryEdges, setShowCategoryEdges] = useState(true);
 
   // Embedding stats
   const [embeddingStats, setEmbeddingStats] = useState<SkillEmbeddingStatsResponse | null>(null);
@@ -294,7 +299,7 @@ export default function SkillsGraph() {
     d3NodesRef.current = d3Nodes;
     const nodeIdSet = new Set(d3Nodes.map((n) => n.id));
 
-    const d3Links: D3Link[] = graphData.edges
+    const apiLinks: D3Link[] = graphData.edges
       .filter((e) => nodeIdSet.has(e.source) && nodeIdSet.has(e.target))
       .map((e) => ({
         source: e.source,
@@ -303,19 +308,52 @@ export default function SkillsGraph() {
         strength: e.strength,
       }));
 
-    // Simulation
+    // Synthesize category edges: connect skills sharing the same tag category
+    const categoryLinks: D3Link[] = [];
+    if (showCategoryEdges) {
+      const byCategory = new Map<string, number[]>();
+      for (const n of d3Nodes) {
+        const cat = getTagCategory(n.tags);
+        if (cat === 'other') continue;
+        if (!byCategory.has(cat)) byCategory.set(cat, []);
+        byCategory.get(cat)!.push(n.id);
+      }
+      // Build an edge-set of existing API links to avoid duplicates
+      const existingPairs = new Set(apiLinks.map(
+        (l) => `${typeof l.source === 'object' ? (l.source as D3Node).id : l.source}-${typeof l.target === 'object' ? (l.target as D3Node).id : l.target}`
+      ));
+      for (const [, ids] of byCategory) {
+        // Chain pattern: connect each node to the next (avoids O(n²) clutter)
+        for (let i = 0; i < ids.length - 1; i++) {
+          const a = ids[i], b = ids[i + 1];
+          const key1 = `${a}-${b}`, key2 = `${b}-${a}`;
+          if (!existingPairs.has(key1) && !existingPairs.has(key2)) {
+            categoryLinks.push({
+              source: a, target: b,
+              association_type: 'category',
+              strength: 0.15,
+            });
+            existingPairs.add(key1);
+          }
+        }
+      }
+    }
+
+    const d3Links: D3Link[] = [...apiLinks, ...categoryLinks];
+
+    // Simulation — spread nodes out more to reduce clumping
     const simulation = d3.forceSimulation<D3Node, D3Link>(d3Nodes)
       .force(
         'link',
         d3.forceLink<D3Node, D3Link>(d3Links)
           .id((d) => d.id)
-          .distance(150)
-          .strength((d) => 0.1 + (d as D3Link).strength * 0.3),
+          .distance(250)
+          .strength((d) => 0.08 + (d as D3Link).strength * 0.25),
       )
-      .force('charge', d3.forceManyBody().strength(-150).distanceMax(600))
-      .force('center', d3.forceCenter(0, 0).strength(0.05))
-      .force('collide', d3.forceCollide<D3Node>().radius((d) => nodeRadius(d.associationCount) + 15).strength(0.7))
-      .alphaDecay(0.03);
+      .force('charge', d3.forceManyBody().strength(-400).distanceMax(1000))
+      .force('center', d3.forceCenter(0, 0).strength(0.02))
+      .force('collide', d3.forceCollide<D3Node>().radius((d) => nodeRadius(d.associationCount) + 25).strength(0.8))
+      .alphaDecay(0.02);
 
     simulationRef.current = simulation;
 
@@ -344,9 +382,10 @@ export default function SkillsGraph() {
       .data(d3Links)
       .join('line')
       .attr('stroke', (d) => edgeColor(d.association_type))
-      .attr('stroke-width', (d) => 1 + d.strength * 2)
-      .attr('stroke-opacity', (d) => 0.3 + d.strength * 0.5)
-      .attr('marker-end', (d) => `url(#skill-arrow-${d.association_type})`);
+      .attr('stroke-width', (d) => d.association_type === 'category' ? 1 : 1 + d.strength * 2)
+      .attr('stroke-opacity', (d) => d.association_type === 'category' ? 0.2 : 0.3 + d.strength * 0.5)
+      .attr('stroke-dasharray', (d) => d.association_type === 'category' ? '4 3' : null)
+      .attr('marker-end', (d) => d.association_type === 'category' ? null : `url(#skill-arrow-${d.association_type})`);
 
     // Draw node groups
     const node = g
@@ -475,7 +514,7 @@ export default function SkillsGraph() {
       svg.on('.zoom', null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, graphData]);
+  }, [loading, graphData, showCategoryEdges]);
 
   // ── Highlight matching nodes when search results change ──
 
@@ -695,7 +734,7 @@ export default function SkillsGraph() {
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') handleSearch();
                 }}
-                placeholder="Search skills by meaning..."
+                placeholder="Search skills..."
                 className="w-full pl-8 pr-8 py-1.5 text-sm bg-slate-900 border border-slate-600 rounded-md text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
               />
               {searchQuery && (
@@ -848,10 +887,26 @@ export default function SkillsGraph() {
             <div className="space-y-1.5">
               {Object.entries(EDGE_TYPE_COLORS).map(([type, color]) => (
                 <div key={type} className="flex items-center gap-2">
-                  <ArrowRight size={10} color={color} />
-                  <span className="text-xs text-slate-300">
-                    {EDGE_TYPE_LABELS[type] ?? type}
-                  </span>
+                  {type === 'category' ? (
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={showCategoryEdges}
+                        onChange={(e) => setShowCategoryEdges(e.target.checked)}
+                        className="w-3 h-3 rounded border-slate-600 bg-slate-800 accent-violet-500"
+                      />
+                      <span className="text-xs text-slate-300" style={{ borderBottom: `1px dashed ${color}` }}>
+                        {EDGE_TYPE_LABELS[type]}
+                      </span>
+                    </label>
+                  ) : (
+                    <>
+                      <ArrowRight size={10} color={color} />
+                      <span className="text-xs text-slate-300">
+                        {EDGE_TYPE_LABELS[type] ?? type}
+                      </span>
+                    </>
+                  )}
                 </div>
               ))}
             </div>

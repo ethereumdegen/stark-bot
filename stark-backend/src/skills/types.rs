@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 /// Source of a skill
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,6 +90,15 @@ pub struct SkillMetadata {
     pub subagent_type: Option<String>,
     #[serde(default)]
     pub requires_api_keys: HashMap<String, SkillApiKey>,
+    /// Script files bundled with this skill (e.g. ["predict.py"])
+    #[serde(default)]
+    pub scripts: Option<Vec<String>>,
+    /// ABI files bundled with this skill (e.g. ["0x_settler"])
+    #[serde(default)]
+    pub abis: Option<Vec<String>>,
+    /// Skill-local presets RON file (e.g. "presets.ron")
+    #[serde(default)]
+    pub presets_file: Option<String>,
 }
 
 fn default_version() -> String {
@@ -110,6 +120,9 @@ impl Default for SkillMetadata {
             metadata: None,
             subagent_type: None,
             requires_api_keys: HashMap::new(),
+            scripts: None,
+            abis: None,
+            presets_file: None,
         }
     }
 }
@@ -127,6 +140,9 @@ pub struct Skill {
     /// Whether the skill is enabled
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+    /// Directory where the skill lives on disk (for resolving scripts, ABIs, presets)
+    #[serde(default)]
+    pub skill_dir: Option<PathBuf>,
 }
 
 fn default_enabled() -> bool {
@@ -227,13 +243,36 @@ impl DbSkill {
                 metadata: self.metadata,
                 subagent_type: self.subagent_type,
                 requires_api_keys: self.requires_api_keys,
+                scripts: None,
+                abis: None,
+                presets_file: None,
             },
             prompt_template: self.body,
             source: SkillSource::Managed, // All DB skills are "managed"
             path: String::new(),          // No file path for DB skills
             enabled: self.enabled,
+            skill_dir: None,
         }
     }
+}
+
+/// Database record for skill ABIs
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbSkillAbi {
+    pub id: Option<i64>,
+    pub skill_id: i64,
+    pub name: String,
+    pub content: String,
+    pub created_at: String,
+}
+
+/// Database record for skill presets
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbSkillPreset {
+    pub id: Option<i64>,
+    pub skill_id: i64,
+    pub content: String,
+    pub created_at: String,
 }
 
 /// Database record for skill scripts
@@ -245,18 +284,6 @@ pub struct DbSkillScript {
     pub code: String,
     pub language: String,
     pub created_at: String,
-}
-
-/// Legacy database record for installed skills (deprecated)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InstalledSkill {
-    pub id: Option<i64>,
-    pub name: String,
-    pub version: String,
-    pub source: String,
-    pub path: String,
-    pub enabled: bool,
-    pub metadata: String, // JSON serialized SkillMetadata
 }
 
 #[cfg(test)]
@@ -286,6 +313,7 @@ mod tests {
             source: SkillSource::Bundled,
             path: "/test/SKILL.md".to_string(),
             enabled: true,
+            skill_dir: None,
         };
 
         // With argument provided

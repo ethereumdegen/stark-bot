@@ -1,0 +1,148 @@
+// StarkLicense — EIP-8004 Agent Identity Registry (Base)
+// Proxy: 0xa23a42D266653846e05d8f356a52298844537472
+// Payment token: STARKBOT (0x587Cd533F418825521f3A1daa7CCd1E7339A1B07)
+{
+    "identity_approve_registry": (
+        abi: "erc20",
+        contracts: {
+            "base": "0x587Cd533F418825521f3A1daa7CCd1E7339A1B07",
+        },
+        function: "approve",
+        params_registers: [],
+        value_register: None,
+        static_params: ["0xa23a42D266653846e05d8f356a52298844537472", "1000000000000000000000"],
+        description: "Approve StarkLicense registry to spend 1000 STARKBOT for agent registration on Base.",
+    ),
+    "identity_allowance_registry": (
+        abi: "erc20",
+        contracts: {
+            "base": "0x587Cd533F418825521f3A1daa7CCd1E7339A1B07",
+        },
+        function: "allowance",
+        params_registers: ["wallet_address"],
+        value_register: None,
+        static_params: ["0xa23a42D266653846e05d8f356a52298844537472"],
+        description: "Check STARKBOT allowance for StarkLicense registry. Set wallet_address register first.",
+    ),
+    "identity_register": (
+        abi: "stark_license",
+        contracts: {
+            "base": "0xa23a42D266653846e05d8f356a52298844537472",
+        },
+        function: "register",
+        params_registers: ["agent_uri"],
+        value_register: None,
+        static_params: [],
+        description: "Register agent identity on-chain (mints NFT). Requires 1000 STARKBOT approval first. Set agent_uri register to your hosted IDENTITY.json URL.",
+    ),
+    "identity_register_no_uri": (
+        abi: "stark_license",
+        contracts: {
+            "base": "0xa23a42D266653846e05d8f356a52298844537472",
+        },
+        function: "register",
+        params_registers: [],
+        value_register: None,
+        static_params: [],
+        description: "Register agent identity on-chain without URI (mints NFT). Requires 1000 STARKBOT approval first. URI can be set later with identity_set_uri.",
+    ),
+    "identity_set_uri": (
+        abi: "stark_license",
+        contracts: {
+            "base": "0xa23a42D266653846e05d8f356a52298844537472",
+        },
+        function: "setAgentURI",
+        params_registers: ["agent_id", "agent_uri"],
+        value_register: None,
+        static_params: [],
+        description: "Update the URI for an existing agent. Set agent_id and agent_uri registers first. Must be agent owner.",
+    ),
+    "identity_get_uri": (
+        abi: "stark_license",
+        contracts: {
+            "base": "0xa23a42D266653846e05d8f356a52298844537472",
+        },
+        function: "agentURI",
+        params_registers: ["agent_id"],
+        value_register: None,
+        static_params: [],
+        description: "Get the URI for an agent by ID. Set agent_id register first.",
+    ),
+    "identity_registration_fee": (
+        abi: "stark_license",
+        contracts: {
+            "base": "0xa23a42D266653846e05d8f356a52298844537472",
+        },
+        function: "registrationFee",
+        params_registers: [],
+        value_register: None,
+        static_params: [],
+        description: "Get the current registration fee in STARKBOT wei.",
+    ),
+    "identity_total_agents": (
+        abi: "stark_license",
+        contracts: {
+            "base": "0xa23a42D266653846e05d8f356a52298844537472",
+        },
+        function: "totalAgents",
+        params_registers: [],
+        value_register: None,
+        static_params: [],
+        description: "Get the total number of registered agents.",
+    ),
+    "identity_balance": (
+        abi: "stark_license",
+        contracts: {
+            "base": "0xa23a42D266653846e05d8f356a52298844537472",
+        },
+        function: "balanceOf",
+        params_registers: ["wallet_address"],
+        value_register: None,
+        static_params: [],
+        description: "Get the number of agent NFTs owned by an address. Set wallet_address register first.",
+    ),
+    "identity_owner_of": (
+        abi: "stark_license",
+        contracts: {
+            "base": "0xa23a42D266653846e05d8f356a52298844537472",
+        },
+        function: "ownerOf",
+        params_registers: ["agent_id"],
+        value_register: None,
+        static_params: [],
+        description: "Get the owner address of an agent NFT. Set agent_id register first.",
+    ),
+    "identity_token_of_owner": (
+        abi: "stark_license",
+        contracts: {
+            "base": "0xa23a42D266653846e05d8f356a52298844537472",
+        },
+        function: "tokenOfOwnerByIndex",
+        params_registers: ["wallet_address"],
+        value_register: None,
+        static_params: ["0"],
+        description: "Get the first agent ID owned by an address. Set wallet_address register first.",
+    ),
+    "identity_set_metadata": (
+        abi: "stark_license",
+        contracts: {
+            "base": "0xa23a42D266653846e05d8f356a52298844537472",
+        },
+        function: "setMetadata",
+        params_registers: ["agent_id", "metadata_key", "metadata_value"],
+        value_register: None,
+        static_params: [],
+        description: "Set on-chain metadata for an agent. Set agent_id, metadata_key (string), metadata_value (bytes hex) registers first.",
+    ),
+    "identity_get_metadata": (
+        abi: "stark_license",
+        contracts: {
+            "base": "0xa23a42D266653846e05d8f356a52298844537472",
+        },
+        function: "getMetadata",
+        params_registers: ["agent_id", "metadata_key"],
+        value_register: None,
+        static_params: [],
+        description: "Get on-chain metadata for an agent. Set agent_id and metadata_key registers first.",
+    ),
+}

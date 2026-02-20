@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use uuid::Uuid;
 
 // ---- Shared types and helpers (used by both manual and preset tools) ----
@@ -65,17 +65,67 @@ pub fn default_abis_dir() -> PathBuf {
     crate::config::repo_root().join("abis")
 }
 
-/// Load ABI from file
+// ---- Global ABI content index (populated from DB at startup) ----
+
+/// Maps ABI name -> JSON content (loaded from DB at startup)
+static ABI_INDEX: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+
+fn abi_index() -> &'static Mutex<HashMap<String, String>> {
+    ABI_INDEX.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Register ABI content into the global index (used during DB loading)
+pub fn register_abi_content(name: &str, json_content: &str) {
+    let mut index = abi_index().lock().unwrap();
+    log::debug!("Registered ABI '{}' from DB", name);
+    index.insert(name.to_string(), json_content.to_string());
+}
+
+/// Load all ABIs from the database into the in-memory index
+pub fn load_all_abis_from_db(db: &crate::db::Database) {
+    match db.get_all_skill_abis() {
+        Ok(abis) => {
+            let count = abis.len();
+            for abi in abis {
+                register_abi_content(&abi.name, &abi.content);
+            }
+            if count > 0 {
+                log::info!("[ABI] Loaded {} skill ABIs from database", count);
+            }
+        }
+        Err(e) => log::error!("[ABI] Failed to load skill ABIs from database: {}", e),
+    }
+}
+
+/// Clear the ABI index (called before reload)
+pub fn clear_abi_index() {
+    if let Some(index) = ABI_INDEX.get() {
+        index.lock().unwrap().clear();
+    }
+}
+
+/// Load ABI by name. Resolution order:
+/// 1. Global abis/ directory (for shared ABIs like erc20, weth)
+/// 2. Content index (all skill ABIs from DB)
 pub fn load_abi(abis_dir: &PathBuf, name: &str) -> Result<AbiFile, String> {
-    let path = abis_dir.join(format!("{}.json", name));
+    // Try global abis/ dir first
+    let global_path = abis_dir.join(format!("{}.json", name));
+    if global_path.exists() {
+        let content = std::fs::read_to_string(&global_path)
+            .map_err(|e| format!("Failed to load ABI '{}': {}", name, e))?;
+        let abi_file: AbiFile = serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse ABI '{}': {}", name, e))?;
+        return Ok(abi_file);
+    }
 
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to load ABI '{}': {}. Available ABIs are in the /abis folder.", name, e))?;
+    // Check the content index (skill ABIs loaded from DB)
+    if let Some(content) = abi_index().lock().unwrap().get(name).cloned() {
+        let abi_file: AbiFile = serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse ABI '{}': {}", name, e))?;
+        return Ok(abi_file);
+    }
 
-    let abi_file: AbiFile = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse ABI '{}': {}", name, e))?;
-
-    Ok(abi_file)
+    Err(format!("ABI '{}' not found in {} or any skill", name, abis_dir.display()))
 }
 
 /// Parse ethers Abi from our ABI file format
@@ -385,7 +435,7 @@ pub async fn execute_resolved_call(
     context: &ToolContext,
     preset_name: Option<&str>,
 ) -> ToolResult {
-    // Load ABI
+    // Load ABI (global dir first, then DB content index)
     let abi_file = match load_abi(abis_dir, abi_name) {
         Ok(a) => a,
         Err(e) => return ToolResult::error(e),

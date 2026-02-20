@@ -1,0 +1,47 @@
+// Aave V3 skill presets — lending pool interactions on Base
+{
+    "aave_approve_pool": (
+        abi: "erc20",
+        contracts: {},
+        contract_register: Some("token_address"),
+        function: "approve",
+        params_registers: [],
+        value_register: None,
+        static_params: ["0xA238Dd80C259a72e81d7e4664a9801593F98d1c5", "115792089237316195423570985008687907853269984665640564039457584007913129639935"],
+        description: "Approve Aave V3 Pool on Base to spend token (max approval). Reads contract from token_address register.",
+    ),
+    "aave_allowance_pool": (
+        abi: "erc20",
+        contracts: {},
+        contract_register: Some("token_address"),
+        function: "allowance",
+        params_registers: ["wallet_address"],
+        value_register: None,
+        static_params: ["0xA238Dd80C259a72e81d7e4664a9801593F98d1c5"],
+        description: "Check Aave V3 Pool allowance for token. Reads contract from token_address register.",
+    ),
+    "aave_supply": (
+        abi: "aave_pool",
+        contracts: {
+            "base": "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5",
+        },
+        contract_register: None,
+        function: "supply",
+        params_registers: ["token_address", "aave_supply_amount", "wallet_address"],
+        value_register: None,
+        static_params: ["0"],
+        description: "Supply tokens to Aave V3 Pool on Base. Set token_address and aave_supply_amount registers first.",
+    ),
+    "aave_withdraw": (
+        abi: "aave_pool",
+        contracts: {
+            "base": "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5",
+        },
+        contract_register: None,
+        function: "withdraw",
+        params_registers: ["token_address", "aave_withdraw_amount", "wallet_address"],
+        value_register: None,
+        static_params: [],
+        description: "Withdraw tokens from Aave V3 Pool on Base. Set token_address and aave_withdraw_amount registers first.",
+    ),
+}

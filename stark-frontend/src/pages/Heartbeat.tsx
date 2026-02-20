@@ -302,7 +302,7 @@ function HeartbeatSection({ config, setConfig, setMessage }: HeartbeatSectionPro
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2">
-            <Heart className="w-5 h-5 text-red-400" />
+            <Heart className="w-5 h-5 text-white" />
             Heartbeat
           </CardTitle>
           <div className="flex items-center gap-3">

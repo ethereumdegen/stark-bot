@@ -28,7 +28,7 @@ impl Web3PresetFunctionCallTool {
             "preset".to_string(),
             PropertySchema {
                 schema_type: "string".to_string(),
-                description: "Preset name. Available: weth_deposit, weth_withdraw, weth_balance, erc20_balance, erc20_approve_swap, erc20_allowance_swap, erc20_transfer, swap_execute.".to_string(),
+                description: "Preset name (e.g. weth_deposit, erc20_balance). Pass an invalid name to see full list.".to_string(),
                 default: None,
                 items: None,
                 enum_values: None,
@@ -60,7 +60,7 @@ impl Web3PresetFunctionCallTool {
         Web3PresetFunctionCallTool {
             definition: ToolDefinition {
                 name: "web3_preset_function_call".to_string(),
-                description: "Execute a preset smart contract call. All parameters are read from registers — just specify the preset name and network. Available presets: weth_deposit, weth_withdraw, weth_balance, erc20_balance, erc20_approve_swap, erc20_allowance_swap, erc20_transfer, swap_execute.".to_string(),
+                description: "Execute a preset smart contract call. All parameters are read from registers — just specify the preset name and network. Presets are loaded from skills; pass an invalid name to see the full list.".to_string(),
                 input_schema: ToolInputSchema {
                     schema_type: "object".to_string(),
                     properties,
@@ -250,10 +250,26 @@ impl Tool for Web3PresetFunctionCallTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::presets::{inject_test_web3_preset, Web3Preset};
     use crate::tools::types::ToolContext;
+
+    /// Inject the erc20_transfer preset so tests don't depend on hardcoded defaults
+    fn setup_erc20_transfer_preset() {
+        inject_test_web3_preset("erc20_transfer", Web3Preset {
+            abi: "erc20".to_string(),
+            contracts: std::collections::HashMap::new(),
+            contract_register: Some("token_address".to_string()),
+            function: "transfer".to_string(),
+            params_registers: vec!["recipient_address".to_string(), "transfer_amount".to_string()],
+            value_register: None,
+            static_params: vec![],
+            description: "Transfer ERC20 tokens".to_string(),
+        });
+    }
 
     #[tokio::test]
     async fn test_erc20_transfer_discord_blocks_wrong_source() {
+        setup_erc20_transfer_preset();
         let tool = Web3PresetFunctionCallTool::new();
         let context = ToolContext::new()
             .with_channel(1, "discord".to_string())
@@ -277,6 +293,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_erc20_transfer_discord_blocks_missing_register() {
+        setup_erc20_transfer_preset();
         let tool = Web3PresetFunctionCallTool::new();
         let context = ToolContext::new()
             .with_channel(1, "discord".to_string())
@@ -294,6 +311,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_erc20_transfer_discord_allows_correct_source() {
+        setup_erc20_transfer_preset();
         let tool = Web3PresetFunctionCallTool::new();
         let context = ToolContext::new()
             .with_channel(1, "discord".to_string())
@@ -322,6 +340,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_erc20_transfer_web_skips_source_check() {
+        setup_erc20_transfer_preset();
         let tool = Web3PresetFunctionCallTool::new();
         let context = ToolContext::new()
             .with_channel(1, "web".to_string())

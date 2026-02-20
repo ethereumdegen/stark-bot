@@ -411,6 +411,41 @@ impl SubAgentManager {
             })
         });
 
+        // Search for skills relevant to this task and inject their info
+        let relevant_skills_hint = {
+            let matches = crate::skills::embeddings::search_skills_text(&db, &context.task, 5)
+                .unwrap_or_default();
+
+            // Filter by subtype skill tags if applicable
+            let allowed_tags = context.agent_subtype.as_ref()
+                .map(|key| crate::ai::multi_agent::types::allowed_skill_tags_for_key(key))
+                .unwrap_or_default();
+
+            let filtered: Vec<_> = matches.into_iter()
+                .filter(|(skill, _)| {
+                    skill.enabled && (allowed_tags.is_empty()
+                        || skill.tags.iter().any(|t| allowed_tags.contains(t)))
+                })
+                .take(3)
+                .collect();
+
+            if filtered.is_empty() {
+                String::new()
+            } else {
+                let mut hint = String::from("\n\n## Relevant Skills\nThese skills match your task. Use `use_skill` with the exact skill name to invoke them:\n");
+                for (skill, score) in &filtered {
+                    hint.push_str(&format!(
+                        "- **{}** (relevance {:.0}%): {}\n",
+                        skill.name,
+                        score * 100.0,
+                        skill.description
+                    ));
+                }
+                hint.push_str("\nDo NOT invent skill names — only use names listed above or discovered via tools.");
+                hint
+            }
+        };
+
         let system_prompt = format!(
             "You are a sub-agent working on a specific task. \
              Complete the following task to the best of your ability. \
@@ -418,8 +453,9 @@ impl SubAgentManager {
              IMPORTANT: Work efficiently. Aim to accomplish your goal in roughly 20-30 tool calls. \
              Do not research too deeply or go down rabbit holes. Stay focused on the specific task \
              and deliver a clear, useful result without exhaustive exploration.\n\n\
-             When you have completed the task, provide a clear summary of what was accomplished.{}",
-            subtype_prompt.unwrap_or_default()
+             When you have completed the task, provide a clear summary of what was accomplished.{}{}",
+            subtype_prompt.unwrap_or_default(),
+            relevant_skills_hint
         );
 
         // Build messages

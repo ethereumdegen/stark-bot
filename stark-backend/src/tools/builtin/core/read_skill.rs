@@ -143,6 +143,26 @@ impl Tool for ReadSkillTool {
             }
         }
 
+        if let Some(ref scripts) = skill.metadata.scripts {
+            if !scripts.is_empty() {
+                frontmatter.push_str(&format!(
+                    "scripts: [{}]\n",
+                    scripts.join(", ")
+                ));
+            }
+        }
+        if let Some(ref abis) = skill.metadata.abis {
+            if !abis.is_empty() {
+                frontmatter.push_str(&format!(
+                    "abis: [{}]\n",
+                    abis.join(", ")
+                ));
+            }
+        }
+        if let Some(ref presets_file) = skill.metadata.presets_file {
+            frontmatter.push_str(&format!("presets_file: {}\n", presets_file));
+        }
+
         if let Some(ref subagent_type) = skill.metadata.subagent_type {
             frontmatter.push_str(&format!("sets_agent_subtype: {}\n", subagent_type));
         }

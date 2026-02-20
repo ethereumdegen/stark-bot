@@ -6,13 +6,20 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 /// Global preset storage (loaded once at startup)
 static FETCH_PRESETS: OnceLock<HashMap<String, FetchPreset>> = OnceLock::new();
 static RPC_PRESETS: OnceLock<HashMap<String, RpcPreset>> = OnceLock::new();
 static WEB3_PRESETS: OnceLock<HashMap<String, Web3Preset>> = OnceLock::new();
 static NETWORKS: OnceLock<HashMap<String, NetworkConfig>> = OnceLock::new();
+
+/// Skill-local web3 presets (merged from skill folders during skill loading)
+static SKILL_WEB3_PRESETS: OnceLock<Mutex<HashMap<String, Web3Preset>>> = OnceLock::new();
+
+fn skill_web3_presets() -> &'static Mutex<HashMap<String, Web3Preset>> {
+    SKILL_WEB3_PRESETS.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 /// x402_preset_fetch preset configuration
 #[derive(Debug, Clone, Deserialize)]
@@ -186,8 +193,15 @@ pub fn get_rpc_preset(name: &str) -> Option<RpcPreset> {
         .and_then(|p| p.get(name).cloned())
 }
 
-/// Get a Web3 preset by name
+/// Get a Web3 preset by name (skill-local presets override globals)
 pub fn get_web3_preset(name: &str) -> Option<Web3Preset> {
+    // Check skill-local presets first (skill is authoritative for its own presets)
+    if let Ok(skill_presets) = skill_web3_presets().lock() {
+        if let Some(preset) = skill_presets.get(name) {
+            return Some(preset.clone());
+        }
+    }
+    // Fall back to global presets
     WEB3_PRESETS.get()
         .or_else(|| {
             let _ = WEB3_PRESETS.set(default_web3_presets());
@@ -215,19 +229,20 @@ pub fn list_rpc_presets() -> Vec<String> {
         .unwrap_or_else(|| vec!["gas_price".to_string(), "get_balance".to_string(), "get_nonce".to_string(), "block_number".to_string()])
 }
 
-/// List available Web3 preset names
+/// List available Web3 preset names (global + skill-local)
 pub fn list_web3_presets() -> Vec<String> {
-    WEB3_PRESETS.get()
+    let mut names: Vec<String> = WEB3_PRESETS.get()
         .map(|p| p.keys().cloned().collect())
-        .unwrap_or_else(|| vec![
-            "weth_deposit".to_string(),
-            "weth_withdraw".to_string(),
-            "erc20_approve_swap".to_string(),
-            "erc20_allowance_swap".to_string(),
-            "erc20_balance".to_string(),
-            "erc20_transfer".to_string(),
-            "swap_execute".to_string(),
-        ])
+        .unwrap_or_default();
+    // Merge skill-local preset names
+    if let Ok(skill_presets) = skill_web3_presets().lock() {
+        for key in skill_presets.keys() {
+            if !names.contains(key) {
+                names.push(key.clone());
+            }
+        }
+    }
+    names
 }
 
 /// List available network names
@@ -286,102 +301,9 @@ fn default_rpc_presets() -> HashMap<String, RpcPreset> {
 }
 
 /// Default Web3 presets (fallback if config not found)
+/// All presets now live in skill-local presets.ron files.
 fn default_web3_presets() -> HashMap<String, Web3Preset> {
-    let mut map = HashMap::new();
-
-    let mut weth_contracts = HashMap::new();
-    weth_contracts.insert("base".to_string(), "0x4200000000000000000000000000000000000006".to_string());
-    weth_contracts.insert("mainnet".to_string(), "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".to_string());
-
-    map.insert("weth_deposit".to_string(), Web3Preset {
-        abi: "weth".to_string(),
-        contracts: weth_contracts.clone(),
-        contract_register: None,
-        function: "deposit".to_string(),
-        params_registers: vec![],
-        value_register: Some("wrap_amount".to_string()),
-        static_params: vec![],
-        description: "Wrap ETH to WETH".to_string(),
-    });
-
-    map.insert("weth_withdraw".to_string(), Web3Preset {
-        abi: "weth".to_string(),
-        contracts: weth_contracts,
-        contract_register: None,
-        function: "withdraw".to_string(),
-        params_registers: vec!["unwrap_amount".to_string()],
-        value_register: None,
-        static_params: vec![],
-        description: "Unwrap WETH to ETH".to_string(),
-    });
-
-    map.insert("erc20_approve_swap".to_string(), Web3Preset {
-        abi: "erc20".to_string(),
-        contracts: HashMap::new(),
-        contract_register: Some("sell_token".to_string()),
-        function: "approve".to_string(),
-        params_registers: vec![],
-        value_register: None,
-        static_params: vec![
-            "0x0000000000001fF3684f28c67538d4D072C22734".to_string(), // 0x AllowanceHolder
-            "115792089237316195423570985008687907853269984665640564039457584007913129639935".to_string(), // max uint256
-        ],
-        description: "Approve 0x AllowanceHolder to spend the sell token (max approval). Reads contract from sell_token register.".to_string(),
-    });
-
-    map.insert("erc20_allowance_swap".to_string(), Web3Preset {
-        abi: "erc20".to_string(),
-        contracts: HashMap::new(),
-        contract_register: Some("sell_token".to_string()),
-        function: "allowance".to_string(),
-        params_registers: vec!["wallet_address".to_string()],
-        value_register: None,
-        static_params: vec![
-            "0x0000000000001fF3684f28c67538d4D072C22734".to_string(), // 0x AllowanceHolder
-        ],
-        description: "Check AllowanceHolder allowance for the sell token. Reads contract from sell_token register.".to_string(),
-    });
-
-    map.insert("swap_execute".to_string(), Web3Preset {
-        abi: "0x_settler".to_string(),
-        contracts: HashMap::new(),
-        contract_register: Some("swap_contract".to_string()),
-        function: "exec".to_string(),
-        params_registers: vec![
-            "swap_param_0".to_string(),
-            "swap_param_1".to_string(),
-            "swap_param_2".to_string(),
-            "swap_param_3".to_string(),
-            "swap_param_4".to_string(),
-        ],
-        value_register: Some("swap_value".to_string()),
-        static_params: vec![],
-        description: "Execute 0x swap via AllowanceHolder.exec(). Use decode_calldata first to decode swap_quote into swap_contract, swap_param_0-4, swap_value registers.".to_string(),
-    });
-
-    map.insert("erc20_balance".to_string(), Web3Preset {
-        abi: "erc20".to_string(),
-        contracts: HashMap::new(),
-        contract_register: Some("token_address".to_string()),
-        function: "balanceOf".to_string(),
-        params_registers: vec!["wallet_address".to_string()],
-        value_register: None,
-        static_params: vec![],
-        description: "Get ERC20 token balance. Set token_address register first.".to_string(),
-    });
-
-    map.insert("erc20_transfer".to_string(), Web3Preset {
-        abi: "erc20".to_string(),
-        contracts: HashMap::new(),
-        contract_register: Some("token_address".to_string()),
-        function: "transfer".to_string(),
-        params_registers: vec!["recipient_address".to_string(), "transfer_amount".to_string()],
-        value_register: None,
-        static_params: vec![],
-        description: "Transfer ERC20 tokens. Set token_address, recipient_address, transfer_amount registers first.".to_string(),
-    });
-
-    map
+    HashMap::new()
 }
 
 /// Default networks (fallback if config not found)
@@ -432,4 +354,75 @@ pub fn get_explorer_url(network: &str) -> String {
         .get(network)
         .map(|n| n.explorer.clone())
         .unwrap_or_else(|| "https://basescan.org".to_string())
+}
+
+/// Load all skill presets from the database and merge into the skill presets store.
+/// Called at startup after skill loading.
+pub fn load_all_skill_presets_from_db(db: &crate::db::Database) {
+    match db.get_all_skill_presets() {
+        Ok(presets) => {
+            let mut total = 0;
+            for preset_row in presets {
+                let presets: HashMap<String, Web3Preset> = match ron::from_str(&preset_row.content) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        log::error!("[presets] Failed to parse skill presets for skill_id={}: {}", preset_row.skill_id, e);
+                        continue;
+                    }
+                };
+                let count = presets.len();
+                if let Ok(mut store) = skill_web3_presets().lock() {
+                    for (name, preset) in presets {
+                        store.insert(name, preset);
+                    }
+                }
+                total += count;
+            }
+            if total > 0 {
+                log::info!("[presets] Loaded {} skill web3 presets from database", total);
+            }
+        }
+        Err(e) => log::error!("[presets] Failed to load skill presets from database: {}", e),
+    }
+}
+
+/// Clear all skill-local presets (called before reload)
+pub fn clear_skill_web3_presets() {
+    if let Ok(mut store) = skill_web3_presets().lock() {
+        store.clear();
+    }
+}
+
+/// Inject a web3 preset for testing (skill-local store, so get_web3_preset finds it)
+#[cfg(test)]
+pub fn inject_test_web3_preset(name: &str, preset: Web3Preset) {
+    if let Ok(mut store) = skill_web3_presets().lock() {
+        store.insert(name.to_string(), preset);
+    }
+}
+
+/// Load presets for a single skill from the database (called after ZIP upload)
+pub fn load_skill_presets_from_db(db: &crate::db::Database, skill_id: i64) {
+    match db.get_skill_preset(skill_id) {
+        Ok(Some(preset_row)) => {
+            let presets: HashMap<String, Web3Preset> = match ron::from_str(&preset_row.content) {
+                Ok(p) => p,
+                Err(e) => {
+                    log::error!("[presets] Failed to parse skill presets for skill_id={}: {}", skill_id, e);
+                    return;
+                }
+            };
+            let count = presets.len();
+            if let Ok(mut store) = skill_web3_presets().lock() {
+                for (name, preset) in presets {
+                    store.insert(name, preset);
+                }
+            }
+            if count > 0 {
+                log::info!("[presets] Loaded {} web3 presets for skill_id={}", count, skill_id);
+            }
+        }
+        Ok(None) => {} // No presets for this skill
+        Err(e) => log::error!("[presets] Failed to load presets for skill_id={}: {}", skill_id, e),
+    }
 }
