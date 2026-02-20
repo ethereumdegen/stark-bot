@@ -79,6 +79,17 @@ export async function getAiEndpointPresets(): Promise<AiEndpointPreset[]> {
   return apiFetch('/agent-settings/endpoints');
 }
 
+// Credit Balance API
+export interface CreditBalanceResponse {
+  credits: number;
+  address?: string;
+  error?: string;
+}
+
+export async function getCreditBalance(): Promise<CreditBalanceResponse> {
+  return apiFetch('/agent-settings/credit-balance');
+}
+
 // RPC Providers API
 export interface RpcProvider {
   id: string;

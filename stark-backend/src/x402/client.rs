@@ -185,8 +185,9 @@ impl X402Client {
                 .await;
         }
 
-        // ── Proactive ERC-8128 path: if we know this host supports credits ──
-        if self.is_erc8128_credits_host(url) {
+        // ── Proactive ERC-8128 path: if we know this host supports credits,
+        //    OR if payment mode is CreditsOnly (must always sign) ──
+        if self.payment_mode == PaymentMode::CreditsOnly || self.is_erc8128_credits_host(url) {
             log::info!("[X402] Proactively sending ERC-8128 headers (cached credits host)");
 
             match self.build_erc8128_post_request(url, &body_bytes).await {

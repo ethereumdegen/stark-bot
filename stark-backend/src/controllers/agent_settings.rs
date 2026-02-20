@@ -476,6 +476,119 @@ pub async fn services_health(
     }))
 }
 
+/// Get credit balance from the inference super-router via ERC-8128 signed request.
+///
+/// The bot signs a GET /credits/balance request using its wallet, and the
+/// super-router recovers the address to look up credits.
+pub async fn get_credit_balance(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+) -> impl Responder {
+    if let Err(resp) = validate_session_from_request(&state, &req) {
+        return resp;
+    }
+
+    let wallet_provider = match &state.wallet_provider {
+        Some(wp) => wp.clone(),
+        None => {
+            return HttpResponse::ServiceUnavailable().json(serde_json::json!({
+                "error": "No wallet configured"
+            }));
+        }
+    };
+
+    // Determine the inference endpoint base URL from active settings
+    let base_url = match state.db.get_active_agent_settings() {
+        Ok(Some(settings)) if settings.endpoint.contains("defirelay.com") => {
+            // Extract base URL from endpoint (e.g. "https://inference.defirelay.com/api/v1/chat/completions" -> "https://inference.defirelay.com")
+            if let Some(idx) = settings.endpoint.find("/api/") {
+                settings.endpoint[..idx].to_string()
+            } else if let Some(idx) = settings.endpoint.find("/chat") {
+                settings.endpoint[..idx].to_string()
+            } else {
+                settings.endpoint.trim_end_matches('/').to_string()
+            }
+        }
+        _ => "https://inference.defirelay.com".to_string(),
+    };
+
+    // Sign the request with ERC-8128
+    let signer = crate::erc8128::Erc8128Signer::new(wallet_provider, 8453);
+    let authority = base_url
+        .strip_prefix("https://")
+        .or_else(|| base_url.strip_prefix("http://"))
+        .unwrap_or(&base_url)
+        .split('/')
+        .next()
+        .unwrap_or("inference.defirelay.com");
+
+    let signed = match signer
+        .sign_request("GET", authority, "/credits/balance", None, None)
+        .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("Failed to sign credits balance request: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to sign request"
+            }));
+        }
+    };
+
+    // Make the request
+    let url = format!("{}/credits/balance", base_url);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    let mut req_builder = client.get(&url);
+    req_builder = req_builder.header("signature-input", &signed.signature_input);
+    req_builder = req_builder.header("signature", &signed.signature);
+    if let Some(ref digest) = signed.content_digest {
+        req_builder = req_builder.header("content-digest", digest);
+    }
+
+    match req_builder.send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            match resp.text().await {
+                Ok(body) => {
+                    if status.is_success() {
+                        match serde_json::from_str::<serde_json::Value>(&body) {
+                            Ok(json) => HttpResponse::Ok().json(json),
+                            Err(_) => HttpResponse::Ok().json(serde_json::json!({
+                                "credits": 0,
+                                "error": "Invalid response from credits service"
+                            })),
+                        }
+                    } else {
+                        log::warn!("Credits balance request failed: {} {}", status, body);
+                        HttpResponse::Ok().json(serde_json::json!({
+                            "credits": 0,
+                            "error": format!("Credits service returned {}", status)
+                        }))
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to read credits response: {}", e);
+                    HttpResponse::Ok().json(serde_json::json!({
+                        "credits": 0,
+                        "error": "Failed to read response"
+                    }))
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("Credits balance request failed: {}", e);
+            HttpResponse::Ok().json(serde_json::json!({
+                "credits": 0,
+                "error": "Failed to connect to credits service"
+            }))
+        }
+    }
+}
+
 /// Configure routes
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(
@@ -485,6 +598,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .route("/list", web::get().to(list_agent_settings))
             .route("/archetypes", web::get().to(get_available_archetypes))
             .route("/endpoints", web::get().to(get_ai_endpoint_presets))
+            .route("/credit-balance", web::get().to(get_credit_balance))
             .route("/disable", web::post().to(disable_agent))
     );
     cfg.service(

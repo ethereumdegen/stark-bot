@@ -1,9 +1,9 @@
 import { useState, useEffect, FormEvent } from 'react';
-import { Save, Settings, Ban, CreditCard, Coins, Globe } from 'lucide-react';
+import { Save, Settings, Ban, CreditCard, Coins, Globe, Info, ExternalLink } from 'lucide-react';
 import Card, { CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
-import { getAgentSettings, updateAgentSettings, getBotSettings, updateBotSettings, getAiEndpointPresets, AiEndpointPreset } from '@/lib/api';
+import { getAgentSettings, updateAgentSettings, getBotSettings, updateBotSettings, getAiEndpointPresets, AiEndpointPreset, getCreditBalance } from '@/lib/api';
 import { useWallet } from '@/hooks/useWallet';
 
 type ModelArchetype = 'kimi' | 'llama' | 'claude' | 'openai' | 'minimax';
@@ -44,10 +44,13 @@ export default function AgentSettings() {
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingBehavior, setIsSavingBehavior] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [creditBalance, setCreditBalance] = useState<number | null>(null);
+  const [creditBalanceLoading, setCreditBalanceLoading] = useState(false);
 
   useEffect(() => {
     loadPresets();
     loadBotSettings();
+    loadCreditBalance();
   }, []);
 
   const loadPresets = async () => {
@@ -129,6 +132,20 @@ export default function AgentSettings() {
     }
   };
 
+  const loadCreditBalance = async () => {
+    setCreditBalanceLoading(true);
+    try {
+      const data = await getCreditBalance();
+      if (data.credits !== undefined) {
+        setCreditBalance(data.credits);
+      }
+    } catch (err) {
+      console.error('Failed to load credit balance:', err);
+    } finally {
+      setCreditBalanceLoading(false);
+    }
+  };
+
   const handleBehaviorSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setIsSavingBehavior(true);
@@ -143,13 +160,15 @@ export default function AgentSettings() {
     }
   };
 
-  const handleEndpointSubmit = async (e: FormEvent) => {
-    e.preventDefault();
+  const saveSettings = async (overrides?: { paymentMode?: PaymentMode; endpointOption?: string }) => {
+    const mode = overrides?.paymentMode ?? paymentMode;
+    const selectedEndpointId = overrides?.endpointOption ?? endpointOption;
+
     setIsSaving(true);
     setMessage(null);
 
     // For "none" mode, just send payment_mode
-    if (paymentMode === 'none') {
+    if (mode === 'none') {
       try {
         await updateAgentSettings({ payment_mode: 'none', endpoint: '', model_archetype: 'kimi', max_response_tokens: maxResponseTokens, max_context_tokens: maxContextTokens });
         setMessage({ type: 'success', text: 'AI capabilities disabled' });
@@ -161,8 +180,8 @@ export default function AgentSettings() {
       return;
     }
 
-    const selectedPreset = (paymentMode === 'credits' || paymentMode === 'x402')
-      ? presets.find(p => p.id === endpointOption)
+    const selectedPreset = (mode === 'credits' || mode === 'x402')
+      ? presets.find(p => p.id === selectedEndpointId)
       : null;
 
     let endpoint: string;
@@ -172,7 +191,7 @@ export default function AgentSettings() {
       endpoint = customEndpoint;
     }
 
-    if (paymentMode === 'custom' && !customEndpoint.trim()) {
+    if (mode === 'custom' && !customEndpoint.trim()) {
       setMessage({ type: 'error', text: 'Please enter a custom endpoint URL' });
       setIsSaving(false);
       return;
@@ -183,7 +202,7 @@ export default function AgentSettings() {
 
     try {
       const payload: Record<string, unknown> = {
-        payment_mode: paymentMode,
+        payment_mode: mode,
         endpoint_name: selectedPreset ? selectedPreset.id : null,
         endpoint,
         model_archetype: archetype,
@@ -192,14 +211,14 @@ export default function AgentSettings() {
         max_context_tokens: contextTokens,
       };
 
-      if (paymentMode === 'custom' && secretKey.trim()) {
+      if (mode === 'custom' && secretKey.trim()) {
         payload.secret_key = secretKey;
       }
 
       await updateAgentSettings(payload);
-      setMessage({ type: 'success', text: 'Settings saved successfully' });
+      setMessage({ type: 'success', text: 'Settings saved' });
 
-      if (paymentMode === 'custom' && secretKey.trim()) {
+      if (mode === 'custom' && secretKey.trim()) {
         setHasExistingSecretKey(true);
         setSecretKey('');
       }
@@ -208,6 +227,11 @@ export default function AgentSettings() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleEndpointSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    await saveSettings();
   };
 
   if (isLoading) {
@@ -235,12 +259,63 @@ export default function AgentSettings() {
             <CardTitle>Payment Mode</CardTitle>
           </CardHeader>
           <CardContent>
+            {/* Payment mode info banner */}
+            <div className={`flex items-start gap-3 px-4 py-3 rounded-lg mb-4 ${
+              paymentMode === 'none'
+                ? 'bg-slate-700/30 border border-slate-600/50'
+                : paymentMode === 'credits'
+                ? 'bg-green-500/10 border border-green-500/30'
+                : paymentMode === 'x402'
+                ? 'bg-blue-500/10 border border-blue-500/30'
+                : 'bg-amber-500/10 border border-amber-500/30'
+            }`}>
+              <Info className={`w-4 h-4 mt-0.5 flex-shrink-0 ${
+                paymentMode === 'none' ? 'text-slate-400' :
+                paymentMode === 'credits' ? 'text-green-400' :
+                paymentMode === 'x402' ? 'text-blue-400' :
+                'text-amber-400'
+              }`} />
+              <div className="text-sm">
+                {paymentMode === 'none' && (
+                  <span className="text-slate-400">Agentic intelligence is disabled. Select a payment mode to enable AI capabilities.</span>
+                )}
+                {paymentMode === 'credits' && (
+                  <span className="text-green-300">
+                    {creditBalanceLoading ? (
+                      'Loading credit balance...'
+                    ) : creditBalance !== null ? (
+                      <>Credit balance: <span className="font-mono font-semibold text-white">{(creditBalance / 1_000_000).toFixed(2)} USDC</span> in credits. Refill at starkbot.cloud.</>
+                    ) : (
+                      'Unable to fetch credit balance'
+                    )}
+                  </span>
+                )}
+                {paymentMode === 'x402' && (
+                  <span className="text-blue-300">
+                    {usdcBalance !== null ? (
+                      <>USDC balance on Base: <span className="font-mono font-semibold text-white">{parseFloat(usdcBalance).toFixed(2)} USDC</span>. Each API call is paid directly via x402.</>
+                    ) : (
+                      'Loading USDC balance...'
+                    )}
+                  </span>
+                )}
+                {paymentMode === 'custom' && (
+                  <span className="text-amber-300">
+                    Get an API key and chat completions endpoint from{' '}
+                    <a href="https://minimax.io" target="_blank" rel="noopener noreferrer" className="underline hover:text-amber-200 inline-flex items-center gap-0.5">MiniMax<ExternalLink className="w-3 h-3" /></a>,{' '}
+                    <a href="https://moonshot.ai" target="_blank" rel="noopener noreferrer" className="underline hover:text-amber-200 inline-flex items-center gap-0.5">Moonshot AI<ExternalLink className="w-3 h-3" /></a>, or{' '}
+                    <a href="https://platform.openai.com" target="_blank" rel="noopener noreferrer" className="underline hover:text-amber-200 inline-flex items-center gap-0.5">OpenAI<ExternalLink className="w-3 h-3" /></a>.
+                  </span>
+                )}
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {MODE_CARDS.map(({ mode, title, subtitle, icon: Icon }) => (
                 <button
                   key={mode}
                   type="button"
-                  onClick={() => setPaymentMode(mode)}
+                  onClick={() => { setPaymentMode(mode); saveSettings({ paymentMode: mode }); }}
                   className={`relative flex flex-col items-start p-4 rounded-lg border-2 transition-all text-left ${
                     paymentMode === mode
                       ? 'border-stark-500 bg-stark-500/10'
@@ -292,7 +367,7 @@ export default function AgentSettings() {
                     </label>
                     <select
                       value={endpointOption}
-                      onChange={(e) => setEndpointOption(e.target.value)}
+                      onChange={(e) => { const val = e.target.value; setEndpointOption(val); saveSettings({ endpointOption: val }); }}
                       className="w-full px-4 py-3 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-stark-500 focus:border-transparent"
                     >
                       {presets.map(preset => (
@@ -329,10 +404,11 @@ export default function AgentSettings() {
                     </div>
                   )}
 
-                  {paymentMode === 'credits' && (
+                  {paymentMode === 'credits' && creditBalance !== null && (
                     <div className="flex items-center gap-2 px-3 py-2 bg-slate-700/30 rounded-lg">
                       <CreditCard className="w-4 h-4 text-green-400" />
-                      <span className="text-sm text-slate-400">Credit balance is checked at request time via ERC-8128</span>
+                      <span className="text-sm text-slate-300">Credit Balance:</span>
+                      <span className="text-sm font-mono text-white">{(creditBalance / 1_000_000).toFixed(2)} USDC</span>
                     </div>
                   )}
                 </div>
