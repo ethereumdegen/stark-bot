@@ -4,9 +4,12 @@
 set -euo pipefail
 
 ACTION="${1:-help}"
-ARGS="${2:-{\}}"
+ARGS="${2:-\{\}}"
 
 API="https://api.linear.app/graphql"
+
+# Catch any unexpected failures and print context
+trap 'echo "ERROR: linear.sh failed at line $LINENO (action=$ACTION)" >&2' ERR
 
 if [[ -z "${LINEAR_API_KEY:-}" ]]; then
   echo "ERROR: LINEAR_API_KEY is not set. Get one at https://linear.app/settings/api"
@@ -15,24 +18,43 @@ fi
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
+# Execute a GraphQL query. Takes query string, optional variables JSON object.
+# Uses jq to build the JSON payload so escaping is always correct.
 gql() {
   local query="$1"
-  local response
-  response=$(curl -sS --fail-with-body -X POST "$API" \
+  local variables="${2:-null}"
+
+  local payload
+  payload=$(jq -n --arg q "$query" --argjson v "$variables" '{query: $q, variables: $v}')
+
+  local http_code response
+  local tmpfile
+  tmpfile=$(mktemp)
+  http_code=$(curl -sS -o "$tmpfile" -w '%{http_code}' -X POST "$API" \
     -H "Content-Type: application/json" \
     -H "Authorization: $LINEAR_API_KEY" \
-    -d "$query" 2>&1) || {
-    echo "ERROR: Linear API request failed"
-    echo "$response"
+    -d "$payload" 2>&1) || {
+    echo "ERROR: Linear API request failed (curl error)"
+    cat "$tmpfile" 2>/dev/null
+    rm -f "$tmpfile"
     exit 1
   }
+  response=$(cat "$tmpfile")
+  rm -f "$tmpfile"
+
+  if [[ "$http_code" -ge 400 ]]; then
+    echo "ERROR: Linear API returned HTTP $http_code"
+    echo "$response" | jq -r '.' 2>/dev/null || echo "$response"
+    exit 1
+  fi
 
   # Check for GraphQL errors
-  local errors
-  errors=$(echo "$response" | jq -r '.errors // empty')
-  if [[ -n "$errors" && "$errors" != "null" ]]; then
+  local has_errors
+  has_errors=$(echo "$response" | jq -r 'if .errors then "yes" else "no" end' 2>/dev/null || echo "no")
+  if [[ "$has_errors" == "yes" ]]; then
     echo "ERROR: GraphQL error"
-    echo "$errors" | jq -r '.[0].message // .[0] // .'
+    echo "$response" | jq -r '.errors[0].message // .errors[0] // "Unknown error"'
+    echo "Query: $(echo "$payload" | jq -r '.query[:120]')" >&2
     exit 1
   fi
 
@@ -43,35 +65,30 @@ arg() {
   echo "$ARGS" | jq -r ".${1} // empty"
 }
 
-escape_gql() {
-  # Escape string for embedding in GraphQL query
-  printf '%s' "$1" | jq -Rs '.'
-}
-
 # ── commands ─────────────────────────────────────────────────────────────────
 
 cmd_teams() {
   local resp
-  resp=$(gql '{"query":"{ teams { nodes { id key name } } }"}')
+  resp=$(gql '{ teams { nodes { id key name } } }')
   echo "$resp" | jq -r '.data.teams.nodes[] | "\(.key)\t\(.name)\t\(.id)"' | column -t -s$'\t'
 }
 
 cmd_my_issues() {
   local resp
-  resp=$(gql '{"query":"{ viewer { assignedIssues(orderBy: updatedAt, first: 50, filter: { state: { type: { nin: [\"completed\",\"canceled\"] } } }) { nodes { identifier title priority state { name } project { name } } } } }"}')
+  resp=$(gql '{ viewer { assignedIssues(orderBy: updatedAt, first: 50, filter: { state: { type: { nin: ["completed","canceled"] } } }) { nodes { identifier title priority state { name } project { name } } } } }')
   echo "$resp" | jq -r '.data.viewer.assignedIssues.nodes[] | "\(.identifier)\t[\(.state.name)]\tP\(.priority)\t\(.title)\t\(.project.name // "-")"' | column -t -s$'\t'
 }
 
 cmd_my_todos() {
   local resp
-  resp=$(gql '{"query":"{ viewer { assignedIssues(orderBy: updatedAt, first: 50, filter: { state: { name: { in: [\"Todo\",\"Backlog\"] } } }) { nodes { identifier title priority state { name } } } } }"}')
+  resp=$(gql '{ viewer { assignedIssues(orderBy: updatedAt, first: 50, filter: { state: { name: { in: ["Todo","Backlog"] } } }) { nodes { identifier title priority state { name } } } } }')
   echo "$resp" | jq -r '.data.viewer.assignedIssues.nodes[] | "\(.identifier)\t[\(.state.name)]\tP\(.priority)\t\(.title)"' | column -t -s$'\t'
 }
 
 cmd_urgent() {
   local resp
-  resp=$(gql '{"query":"{ issues(orderBy: updatedAt, first: 50, filter: { priority: { in: [1,2] }, state: { type: { nin: [\"completed\",\"canceled\"] } } }) { nodes { identifier title priority assignee { name } state { name } team { key } } } }"}')
-  echo "$resp" | jq -r '.data.issues.nodes[] | "\(.team.key)-\(.identifier | split("-")[1])\tP\(.priority)\t[\(.state.name)]\t\(.assignee.name // "unassigned")\t\(.title)"' | column -t -s$'\t'
+  resp=$(gql '{ issues(orderBy: updatedAt, first: 50, filter: { priority: { in: [1,2] }, state: { type: { nin: ["completed","canceled"] } } }) { nodes { identifier title priority assignee { name } state { name } } } }')
+  echo "$resp" | jq -r '.data.issues.nodes[] | "\(.identifier)\tP\(.priority)\t[\(.state.name)]\t\(.assignee.name // "unassigned")\t\(.title)"' | column -t -s$'\t'
 }
 
 cmd_team() {
@@ -84,10 +101,10 @@ cmd_team() {
       exit 1
     fi
   fi
-  local escaped_team
-  escaped_team=$(escape_gql "$team")
+  local vars
+  vars=$(jq -n --arg t "$team" '{teamKey: $t}')
   local resp
-  resp=$(gql "{\"query\":\"{ teams(filter: { key: { eq: ${escaped_team} } }) { nodes { issues(orderBy: updatedAt, first: 50, filter: { state: { type: { nin: [\\\"completed\\\",\\\"canceled\\\"] } } }) { nodes { identifier title priority assignee { name } state { name } } } } } }\"}")
+  resp=$(gql 'query($teamKey: String!) { teams(filter: { key: { eq: $teamKey } }) { nodes { issues(orderBy: updatedAt, first: 50, filter: { state: { type: { nin: ["completed","canceled"] } } }) { nodes { identifier title priority assignee { name } state { name } } } } } }' "$vars")
   echo "$resp" | jq -r '.data.teams.nodes[0].issues.nodes[] | "\(.identifier)\t[\(.state.name)]\tP\(.priority)\t\(.assignee.name // "unassigned")\t\(.title)"' | column -t -s$'\t'
 }
 
@@ -98,15 +115,15 @@ cmd_project() {
     echo "ERROR: project name required. Use {\"name\":\"Project Name\"}"
     exit 1
   fi
-  local escaped_name
-  escaped_name=$(escape_gql "$name")
+  local vars
+  vars=$(jq -n --arg n "$name" '{name: $n}')
   local resp
-  resp=$(gql "{\"query\":\"{ projects(filter: { name: { containsIgnoreCase: ${escaped_name} } }, first: 1) { nodes { name issues(orderBy: updatedAt, first: 100) { nodes { identifier title priority assignee { name } state { name } } } } } }\"}")
+  resp=$(gql 'query($name: String!) { projects(filter: { name: { containsIgnoreCase: $name } }, first: 1) { nodes { name issues(orderBy: updatedAt, first: 100) { nodes { identifier title priority assignee { name } state { name } } } } } }' "$vars")
   local project_name
   project_name=$(echo "$resp" | jq -r '.data.projects.nodes[0].name // "Not found"')
   echo "Project: $project_name"
   echo "---"
-  echo "$resp" | jq -r '.data.projects.nodes[0].issues.nodes[] | "\(.identifier)\t[\(.state.name)]\tP\(.priority)\t\(.assignee.name // "unassigned")\t\(.title)"' | column -t -s$'\t'
+  echo "$resp" | jq -r '.data.projects.nodes[0].issues.nodes[] // empty | "\(.identifier)\t[\(.state.name)]\tP\(.priority)\t\(.assignee.name // "unassigned")\t\(.title)"' | column -t -s$'\t'
 }
 
 cmd_issue() {
@@ -116,10 +133,10 @@ cmd_issue() {
     echo "ERROR: issue identifier required. Use {\"id\":\"TEAM-123\"}"
     exit 1
   fi
-  local escaped_id
-  escaped_id=$(escape_gql "$id")
+  local vars
+  vars=$(jq -n --arg id "$id" '{id: $id}')
   local resp
-  resp=$(gql "{\"query\":\"{ issue(id: ${escaped_id}) { identifier title description priority priorityLabel state { name } assignee { name } team { key name } project { name } labels { nodes { name } } createdAt updatedAt comments { nodes { body createdAt user { name } } } } }\"}")
+  resp=$(gql 'query($id: String!) { issue(id: $id) { identifier title description priority priorityLabel state { name } assignee { name } team { key name } project { name } labels { nodes { name } } createdAt updatedAt comments { nodes { body createdAt user { name } } } } }' "$vars")
   echo "$resp" | jq -r '
     .data.issue |
     "[\(.identifier)] \(.title)",
@@ -143,10 +160,10 @@ cmd_branch() {
     echo "ERROR: issue identifier required. Use {\"id\":\"TEAM-123\"}"
     exit 1
   fi
-  local escaped_id
-  escaped_id=$(escape_gql "$id")
+  local vars
+  vars=$(jq -n --arg id "$id" '{id: $id}')
   local resp
-  resp=$(gql "{\"query\":\"{ issue(id: ${escaped_id}) { branchName } }\"}")
+  resp=$(gql 'query($id: String!) { issue(id: $id) { branchName } }' "$vars")
   echo "$resp" | jq -r '.data.issue.branchName'
 }
 
@@ -169,10 +186,10 @@ cmd_create() {
   fi
 
   # Resolve team key to team ID
-  local escaped_team
-  escaped_team=$(escape_gql "$team")
+  local team_vars
+  team_vars=$(jq -n --arg t "$team" '{teamKey: $t}')
   local team_resp
-  team_resp=$(gql "{\"query\":\"{ teams(filter: { key: { eq: ${escaped_team} } }) { nodes { id } } }\"}")
+  team_resp=$(gql 'query($teamKey: String!) { teams(filter: { key: { eq: $teamKey } }) { nodes { id } } }' "$team_vars")
   local team_id
   team_id=$(echo "$team_resp" | jq -r '.data.teams.nodes[0].id // empty')
   if [[ -z "$team_id" ]]; then
@@ -180,19 +197,16 @@ cmd_create() {
     exit 1
   fi
 
-  local escaped_title escaped_desc
-  escaped_title=$(escape_gql "$title")
-  escaped_desc=$(escape_gql "${description:-}")
-
-  local mutation
+  local vars resp
   if [[ -n "$description" ]]; then
-    mutation="{\"query\":\"mutation { issueCreate(input: { teamId: \\\"${team_id}\\\", title: ${escaped_title}, description: ${escaped_desc} }) { success issue { identifier title url } } }\"}"
+    vars=$(jq -n --arg tid "$team_id" --arg t "$title" --arg d "$description" \
+      '{teamId: $tid, title: $t, description: $d}')
+    resp=$(gql 'mutation($teamId: String!, $title: String!, $description: String!) { issueCreate(input: { teamId: $teamId, title: $title, description: $description }) { success issue { identifier title url } } }' "$vars")
   else
-    mutation="{\"query\":\"mutation { issueCreate(input: { teamId: \\\"${team_id}\\\", title: ${escaped_title} }) { success issue { identifier title url } } }\"}"
+    vars=$(jq -n --arg tid "$team_id" --arg t "$title" \
+      '{teamId: $tid, title: $t}')
+    resp=$(gql 'mutation($teamId: String!, $title: String!) { issueCreate(input: { teamId: $teamId, title: $title }) { success issue { identifier title url } } }' "$vars")
   fi
-
-  local resp
-  resp=$(gql "$mutation")
   echo "$resp" | jq -r '.data.issueCreate.issue | "Created: \(.identifier) — \(.title)\nURL: \(.url)"'
 }
 
@@ -205,11 +219,11 @@ cmd_comment() {
     exit 1
   fi
 
-  # Resolve issue identifier to issue ID
-  local escaped_id
-  escaped_id=$(escape_gql "$id")
+  # Resolve issue identifier to issue UUID
+  local id_vars
+  id_vars=$(jq -n --arg id "$id" '{id: $id}')
   local issue_resp
-  issue_resp=$(gql "{\"query\":\"{ issue(id: ${escaped_id}) { id } }\"}")
+  issue_resp=$(gql 'query($id: String!) { issue(id: $id) { id } }' "$id_vars")
   local issue_id
   issue_id=$(echo "$issue_resp" | jq -r '.data.issue.id // empty')
   if [[ -z "$issue_id" ]]; then
@@ -217,10 +231,10 @@ cmd_comment() {
     exit 1
   fi
 
-  local escaped_body
-  escaped_body=$(escape_gql "$body")
+  local vars
+  vars=$(jq -n --arg iid "$issue_id" --arg b "$body" '{issueId: $iid, body: $b}')
   local resp
-  resp=$(gql "{\"query\":\"mutation { commentCreate(input: { issueId: \\\"${issue_id}\\\", body: ${escaped_body} }) { success comment { id createdAt } } }\"}")
+  resp=$(gql 'mutation($issueId: String!, $body: String!) { commentCreate(input: { issueId: $issueId, body: $body }) { success comment { id createdAt } } }' "$vars")
   echo "$resp" | jq -r '.data.commentCreate | if .success then "Comment added successfully" else "Failed to add comment" end'
 }
 
@@ -244,11 +258,11 @@ cmd_status() {
     *)        state_name="$status_name" ;;
   esac
 
-  # Resolve issue
-  local escaped_id
-  escaped_id=$(escape_gql "$id")
+  # Resolve issue to get UUID and team ID
+  local id_vars
+  id_vars=$(jq -n --arg id "$id" '{id: $id}')
   local issue_resp
-  issue_resp=$(gql "{\"query\":\"{ issue(id: ${escaped_id}) { id team { id } } }\"}")
+  issue_resp=$(gql 'query($id: String!) { issue(id: $id) { id team { id } } }' "$id_vars")
   local issue_id team_id
   issue_id=$(echo "$issue_resp" | jq -r '.data.issue.id // empty')
   team_id=$(echo "$issue_resp" | jq -r '.data.issue.team.id // empty')
@@ -258,10 +272,10 @@ cmd_status() {
   fi
 
   # Find matching workflow state for the team
-  local escaped_state
-  escaped_state=$(escape_gql "$state_name")
+  local state_vars
+  state_vars=$(jq -n --arg tid "$team_id" --arg s "$state_name" '{teamId: $tid, stateName: $s}')
   local states_resp
-  states_resp=$(gql "{\"query\":\"{ workflowStates(filter: { team: { id: { eq: \\\"${team_id}\\\" } }, name: { containsIgnoreCase: ${escaped_state} } }) { nodes { id name } } }\"}")
+  states_resp=$(gql 'query($teamId: ID!, $stateName: String!) { workflowStates(filter: { team: { id: { eq: $teamId } }, name: { containsIgnoreCase: $stateName } }) { nodes { id name } } }' "$state_vars")
   local state_id
   state_id=$(echo "$states_resp" | jq -r '.data.workflowStates.nodes[0].id // empty')
   if [[ -z "$state_id" ]]; then
@@ -269,9 +283,11 @@ cmd_status() {
     exit 1
   fi
 
+  local vars
+  vars=$(jq -n --arg iid "$issue_id" --arg sid "$state_id" '{issueId: $iid, stateId: $sid}')
   local resp
-  resp=$(gql "{\"query\":\"mutation { issueUpdate(id: \\\"${issue_id}\\\", input: { stateId: \\\"${state_id}\\\" }) { success issue { identifier state { name } } } }\"}")
-  echo "$resp" | jq -r '.data.issueUpdate.issue | "\(.identifier) → \(.state.name)"'
+  resp=$(gql 'mutation($issueId: String!, $stateId: String!) { issueUpdate(id: $issueId, input: { stateId: $stateId }) { success issue { identifier state { name } } } }' "$vars")
+  echo "$resp" | jq -r '.data.issueUpdate.issue | "\(.identifier) -> \(.state.name)"'
 }
 
 cmd_assign() {
@@ -284,10 +300,10 @@ cmd_assign() {
   fi
 
   # Resolve issue
-  local escaped_id
-  escaped_id=$(escape_gql "$id")
+  local id_vars
+  id_vars=$(jq -n --arg id "$id" '{id: $id}')
   local issue_resp
-  issue_resp=$(gql "{\"query\":\"{ issue(id: ${escaped_id}) { id } }\"}")
+  issue_resp=$(gql 'query($id: String!) { issue(id: $id) { id } }' "$id_vars")
   local issue_id
   issue_id=$(echo "$issue_resp" | jq -r '.data.issue.id // empty')
   if [[ -z "$issue_id" ]]; then
@@ -296,10 +312,10 @@ cmd_assign() {
   fi
 
   # Find user by display name
-  local escaped_user
-  escaped_user=$(escape_gql "$user")
+  local user_vars
+  user_vars=$(jq -n --arg u "$user" '{userName: $u}')
   local user_resp
-  user_resp=$(gql "{\"query\":\"{ users(filter: { displayName: { containsIgnoreCase: ${escaped_user} } }) { nodes { id name } } }\"}")
+  user_resp=$(gql 'query($userName: String!) { users(filter: { displayName: { containsIgnoreCase: $userName } }) { nodes { id name } } }' "$user_vars")
   local user_id
   user_id=$(echo "$user_resp" | jq -r '.data.users.nodes[0].id // empty')
   if [[ -z "$user_id" ]]; then
@@ -307,9 +323,11 @@ cmd_assign() {
     exit 1
   fi
 
+  local vars
+  vars=$(jq -n --arg iid "$issue_id" --arg uid "$user_id" '{issueId: $iid, assigneeId: $uid}')
   local resp
-  resp=$(gql "{\"query\":\"mutation { issueUpdate(id: \\\"${issue_id}\\\", input: { assigneeId: \\\"${user_id}\\\" }) { success issue { identifier assignee { name } } } }\"}")
-  echo "$resp" | jq -r '.data.issueUpdate.issue | "\(.identifier) → assigned to \(.assignee.name)"'
+  resp=$(gql 'mutation($issueId: String!, $assigneeId: String!) { issueUpdate(id: $issueId, input: { assigneeId: $assigneeId }) { success issue { identifier assignee { name } } } }' "$vars")
+  echo "$resp" | jq -r '.data.issueUpdate.issue | "\(.identifier) -> assigned to \(.assignee.name)"'
 }
 
 cmd_priority() {
@@ -335,10 +353,10 @@ cmd_priority() {
   esac
 
   # Resolve issue
-  local escaped_id
-  escaped_id=$(escape_gql "$id")
+  local id_vars
+  id_vars=$(jq -n --arg id "$id" '{id: $id}')
   local issue_resp
-  issue_resp=$(gql "{\"query\":\"{ issue(id: ${escaped_id}) { id } }\"}")
+  issue_resp=$(gql 'query($id: String!) { issue(id: $id) { id } }' "$id_vars")
   local issue_id
   issue_id=$(echo "$issue_resp" | jq -r '.data.issue.id // empty')
   if [[ -z "$issue_id" ]]; then
@@ -346,44 +364,50 @@ cmd_priority() {
     exit 1
   fi
 
+  local vars
+  vars=$(jq -n --arg iid "$issue_id" --argjson p "$priority_val" '{issueId: $iid, priority: $p}')
   local resp
-  resp=$(gql "{\"query\":\"mutation { issueUpdate(id: \\\"${issue_id}\\\", input: { priority: ${priority_val} }) { success issue { identifier priorityLabel } } }\"}")
-  echo "$resp" | jq -r '.data.issueUpdate.issue | "\(.identifier) → priority: \(.priorityLabel)"'
+  resp=$(gql 'mutation($issueId: String!, $priority: Int!) { issueUpdate(id: $issueId, input: { priority: $priority }) { success issue { identifier priorityLabel } } }' "$vars")
+  echo "$resp" | jq -r '.data.issueUpdate.issue | "\(.identifier) -> priority: \(.priorityLabel)"'
 }
 
 cmd_standup() {
   echo "=== Daily Standup ==="
   echo ""
 
-  echo "📋 YOUR TODOS:"
+  echo "YOUR TODOS:"
   cmd_my_todos 2>/dev/null || echo "  (none)"
   echo ""
 
-  echo "🚨 URGENT/HIGH PRIORITY:"
+  echo "URGENT/HIGH PRIORITY:"
   cmd_urgent 2>/dev/null || echo "  (none)"
   echo ""
 
-  echo "🔍 IN REVIEW:"
+  echo "IN REVIEW:"
   local resp
-  resp=$(gql '{"query":"{ viewer { assignedIssues(first: 20, filter: { state: { name: { eq: \"In Review\" } } }) { nodes { identifier title } } } }"}')
+  resp=$(gql '{ viewer { assignedIssues(first: 20, filter: { state: { name: { eq: "In Review" } } }) { nodes { identifier title } } } }')
   echo "$resp" | jq -r '.data.viewer.assignedIssues.nodes[] | "  \(.identifier)  \(.title)"' 2>/dev/null || echo "  (none)"
   echo ""
 
-  echo "✅ RECENTLY COMPLETED (last 7 days):"
+  echo "RECENTLY COMPLETED (last 7 days):"
+  local since
+  since=$(date -d '7 days ago' -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -v-7d -u +%Y-%m-%dT%H:%M:%SZ)
+  local vars
+  vars=$(jq -n --arg s "$since" '{since: $s}')
   local resp2
-  resp2=$(gql '{"query":"{ viewer { assignedIssues(first: 20, orderBy: updatedAt, filter: { state: { type: { eq: \"completed\" } }, updatedAt: { gte: \"'$(date -d '7 days ago' -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -v-7d -u +%Y-%m-%dT%H:%M:%SZ)'"} }) { nodes { identifier title completedAt } } } }"}')
+  resp2=$(gql 'query($since: DateTime!) { viewer { assignedIssues(first: 20, orderBy: updatedAt, filter: { state: { type: { eq: "completed" } }, updatedAt: { gte: $since } }) { nodes { identifier title completedAt } } } }' "$vars")
   echo "$resp2" | jq -r '.data.viewer.assignedIssues.nodes[] | "  \(.identifier)  \(.title)  (completed \(.completedAt[:10]))"' 2>/dev/null || echo "  (none)"
 }
 
 cmd_projects() {
   local resp
-  resp=$(gql '{"query":"{ projects(first: 50, orderBy: updatedAt) { nodes { name state progress teams { nodes { key } } lead { name } issues { nodes { id } } } } }"}')
+  resp=$(gql '{ projects(first: 50, orderBy: updatedAt) { nodes { name state progress teams { nodes { key } } lead { name } issues { nodes { id } } } } }')
   echo "$resp" | jq -r '.data.projects.nodes[] | "\(.name)\t\(.state)\t\((.progress * 100) | floor)%\t\(.lead.name // "-")\t\(.issues.nodes | length) issues\t\([.teams.nodes[].key] | join(","))"' | column -t -s$'\t'
 }
 
 cmd_help() {
   cat <<'HELP'
-Linear CLI — Commands:
+Linear CLI -- Commands:
 
   my-issues         Your assigned open issues
   my-todos          Your Todo/Backlog items

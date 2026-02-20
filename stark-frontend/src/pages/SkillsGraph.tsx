@@ -382,8 +382,8 @@ export default function SkillsGraph() {
       .data(d3Links)
       .join('line')
       .attr('stroke', (d) => edgeColor(d.association_type))
-      .attr('stroke-width', (d) => d.association_type === 'category' ? 1 : 1 + d.strength * 2)
-      .attr('stroke-opacity', (d) => d.association_type === 'category' ? 0.2 : 0.3 + d.strength * 0.5)
+      .attr('stroke-width', (d) => d.association_type === 'category' ? 1.5 : 1 + d.strength * 2)
+      .attr('stroke-opacity', (d) => d.association_type === 'category' ? 0.45 : 0.3 + d.strength * 0.5)
       .attr('stroke-dasharray', (d) => d.association_type === 'category' ? '4 3' : null)
       .attr('marker-end', (d) => d.association_type === 'category' ? null : `url(#skill-arrow-${d.association_type})`);
 
@@ -889,13 +889,22 @@ export default function SkillsGraph() {
                 <div key={type} className="flex items-center gap-2">
                   {type === 'category' ? (
                     <label className="flex items-center gap-2 cursor-pointer">
+                      <svg width="16" height="10" className="shrink-0">
+                        <line
+                          x1="0" y1="5" x2="16" y2="5"
+                          stroke={showCategoryEdges ? color : '#475569'}
+                          strokeWidth="1.5"
+                          strokeDasharray="4 3"
+                          strokeOpacity={showCategoryEdges ? 0.8 : 0.3}
+                        />
+                      </svg>
                       <input
                         type="checkbox"
                         checked={showCategoryEdges}
                         onChange={(e) => setShowCategoryEdges(e.target.checked)}
                         className="w-3 h-3 rounded border-slate-600 bg-slate-800 accent-violet-500"
                       />
-                      <span className="text-xs text-slate-300" style={{ borderBottom: `1px dashed ${color}` }}>
+                      <span className="text-xs text-slate-300">
                         {EDGE_TYPE_LABELS[type]}
                       </span>
                     </label>
