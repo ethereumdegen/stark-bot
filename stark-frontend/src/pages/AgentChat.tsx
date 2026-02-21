@@ -222,8 +222,9 @@ export default function AgentChat() {
 
   // Format USDC balance
   const formatBalance = (balance: string | null) => {
-    if (!balance) return '0.00';
+    if (balance === null) return '--';
     const num = parseFloat(balance);
+    if (isNaN(num)) return '--';
     if (num >= 1000000) return `${(num / 1000000).toFixed(2)}M`;
     if (num >= 1000) return `${(num / 1000).toFixed(2)}K`;
     return num.toFixed(2);

@@ -30,6 +30,12 @@ const SUPPORTED_NETWORKS: Record<SupportedNetwork, NetworkConfig> = {
   },
 };
 
+// Fallback RPCs in case primary is down/rate-limited
+const FALLBACK_RPCS: Record<SupportedNetwork, string[]> = {
+  mainnet: ['https://rpc.ankr.com/eth', 'https://1rpc.io/eth'],
+  base: ['https://base.llamarpc.com', 'https://rpc.ankr.com/base', 'https://1rpc.io/base'],
+};
+
 const USDC_DECIMALS = 6;
 
 // Minimal ERC20 ABI for balance check
@@ -60,17 +66,23 @@ export function useWallet() {
 
   const [selectedNetwork, setSelectedNetwork] = useState<SupportedNetwork>('base');
 
-  // Fetch USDC balance using direct RPC call
+  // Fetch USDC balance using direct RPC call with fallback RPCs
   const fetchUsdcBalance = useCallback(async (address: string, network: NetworkConfig): Promise<string | null> => {
-    try {
-      const provider = new JsonRpcProvider(network.rpcUrl);
-      const usdcContract = new Contract(network.usdcAddress, ERC20_ABI, provider);
-      const balance = await usdcContract.balanceOf(address);
-      return formatUnits(balance, USDC_DECIMALS);
-    } catch (err) {
-      console.error('Failed to fetch USDC balance:', err);
-      return null;
+    const rpcsToTry = [network.rpcUrl, ...(FALLBACK_RPCS[network.name as SupportedNetwork] || [])];
+
+    for (const rpcUrl of rpcsToTry) {
+      try {
+        const provider = new JsonRpcProvider(rpcUrl);
+        const usdcContract = new Contract(network.usdcAddress, ERC20_ABI, provider);
+        const balance = await usdcContract.balanceOf(address);
+        return formatUnits(balance, USDC_DECIMALS);
+      } catch (err) {
+        console.warn(`RPC failed (${rpcUrl}):`, err);
+      }
     }
+
+    console.error('All RPCs failed for USDC balance fetch');
+    return null;
   }, []);
 
   // Fetch wallet address from backend
@@ -93,15 +105,15 @@ export function useWallet() {
       const network = SUPPORTED_NETWORKS[selectedNetwork];
       const usdcBalance = await fetchUsdcBalance(config.wallet_address, network);
 
-      setState({
+      setState(prev => ({
         address: config.wallet_address,
-        usdcBalance,
+        usdcBalance: usdcBalance ?? prev.usdcBalance,
         isConnected: true,
         isLoading: false,
         error: null,
         currentNetwork: network,
         walletMode: config.wallet_mode,
-      });
+      }));
     } catch (err) {
       console.error('Failed to fetch wallet info:', err);
       setState(prev => ({
