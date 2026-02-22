@@ -1970,10 +1970,6 @@ async fn main() -> std::io::Result<()> {
             // WebSocket Gateway route (same port as HTTP, required for single-port platforms)
             .route("/ws", web::get().to(gateway::actix_ws::ws_handler));
 
-        if dev_mode {
-            app = app.configure(controllers::dev_chat::config);
-        }
-
         // Serve static files only if frontend dist exists
         if !frontend_dist.is_empty() {
             app = app.service(

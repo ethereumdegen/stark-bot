@@ -10,6 +10,8 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use crate::AppState;
 
+use super::validate_session;
+
 /// Kill the service process listening on a given port (if any).
 fn kill_service_on_port(port: u16) {
     let output = std::process::Command::new("lsof")
@@ -165,7 +167,11 @@ async fn deactivate_module(data: &web::Data<AppState>, module_name: &str) {
 }
 
 /// GET /api/modules — list all available modules with install status
-async fn list_modules(data: web::Data<AppState>) -> HttpResponse {
+async fn list_modules(data: web::Data<AppState>, req: HttpRequest) -> HttpResponse {
+    if let Err(resp) = validate_session(&data, &req) {
+        return resp;
+    }
+
     let registry = crate::modules::ModuleRegistry::new();
     let installed = data.db.list_installed_modules().unwrap_or_default();
 
@@ -197,9 +203,14 @@ async fn list_modules(data: web::Data<AppState>) -> HttpResponse {
 /// POST /api/modules/{name} — install, uninstall, enable, or disable a module
 async fn module_action(
     data: web::Data<AppState>,
+    req: HttpRequest,
     name: web::Path<String>,
     body: web::Json<ModuleActionRequest>,
 ) -> HttpResponse {
+    if let Err(resp) = validate_session(&data, &req) {
+        return resp;
+    }
+
     let name = name.into_inner();
     let action = &body.action;
 
@@ -390,8 +401,13 @@ async fn module_action(
 /// GET /api/modules/{name}/dashboard — get module-specific dashboard data
 async fn module_dashboard(
     data: web::Data<AppState>,
+    req: HttpRequest,
     name: web::Path<String>,
 ) -> HttpResponse {
+    if let Err(resp) = validate_session(&data, &req) {
+        return resp;
+    }
+
     let name = name.into_inner();
 
     // Check if module is installed and enabled
@@ -430,8 +446,13 @@ async fn module_dashboard(
 /// GET /api/modules/{name}/status — proxy health check to the module's service
 async fn module_status(
     data: web::Data<AppState>,
+    req: HttpRequest,
     name: web::Path<String>,
 ) -> HttpResponse {
+    if let Err(resp) = validate_session(&data, &req) {
+        return resp;
+    }
+
     let name = name.into_inner();
 
     let registry = crate::modules::ModuleRegistry::new();
@@ -467,7 +488,11 @@ async fn module_status(
 }
 
 /// POST /api/modules/reload — full resync of all module tools
-async fn reload_modules(data: web::Data<AppState>) -> HttpResponse {
+async fn reload_modules(data: web::Data<AppState>, req: HttpRequest) -> HttpResponse {
+    if let Err(resp) = validate_session(&data, &req) {
+        return resp;
+    }
+
     let module_registry = crate::modules::ModuleRegistry::new();
     let mut activated = Vec::new();
     let mut deactivated = Vec::new();
@@ -530,6 +555,10 @@ async fn module_proxy(
     path: web::Path<(String, String)>,
     req: HttpRequest,
 ) -> HttpResponse {
+    if let Err(resp) = validate_session(&data, &req) {
+        return resp;
+    }
+
     let (name, sub_path) = path.into_inner();
 
     let registry = crate::modules::ModuleRegistry::new();
@@ -588,8 +617,13 @@ async fn module_proxy(
 /// POST /api/modules/upload — import a module from a ZIP file upload
 async fn upload_module(
     data: web::Data<AppState>,
+    req: HttpRequest,
     mut payload: Multipart,
 ) -> HttpResponse {
+    if let Err(resp) = validate_session(&data, &req) {
+        return resp;
+    }
+
     // Read the uploaded file
     let mut file_data: Vec<u8> = Vec::new();
 
