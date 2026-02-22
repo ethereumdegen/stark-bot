@@ -529,6 +529,18 @@ export default function Skills() {
           </div>
         </div>
       )}
+      {/* StarkHub link */}
+      <div className="mt-8 text-center">
+        <a
+          href="https://hub.starkbot.ai"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm text-slate-400 hover:text-stark-400 bg-slate-800/50 hover:bg-slate-800 border border-slate-700 hover:border-stark-500/50 rounded-lg transition-colors"
+        >
+          <ExternalLink className="w-4 h-4" />
+          Find more skills on StarkHub
+        </a>
+      </div>
       </>
       )}
     </div>

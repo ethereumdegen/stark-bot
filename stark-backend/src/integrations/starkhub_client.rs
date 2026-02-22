@@ -21,7 +21,9 @@ pub struct ModuleSummary {
     pub author_username: Option<String>,
     pub tools_provided: Vec<String>,
     pub install_count: i32,
+    pub featured: Option<bool>,
     pub license: Option<String>,
+    pub x402_cost: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +88,25 @@ impl StarkHubClient {
             base_url,
             http: reqwest::Client::new(),
         }
+    }
+
+    /// Get featured modules from StarkHub.
+    pub async fn get_featured_modules(&self) -> Result<Vec<ModuleSummary>, String> {
+        let url = format!("{}/modules/featured", self.base_url);
+        let resp = self
+            .http
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to connect to StarkHub: {}", e))?;
+
+        if !resp.status().is_success() {
+            return Err(format!("StarkHub returned HTTP {}", resp.status()));
+        }
+
+        resp.json()
+            .await
+            .map_err(|e| format!("Failed to parse response: {}", e))
     }
 
     /// Search modules on StarkHub.

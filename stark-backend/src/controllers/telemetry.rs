@@ -6,8 +6,6 @@ use serde::{Deserialize, Serialize};
 use crate::AppState;
 use crate::telemetry::{Resource, ResourceType};
 
-use super::validate_session;
-
 #[derive(Serialize)]
 struct ErrorResponse {
     error: String,
@@ -32,11 +30,8 @@ pub fn config(cfg: &mut web::ServiceConfig) {
 async fn get_session_timeline(
     state: web::Data<AppState>,
     path: web::Path<i64>,
-    req: HttpRequest,
+    _req: HttpRequest,
 ) -> impl Responder {
-    if let Err(resp) = validate_session(&state, &req) {
-        return resp;
-    }
     let session_id = path.into_inner();
     let timeline = state.telemetry_store.get_session_timeline(session_id);
     HttpResponse::Ok().json(timeline)
@@ -45,11 +40,8 @@ async fn get_session_timeline(
 async fn get_rollout_summary(
     state: web::Data<AppState>,
     path: web::Path<String>,
-    req: HttpRequest,
+    _req: HttpRequest,
 ) -> impl Responder {
-    if let Err(resp) = validate_session(&state, &req) {
-        return resp;
-    }
     let rollout_id = path.into_inner();
     let summary = state.telemetry_store.get_execution_summary(&rollout_id);
     HttpResponse::Ok().json(summary)
@@ -58,11 +50,8 @@ async fn get_rollout_summary(
 async fn get_rollout_triplets(
     state: web::Data<AppState>,
     path: web::Path<String>,
-    req: HttpRequest,
+    _req: HttpRequest,
 ) -> impl Responder {
-    if let Err(resp) = validate_session(&state, &req) {
-        return resp;
-    }
     let rollout_id = path.into_inner();
     let triplets = state.telemetry_store.get_triplets(&rollout_id);
     HttpResponse::Ok().json(triplets)
@@ -76,11 +65,8 @@ struct RewardStatsQuery {
 async fn get_reward_stats(
     state: web::Data<AppState>,
     query: web::Query<RewardStatsQuery>,
-    req: HttpRequest,
+    _req: HttpRequest,
 ) -> impl Responder {
-    if let Err(resp) = validate_session(&state, &req) {
-        return resp;
-    }
     let since = query.since_hours.map(|hours| {
         chrono::Utc::now() - chrono::Duration::hours(hours as i64)
     });
@@ -90,11 +76,8 @@ async fn get_reward_stats(
 
 async fn list_resources(
     state: web::Data<AppState>,
-    req: HttpRequest,
+    _req: HttpRequest,
 ) -> impl Responder {
-    if let Err(resp) = validate_session(&state, &req) {
-        return resp;
-    }
     let versions = state.resource_manager.list_versions();
     HttpResponse::Ok().json(versions)
 }
@@ -116,11 +99,8 @@ struct ResourceInput {
 async fn create_resource(
     state: web::Data<AppState>,
     body: web::Json<CreateResourceRequest>,
-    req: HttpRequest,
+    _req: HttpRequest,
 ) -> impl Responder {
-    if let Err(resp) = validate_session(&state, &req) {
-        return resp;
-    }
     let resources: Vec<Resource> = body.resources.iter().map(|r| {
         Resource {
             name: r.name.clone(),
@@ -154,11 +134,8 @@ async fn create_resource(
 async fn rollback_resource(
     state: web::Data<AppState>,
     path: web::Path<String>,
-    req: HttpRequest,
+    _req: HttpRequest,
 ) -> impl Responder {
-    if let Err(resp) = validate_session(&state, &req) {
-        return resp;
-    }
     let version_id = path.into_inner();
     match state.resource_manager.rollback(&version_id) {
         Ok(()) => HttpResponse::Ok().json(serde_json::json!({

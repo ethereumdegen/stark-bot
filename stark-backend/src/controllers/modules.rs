@@ -10,8 +10,6 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use crate::AppState;
 
-use super::validate_session;
-
 /// Kill the service process listening on a given port (if any).
 fn kill_service_on_port(port: u16) {
     let output = std::process::Command::new("lsof")
@@ -167,11 +165,7 @@ async fn deactivate_module(data: &web::Data<AppState>, module_name: &str) {
 }
 
 /// GET /api/modules — list all available modules with install status
-async fn list_modules(data: web::Data<AppState>, req: HttpRequest) -> HttpResponse {
-    if let Err(resp) = validate_session(&data, &req) {
-        return resp;
-    }
-
+async fn list_modules(data: web::Data<AppState>, _req: HttpRequest) -> HttpResponse {
     let registry = crate::modules::ModuleRegistry::new();
     let installed = data.db.list_installed_modules().unwrap_or_default();
 
@@ -203,14 +197,10 @@ async fn list_modules(data: web::Data<AppState>, req: HttpRequest) -> HttpRespon
 /// POST /api/modules/{name} — install, uninstall, enable, or disable a module
 async fn module_action(
     data: web::Data<AppState>,
-    req: HttpRequest,
+    _req: HttpRequest,
     name: web::Path<String>,
     body: web::Json<ModuleActionRequest>,
 ) -> HttpResponse {
-    if let Err(resp) = validate_session(&data, &req) {
-        return resp;
-    }
-
     let name = name.into_inner();
     let action = &body.action;
 
@@ -401,13 +391,9 @@ async fn module_action(
 /// GET /api/modules/{name}/dashboard — get module-specific dashboard data
 async fn module_dashboard(
     data: web::Data<AppState>,
-    req: HttpRequest,
+    _req: HttpRequest,
     name: web::Path<String>,
 ) -> HttpResponse {
-    if let Err(resp) = validate_session(&data, &req) {
-        return resp;
-    }
-
     let name = name.into_inner();
 
     // Check if module is installed and enabled
@@ -446,13 +432,9 @@ async fn module_dashboard(
 /// GET /api/modules/{name}/status — proxy health check to the module's service
 async fn module_status(
     data: web::Data<AppState>,
-    req: HttpRequest,
+    _req: HttpRequest,
     name: web::Path<String>,
 ) -> HttpResponse {
-    if let Err(resp) = validate_session(&data, &req) {
-        return resp;
-    }
-
     let name = name.into_inner();
 
     let registry = crate::modules::ModuleRegistry::new();
@@ -488,11 +470,7 @@ async fn module_status(
 }
 
 /// POST /api/modules/reload — full resync of all module tools
-async fn reload_modules(data: web::Data<AppState>, req: HttpRequest) -> HttpResponse {
-    if let Err(resp) = validate_session(&data, &req) {
-        return resp;
-    }
-
+async fn reload_modules(data: web::Data<AppState>, _req: HttpRequest) -> HttpResponse {
     let module_registry = crate::modules::ModuleRegistry::new();
     let mut activated = Vec::new();
     let mut deactivated = Vec::new();
@@ -555,10 +533,6 @@ async fn module_proxy(
     path: web::Path<(String, String)>,
     req: HttpRequest,
 ) -> HttpResponse {
-    if let Err(resp) = validate_session(&data, &req) {
-        return resp;
-    }
-
     let (name, sub_path) = path.into_inner();
 
     let registry = crate::modules::ModuleRegistry::new();
@@ -614,16 +588,332 @@ async fn module_proxy(
     }
 }
 
+/// POST /api/modules/{name}/proxy/{path:.*} — reverse-proxy POST requests to the module's internal service.
+async fn module_proxy_post(
+    data: web::Data<AppState>,
+    path: web::Path<(String, String)>,
+    req: HttpRequest,
+    body: web::Bytes,
+) -> HttpResponse {
+    let (name, sub_path) = path.into_inner();
+
+    let registry = crate::modules::ModuleRegistry::new();
+    let module = match registry.get(&name) {
+        Some(m) => m,
+        None => return HttpResponse::NotFound().json(serde_json::json!({
+            "error": format!("Unknown module: '{}'", name)
+        })),
+    };
+
+    if !module.has_dashboard() {
+        return HttpResponse::NotFound().json(serde_json::json!({
+            "error": format!("Module '{}' does not have a dashboard", name)
+        }));
+    }
+
+    // Only allow proxying to /rpc/ paths for POST
+    if !sub_path.starts_with("rpc/") {
+        return HttpResponse::Forbidden().json(serde_json::json!({
+            "error": "POST proxy is restricted to /rpc/ paths"
+        }));
+    }
+
+    let target_url = format!("{}/{}", module.service_url(), sub_path);
+
+    let target_url = if let Some(qs) = req.uri().query() {
+        format!("{}?{}", target_url, qs)
+    } else {
+        target_url
+    };
+
+    let content_type = req
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_default();
+
+    match client
+        .post(&target_url)
+        .header("content-type", &content_type)
+        .body(body.to_vec())
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            let resp_ct = resp
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("application/octet-stream")
+                .to_string();
+            let resp_body = resp.bytes().await.unwrap_or_default();
+
+            HttpResponse::build(actix_web::http::StatusCode::from_u16(status).unwrap_or(actix_web::http::StatusCode::BAD_GATEWAY))
+                .content_type(resp_ct)
+                .body(resp_body)
+        }
+        Err(e) => HttpResponse::BadGateway().json(serde_json::json!({
+            "error": format!("Could not reach module service: {}", e)
+        })),
+    }
+}
+
+/// GET /api/modules/featured_remote — get featured modules from StarkHub, filtered by not-already-installed
+async fn featured_remote(data: web::Data<AppState>, _req: HttpRequest) -> HttpResponse {
+    let client = crate::integrations::starkhub_client::StarkHubClient::new();
+    let featured = match client.get_featured_modules().await {
+        Ok(f) => f,
+        Err(e) => {
+            log::error!("[MODULE] Failed to fetch featured modules from StarkHub: {}", e);
+            return HttpResponse::BadGateway().json(serde_json::json!({
+                "error": format!("Failed to fetch from StarkHub: {}", e)
+            }));
+        }
+    };
+
+    // Filter out already-installed modules
+    let installed = data.db.list_installed_modules().unwrap_or_default();
+    let installed_names: std::collections::HashSet<String> = installed.iter().map(|m| m.module_name.clone()).collect();
+
+    let filtered: Vec<_> = featured
+        .into_iter()
+        .filter(|m| {
+            let slug = m.slug.replace('-', "_");
+            !installed_names.contains(&slug) && !installed_names.contains(&m.slug)
+        })
+        .collect();
+
+    HttpResponse::Ok().json(filtered)
+}
+
+#[derive(Deserialize)]
+struct FetchRemoteRequest {
+    username: String,
+    slug: String,
+}
+
+/// POST /api/modules/fetch_remote — fetch and install a module from StarkHub
+async fn fetch_remote(
+    data: web::Data<AppState>,
+    _req: HttpRequest,
+    body: web::Json<FetchRemoteRequest>,
+) -> HttpResponse {
+    let username = &body.username;
+    let slug = &body.slug;
+
+    // Check if already installed (slug may use - or _)
+    let name_underscore = slug.replace('-', "_");
+    if data.db.is_module_installed(&name_underscore).unwrap_or(false)
+        || data.db.is_module_installed(slug).unwrap_or(false)
+    {
+        return HttpResponse::Conflict().json(serde_json::json!({
+            "error": format!("Module '{}' is already installed", slug)
+        }));
+    }
+
+    let client = crate::integrations::starkhub_client::StarkHubClient::new();
+
+    // Get module info from StarkHub
+    let module_info = match client.get_module(username, slug).await {
+        Ok(m) => m,
+        Err(e) => return HttpResponse::BadGateway().json(serde_json::json!({ "error": e })),
+    };
+
+    let platform = crate::integrations::starkhub_client::current_platform();
+
+    // Get download info
+    let download_info = match client.get_download_info(username, slug, platform).await {
+        Ok(d) => d,
+        Err(e) => {
+            // No binary available — try manifest-only install
+            log::warn!("[MODULE] No binary for platform '{}': {} — attempting manifest-only install", platform, e);
+
+            // Get manifest from StarkHub
+            let manifest_url = format!(
+                "{}/modules/@{}/{}/manifest",
+                std::env::var("STARKHUB_API_URL").unwrap_or_else(|_| "https://hub.starkbot.ai/api".to_string()),
+                username, slug
+            );
+            let manifest_resp = reqwest::get(&manifest_url).await;
+            match manifest_resp {
+                Ok(resp) if resp.status().is_success() => {
+                    let manifest_json: serde_json::Value = match resp.json().await {
+                        Ok(v) => v,
+                        Err(e) => return HttpResponse::BadGateway().json(serde_json::json!({
+                            "error": format!("Failed to parse manifest: {}", e)
+                        })),
+                    };
+
+                    // Get the manifest TOML string
+                    let manifest_toml = match manifest_json.get("manifest_toml").and_then(|v| v.as_str()) {
+                        Some(t) => t.to_string(),
+                        None => return HttpResponse::BadGateway().json(serde_json::json!({
+                            "error": "StarkHub manifest response missing manifest_toml field"
+                        })),
+                    };
+
+                    // Write module.toml to runtime_modules_dir
+                    let modules_dir = crate::config::runtime_modules_dir();
+                    let module_dir = modules_dir.join(&name_underscore);
+                    if let Err(e) = std::fs::create_dir_all(&module_dir) {
+                        return HttpResponse::InternalServerError().json(serde_json::json!({
+                            "error": format!("Failed to create module directory: {}", e)
+                        }));
+                    }
+                    let manifest_path = module_dir.join("module.toml");
+                    if let Err(e) = std::fs::write(&manifest_path, &manifest_toml) {
+                        return HttpResponse::InternalServerError().json(serde_json::json!({
+                            "error": format!("Failed to write manifest: {}", e)
+                        }));
+                    }
+
+                    let author_str = module_info.author.username
+                        .as_deref()
+                        .map(|u| format!("@{}", u))
+                        .unwrap_or_else(|| module_info.author.wallet_address.clone());
+
+                    match data.db.install_module_full(
+                        &name_underscore,
+                        &module_info.description,
+                        &module_info.version,
+                        !module_info.tools_provided.is_empty(),
+                        false,
+                        "starkhub",
+                        Some(&manifest_path.to_string_lossy()),
+                        None,
+                        Some(&author_str),
+                        None,
+                    ) {
+                        Ok(_) => {
+                            activate_module(&data, &name_underscore).await;
+                            return HttpResponse::Ok().json(serde_json::json!({
+                                "status": "installed",
+                                "module": name_underscore,
+                                "version": module_info.version,
+                                "message": format!("Module '{}' installed from StarkHub (manifest-only).", name_underscore)
+                            }));
+                        }
+                        Err(e) => {
+                            let _ = std::fs::remove_dir_all(&module_dir);
+                            return HttpResponse::InternalServerError().json(serde_json::json!({
+                                "error": format!("Failed to register module: {}", e)
+                            }));
+                        }
+                    }
+                }
+                _ => {
+                    return HttpResponse::BadGateway().json(serde_json::json!({
+                        "error": format!(
+                            "No binary available for platform '{}' and manifest download failed: {}",
+                            platform, e
+                        )
+                    }));
+                }
+            }
+        }
+    };
+
+    // Download binary archive
+    let archive_bytes = match client.download_binary(&download_info.download_url).await {
+        Ok(bytes) => bytes,
+        Err(e) => return HttpResponse::BadGateway().json(serde_json::json!({ "error": e })),
+    };
+
+    // Verify SHA-256 checksum
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(&archive_bytes);
+    let computed_hash = format!("{:x}", hasher.finalize());
+
+    if computed_hash != download_info.sha256_checksum {
+        return HttpResponse::BadRequest().json(serde_json::json!({
+            "error": format!(
+                "Checksum mismatch! Expected {}, got {}. Download may be corrupted.",
+                download_info.sha256_checksum, computed_hash
+            )
+        }));
+    }
+
+    // Extract to runtime modules dir
+    let modules_dir = crate::config::runtime_modules_dir();
+    let module_dir = modules_dir.join(&name_underscore);
+    if let Err(e) = std::fs::create_dir_all(&module_dir) {
+        return HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": format!("Failed to create module directory: {}", e)
+        }));
+    }
+
+    // Extract tar.gz archive
+    use std::io::Read;
+    let decoder = flate2::read::GzDecoder::new(&archive_bytes[..]);
+    let mut archive = tar::Archive::new(decoder);
+    if let Err(e) = archive.unpack(&module_dir) {
+        return HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": format!("Failed to extract module archive: {}", e)
+        }));
+    }
+
+    // Make service binary executable
+    let manifest_path = module_dir.join("module.toml");
+    let binary_path = module_dir.join("bin").join(format!("{}-service", slug));
+
+    #[cfg(unix)]
+    if binary_path.exists() {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(
+            &binary_path,
+            std::fs::Permissions::from_mode(0o755),
+        );
+    }
+
+    let author_str = module_info.author.username
+        .as_deref()
+        .map(|u| format!("@{}", u))
+        .unwrap_or_else(|| module_info.author.wallet_address.clone());
+
+    match data.db.install_module_full(
+        &name_underscore,
+        &module_info.description,
+        &module_info.version,
+        !module_info.tools_provided.is_empty(),
+        false,
+        "starkhub",
+        Some(&manifest_path.to_string_lossy()),
+        Some(&binary_path.to_string_lossy()),
+        Some(&author_str),
+        Some(&computed_hash),
+    ) {
+        Ok(_) => {
+            activate_module(&data, &name_underscore).await;
+            HttpResponse::Ok().json(serde_json::json!({
+                "status": "installed",
+                "module": name_underscore,
+                "version": module_info.version,
+                "message": format!("Module '{}' installed from StarkHub!", name_underscore)
+            }))
+        }
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&module_dir);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to register module: {}", e)
+            }))
+        }
+    }
+}
+
 /// POST /api/modules/upload — import a module from a ZIP file upload
 async fn upload_module(
     data: web::Data<AppState>,
-    req: HttpRequest,
+    _req: HttpRequest,
     mut payload: Multipart,
 ) -> HttpResponse {
-    if let Err(resp) = validate_session(&data, &req) {
-        return resp;
-    }
-
     // Read the uploaded file
     let mut file_data: Vec<u8> = Vec::new();
 
@@ -753,9 +1043,12 @@ pub fn config(cfg: &mut web::ServiceConfig) {
             .route("", web::get().to(list_modules))
             .route("/upload", web::post().to(upload_module))
             .route("/reload", web::post().to(reload_modules))
+            .route("/featured_remote", web::get().to(featured_remote))
+            .route("/fetch_remote", web::post().to(fetch_remote))
             .route("/{name}/dashboard", web::get().to(module_dashboard))
             .route("/{name}/status", web::get().to(module_status))
             .route("/{name}/proxy/{path:.*}", web::get().to(module_proxy))
+            .route("/{name}/proxy/{path:.*}", web::post().to(module_proxy_post))
             .route("/{name}", web::post().to(module_action)),
     );
 }

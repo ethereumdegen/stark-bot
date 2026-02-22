@@ -13,16 +13,24 @@ RPC protocol endpoints:
   POST /rpc/profile            → unified tool endpoint (action-based)
   POST /rpc/backup/export      → export profiles for backup
   POST /rpc/backup/restore     → restore profiles from backup
+  GET  /rpc/csv/export         → download all profiles as CSV
+  POST /rpc/csv/import         → bulk-upsert profiles from CSV upload
   GET  /                       → HTML dashboard
 
 Launch with:  uv run service.py
 """
 
-from flask import request
+from flask import request, Response
+from markupsafe import escape
 from starkbot_sdk import create_app, success, error
 import sqlite3
 import os
+import csv
+import io
 from datetime import datetime, timezone
+
+MAX_CSV_BYTES = 5 * 1024 * 1024  # 5 MB
+MAX_CSV_ROWS = 50_000
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "discord_tipping.db")
 
@@ -281,6 +289,74 @@ def rpc_backup_restore():
 
 
 # ---------------------------------------------------------------------------
+# CSV Export / Import
+# ---------------------------------------------------------------------------
+
+CSV_COLUMNS = ["discord_user_id", "discord_username", "public_address", "registration_status", "registered_at"]
+
+@app.route("/rpc/csv/export")
+def rpc_csv_export():
+    profiles = profile_list_all()
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=CSV_COLUMNS, extrasaction="ignore")
+    writer.writeheader()
+    for p in profiles:
+        writer.writerow({col: p.get(col, "") for col in CSV_COLUMNS})
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=discord_tipping_profiles.csv"},
+    )
+
+
+@app.route("/rpc/csv/import", methods=["POST"])
+def rpc_csv_import():
+    if request.content_length and request.content_length > MAX_CSV_BYTES:
+        return error(f"CSV too large (max {MAX_CSV_BYTES // 1024 // 1024} MB)")
+
+    f = request.files.get("file")
+    if f is None:
+        raw = request.get_data(as_text=True, cache=False)
+        if not raw:
+            return error("No CSV file or body provided")
+    else:
+        raw = f.read(MAX_CSV_BYTES + 1).decode("utf-8")
+        if len(raw) > MAX_CSV_BYTES:
+            return error(f"CSV too large (max {MAX_CSV_BYTES // 1024 // 1024} MB)")
+
+    reader = csv.DictReader(io.StringIO(raw))
+    conn = get_db()
+    ts = now_iso()
+    count = 0
+    for row in reader:
+        if count >= MAX_CSV_ROWS:
+            break
+        uid = row.get("discord_user_id", "").strip()
+        if not uid:
+            continue
+        username = row.get("discord_username", "").strip() or None
+        addr = row.get("public_address", "").strip() or None
+        status = row.get("registration_status", "").strip() or ("registered" if addr else "unregistered")
+        registered_at = row.get("registered_at", "").strip() or None
+        conn.execute(
+            """INSERT INTO discord_user_profiles
+                   (discord_user_id, discord_username, public_address, registration_status, registered_at, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(discord_user_id) DO UPDATE SET
+                   discord_username    = COALESCE(excluded.discord_username, discord_user_profiles.discord_username),
+                   public_address      = excluded.public_address,
+                   registration_status = excluded.registration_status,
+                   registered_at       = COALESCE(excluded.registered_at, discord_user_profiles.registered_at),
+                   updated_at          = excluded.updated_at""",
+            (uid, username, addr, status, registered_at, ts, ts),
+        )
+        count += 1
+    conn.commit()
+    conn.close()
+    return success({"imported": count})
+
+
+# ---------------------------------------------------------------------------
 # Dashboard
 # ---------------------------------------------------------------------------
 
@@ -296,11 +372,11 @@ def dashboard():
         status_class = "registered" if p["registration_status"] == "registered" else "unregistered"
         rows_html += f"""
         <tr>
-            <td>{p['discord_user_id']}</td>
-            <td>{p.get('discord_username') or '\u2014'}</td>
-            <td title="{addr}">{addr_display}</td>
-            <td><span class="status {status_class}">{p['registration_status']}</span></td>
-            <td>{p.get('updated_at', '\u2014')}</td>
+            <td>{escape(p['discord_user_id'])}</td>
+            <td>{escape(p.get('discord_username') or '\u2014')}</td>
+            <td title="{escape(addr)}">{escape(addr_display)}</td>
+            <td><span class="status {escape(status_class)}">{escape(p['registration_status'])}</span></td>
+            <td>{escape(p.get('updated_at', '\u2014'))}</td>
         </tr>"""
 
     html = f"""<!DOCTYPE html>
@@ -308,7 +384,11 @@ def dashboard():
 <title>Discord Tipping</title>
 <style>
   body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 2rem; background: #0d1117; color: #c9d1d9; }}
-  h1 {{ color: #58a6ff; }}
+  .header {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }}
+  .header h1 {{ margin: 0; color: #58a6ff; }}
+  .header-actions {{ display: flex; gap: 0.5rem; }}
+  .btn {{ padding: 0.45rem 1rem; border-radius: 6px; border: 1px solid #30363d; background: #21262d; color: #c9d1d9; font-size: 0.85rem; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 0.4rem; }}
+  .btn:hover {{ background: #30363d; }}
   .stats {{ display: flex; gap: 1.5rem; margin-bottom: 1.5rem; }}
   .stat {{ background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem 1.5rem; }}
   .stat .value {{ font-size: 1.8rem; font-weight: bold; color: #58a6ff; }}
@@ -321,7 +401,14 @@ def dashboard():
   .status.unregistered {{ background: #30363d; color: #8b949e; }}
 </style>
 </head><body>
-<h1>Discord Tipping</h1>
+<div class="header">
+  <h1>Discord Tipping</h1>
+  <div class="header-actions">
+    <a class="btn" href="rpc/csv/export" download>Export CSV</a>
+    <button class="btn" id="importBtn">Import CSV</button>
+    <input type="file" id="csvFile" accept=".csv" hidden>
+  </div>
+</div>
 <div class="stats">
   <div class="stat"><div class="value">{stats['total_profiles']}</div><div class="label">Total Profiles</div></div>
   <div class="stat"><div class="value">{stats['registered_count']}</div><div class="label">Registered</div></div>
@@ -331,6 +418,32 @@ def dashboard():
   <thead><tr><th>Discord ID</th><th>Username</th><th>Address</th><th>Status</th><th>Updated</th></tr></thead>
   <tbody>{rows_html if rows_html else '<tr><td colspan="5" style="text-align:center;color:#8b949e;">No profiles yet</td></tr>'}</tbody>
 </table>
+<script>
+document.getElementById('importBtn').addEventListener('click', function() {{
+  document.getElementById('csvFile').click();
+}});
+document.getElementById('csvFile').addEventListener('change', function(e) {{
+  var file = e.target.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(ev) {{
+    var formData = new FormData();
+    formData.append('file', file);
+    fetch('rpc/csv/import', {{ method: 'POST', body: formData }})
+      .then(function(r) {{ return r.json(); }})
+      .then(function(data) {{
+        if (data.ok) {{
+          alert('Imported ' + data.result.imported + ' profile(s).');
+          location.reload();
+        }} else {{
+          alert('Import failed: ' + (data.error || 'unknown error'));
+        }}
+      }})
+      .catch(function(err) {{ alert('Import error: ' + err); }});
+  }};
+  reader.readAsText(file);
+}});
+</script>
 </body></html>"""
     return html
 

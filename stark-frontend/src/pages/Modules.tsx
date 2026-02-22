@@ -11,6 +11,8 @@ import {
   Globe,
   Circle,
   Zap,
+  Download,
+  Star,
 } from 'lucide-react';
 import Card, { CardContent } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
@@ -30,6 +32,21 @@ interface ModuleInfo {
   installed_at: string | null;
 }
 
+interface FeaturedModule {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  version: string;
+  author_address: string;
+  author_username: string | null;
+  tools_provided: string[];
+  install_count: number;
+  featured: boolean;
+  license: string | null;
+  x402_cost: string | null;
+}
+
 export default function Modules() {
   const [modules, setModules] = useState<ModuleInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -37,9 +54,13 @@ export default function Modules() {
   const [reloadLoading, setReloadLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [serviceHealth, setServiceHealth] = useState<Record<string, boolean>>({});
+  const [featuredModules, setFeaturedModules] = useState<FeaturedModule[]>([]);
+  const [featuredLoading, setFeaturedLoading] = useState(true);
+  const [fetchingRemote, setFetchingRemote] = useState<string | null>(null);
 
   useEffect(() => {
     loadModules();
+    loadFeatured();
   }, []);
 
   const loadModules = async () => {
@@ -126,6 +147,48 @@ export default function Modules() {
       setMessage({ type: 'error', text: errorMsg });
     } finally {
       setReloadLoading(false);
+    }
+  };
+
+  const loadFeatured = async () => {
+    setFeaturedLoading(true);
+    try {
+      const data = await apiFetch<FeaturedModule[]>('/modules/featured_remote');
+      setFeaturedModules(Array.isArray(data) ? data : []);
+    } catch {
+      // Silently fail — featured section is optional
+      setFeaturedModules([]);
+    } finally {
+      setFeaturedLoading(false);
+    }
+  };
+
+  const fetchRemoteModule = async (mod: FeaturedModule) => {
+    const username = mod.author_username;
+    if (!username) {
+      setMessage({ type: 'error', text: 'Module author has no username — cannot fetch.' });
+      return;
+    }
+    setFetchingRemote(mod.slug);
+    setMessage(null);
+    try {
+      const result = await apiFetch<{ status: string; message: string; module: string }>(
+        '/modules/fetch_remote',
+        { method: 'POST', body: JSON.stringify({ username, slug: mod.slug }) }
+      );
+      setMessage({ type: 'success', text: result.message || `Module '${mod.name}' installed!` });
+      // Remove from featured list and reload installed modules
+      setFeaturedModules((prev) => prev.filter((m) => m.slug !== mod.slug));
+      await loadModules();
+    } catch (err: any) {
+      let errorMsg = err.message || 'Failed to fetch module';
+      try {
+        const parsed = JSON.parse(errorMsg);
+        errorMsg = parsed.error || errorMsg;
+      } catch {}
+      setMessage({ type: 'error', text: errorMsg });
+    } finally {
+      setFetchingRemote(null);
     }
   };
 
@@ -351,6 +414,84 @@ export default function Modules() {
             manage_modules(action="enable", name="wallet_monitor")
           </code>
         </p>
+      </div>
+
+      {/* Featured Modules from StarkHub */}
+      {!featuredLoading && featuredModules.length > 0 && (
+        <div className="mt-10">
+          <div className="flex items-center gap-2 mb-4">
+            <Star className="w-5 h-5 text-yellow-400" />
+            <h2 className="text-xl font-bold text-white">Featured Modules</h2>
+            <span className="text-xs text-slate-500 bg-slate-700 px-2 py-0.5 rounded">
+              from StarkHub
+            </span>
+          </div>
+          <div className="space-y-3">
+            {featuredModules.map((mod) => (
+              <Card key={mod.id} variant="elevated">
+                <CardContent>
+                  <div className="flex items-center justify-between gap-4 py-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-3 mb-1">
+                        <Package className="w-4 h-4 text-stark-400 flex-shrink-0" />
+                        <h3 className="text-base font-semibold text-white">{mod.name}</h3>
+                        <span className="text-xs text-slate-500 bg-slate-700 px-2 py-0.5 rounded">
+                          v{mod.version}
+                        </span>
+                        {(!mod.x402_cost || mod.x402_cost === '0') && (
+                          <span className="text-xs text-green-400 bg-green-500/20 px-2 py-0.5 rounded">
+                            Free
+                          </span>
+                        )}
+                        {mod.license && (
+                          <span className="text-xs text-slate-400 bg-slate-700 px-2 py-0.5 rounded">
+                            {mod.license}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-slate-400 mb-2">{mod.description}</p>
+                      <div className="flex gap-3 text-xs text-slate-500">
+                        <span>
+                          {mod.author_username ? `@${mod.author_username}` : mod.author_address.slice(0, 10)}
+                        </span>
+                        <span>{mod.install_count} installs</span>
+                        {mod.tools_provided.length > 0 && (
+                          <span className="flex items-center gap-1">
+                            <Wrench className="w-3 h-3" />
+                            {mod.tools_provided.length} tools
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      disabled={fetchingRemote !== null}
+                      isLoading={fetchingRemote === mod.slug}
+                      onClick={() => fetchRemoteModule(mod)}
+                    >
+                      <Download className="w-4 h-4 mr-1" />
+                      Fetch
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* StarkHub link */}
+      <div className="mt-8 text-center">
+        <a
+          href="https://hub.starkbot.ai/modules"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm text-slate-400 hover:text-stark-400 bg-slate-800/50 hover:bg-slate-800 border border-slate-700 hover:border-stark-500/50 rounded-lg transition-colors"
+        >
+          <ExternalLink className="w-4 h-4" />
+          Find more modules on StarkHub
+        </a>
       </div>
     </div>
   );
