@@ -1,6 +1,7 @@
 //! x402 Fetch tool for making paid HTTP requests via x402 protocol
 //!
 //! Uses presets to build URLs from register values, preventing hallucination.
+//! Also exposes a standalone `fetch_x402_preset()` for use by composite tools.
 
 use crate::tools::http_retry::HttpRetryManager;
 use crate::tools::presets::{get_chain_id, get_fetch_preset, get_network_name, list_fetch_presets};
@@ -13,6 +14,219 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+
+// ─── Standalone jq-like filter functions ───────────────────────────────────────
+
+/// Apply a simple jq-like filter to extract fields from JSON
+fn apply_jq_filter(value: &Value, filter: &str) -> Result<Value, String> {
+    let filter = filter.trim();
+
+    // Handle object construction: {key: .field, key2: .field2}
+    if filter.starts_with('{') && filter.ends_with('}') {
+        let inner = &filter[1..filter.len() - 1];
+        let mut result = serde_json::Map::new();
+
+        for part in split_object_fields(inner) {
+            let part = part.trim();
+            if let Some(colon_pos) = part.find(':') {
+                let key = part[..colon_pos].trim();
+                let field_path = part[colon_pos + 1..].trim();
+                let extracted = extract_field(value, field_path)?;
+                result.insert(key.to_string(), extracted);
+            }
+        }
+
+        return Ok(Value::Object(result));
+    }
+
+    // Handle simple field access
+    extract_field(value, filter)
+}
+
+/// Split object fields handling nested braces
+fn split_object_fields(s: &str) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0;
+
+    for c in s.chars() {
+        match c {
+            '{' | '[' => {
+                depth += 1;
+                current.push(c);
+            }
+            '}' | ']' => {
+                depth -= 1;
+                current.push(c);
+            }
+            ',' if depth == 0 => {
+                fields.push(current.trim().to_string());
+                current = String::new();
+            }
+            _ => current.push(c),
+        }
+    }
+
+    if !current.trim().is_empty() {
+        fields.push(current.trim().to_string());
+    }
+
+    fields
+}
+
+/// Extract a field from JSON using dot notation
+fn extract_field(value: &Value, path: &str) -> Result<Value, String> {
+    let path = path.trim();
+
+    if path == "." {
+        return Ok(value.clone());
+    }
+
+    let path = path.strip_prefix('.').unwrap_or(path);
+    let mut current = value;
+
+    for part in path.split('.') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+
+        match current {
+            Value::Object(map) => {
+                current = map
+                    .get(part)
+                    .ok_or_else(|| format!("Field '{}' not found", part))?;
+            }
+            Value::Array(arr) => {
+                if let Ok(index) = part.parse::<usize>() {
+                    current = arr
+                        .get(index)
+                        .ok_or_else(|| format!("Index {} out of bounds", index))?;
+                } else {
+                    return Err(format!("Cannot access '{}' on array", part));
+                }
+            }
+            _ => return Err(format!("Cannot access '{}' on non-object", part)),
+        }
+    }
+
+    Ok(current.clone())
+}
+
+// ─── Standalone fetch function (for composite tools) ───────────────────────────
+
+/// Create an X402 client from the tool context
+fn get_x402_client(context: &ToolContext) -> Result<X402Client, String> {
+    if let Some(ref wallet_provider) = context.wallet_provider {
+        return X402Client::new(wallet_provider.clone());
+    }
+    let private_key = crate::config::burner_wallet_private_key()
+        .ok_or("No wallet provider in context and BURNER_WALLET_BOT_PRIVATE_KEY not set")?;
+    X402Client::from_private_key(&private_key)
+}
+
+/// Fetch data from an x402 preset endpoint.
+///
+/// Builds the URL from registers, makes the paid request with retries,
+/// and returns the jq-filtered JSON response. Does NOT cache the result
+/// in any register — the caller is responsible for that.
+///
+/// Used by the composite `swap_token` tool.
+pub async fn fetch_x402_preset(
+    preset_name: &str,
+    network: &str,
+    context: &ToolContext,
+) -> Result<Value, String> {
+    let preset = get_fetch_preset(preset_name)
+        .ok_or_else(|| format!(
+            "Unknown preset: '{}'. Available: {}",
+            preset_name, list_fetch_presets().join(", ")
+        ))?;
+
+    // Build URL from registers
+    let chain_id = get_chain_id(network);
+    let mut url_params: Vec<String> = vec![format!("chainId={}", chain_id)];
+
+    for (reg_key, param_name) in &preset.params {
+        let value = match context.registers.get(reg_key) {
+            Some(v) => match v.as_str() {
+                Some(s) => s.to_string(),
+                None => v.to_string().trim_matches('"').to_string(),
+            },
+            None => {
+                return Err(format!(
+                    "Preset '{}' requires register '{}' but it was not found. Available: {:?}",
+                    preset_name, reg_key, context.registers.keys()
+                ));
+            }
+        };
+        url_params.push(format!("{}={}", param_name, value));
+    }
+
+    let url = format!("{}?{}", preset.base_url, url_params.join("&"));
+    log::info!("[fetch_x402_preset] Preset '{}' built URL: {}", preset_name, url);
+
+    if !crate::x402::is_x402_endpoint(&url) {
+        return Err("URL must be an x402-enabled endpoint. Check preset configuration.".to_string());
+    }
+
+    let client = get_x402_client(context)?;
+
+    // Retry configuration
+    let max_retries: u32 = if preset_name == "swap_quote" { 3 } else { 1 };
+    let retry_delay_secs = 5;
+    let mut last_error: Option<String> = None;
+
+    for attempt in 1..=max_retries {
+        if attempt > 1 {
+            log::info!(
+                "[fetch_x402_preset] Retry {}/{} for preset '{}' after {}s",
+                attempt, max_retries, preset_name, retry_delay_secs
+            );
+            tokio::time::sleep(tokio::time::Duration::from_secs(retry_delay_secs)).await;
+        }
+
+        match client.get_with_payment(&url).await {
+            Ok(r) => {
+                let status = r.response.status();
+                if status.is_success() {
+                    let body = r.response.text().await
+                        .map_err(|e| format!("Failed to read response: {}", e))?;
+                    let json_value: Value = serde_json::from_str(&body)
+                        .map_err(|_| format!("Response is not valid JSON: {}", body))?;
+                    return apply_jq_filter(&json_value, &preset.jq_filter);
+                }
+
+                let body = r.response.text().await.unwrap_or_default();
+                let error_msg = format!("HTTP error {}: {}", status, body);
+
+                if attempt < max_retries {
+                    log::warn!("[fetch_x402_preset] Retryable error on attempt {}: {}", attempt, error_msg);
+                    last_error = Some(error_msg);
+                    continue;
+                }
+                return Err(error_msg);
+            }
+            Err(e) => {
+                let error_msg = format!("Request failed: {}", e);
+                if attempt < max_retries {
+                    log::warn!("[fetch_x402_preset] Network error on attempt {}: {}", attempt, error_msg);
+                    last_error = Some(error_msg);
+                    continue;
+                }
+                return Err(error_msg);
+            }
+        }
+    }
+
+    Err(format!(
+        "Failed after {} retries: {}",
+        max_retries,
+        last_error.unwrap_or_else(|| "Unknown error".to_string())
+    ))
+}
+
+// ─── X402FetchTool (existing tool, unchanged behavior) ─────────────────────────
 
 /// x402 Fetch tool for paid HTTP requests (preset-only)
 pub struct X402FetchTool {
@@ -69,117 +283,6 @@ impl X402FetchTool {
                 hidden: true,
             },
         }
-    }
-
-    /// Get or create the x402 client
-    /// Uses wallet_provider from context if available (Flash mode), otherwise falls back to env var
-    fn get_client(&self, context: &ToolContext) -> Result<X402Client, String> {
-        // Try wallet_provider from context first (works in both Standard and Flash mode)
-        if let Some(ref wallet_provider) = context.wallet_provider {
-            return X402Client::new(wallet_provider.clone());
-        }
-
-        // Fall back to private key from environment (Standard mode only)
-        let private_key = crate::config::burner_wallet_private_key()
-            .ok_or("No wallet provider in context and BURNER_WALLET_BOT_PRIVATE_KEY not set")?;
-
-        X402Client::from_private_key(&private_key)
-    }
-
-    /// Apply a simple jq-like filter to extract fields from JSON
-    fn apply_jq_filter(&self, value: &Value, filter: &str) -> Result<Value, String> {
-        let filter = filter.trim();
-
-        // Handle object construction: {key: .field, key2: .field2}
-        if filter.starts_with('{') && filter.ends_with('}') {
-            let inner = &filter[1..filter.len() - 1];
-            let mut result = serde_json::Map::new();
-
-            for part in Self::split_object_fields(inner) {
-                let part = part.trim();
-                if let Some(colon_pos) = part.find(':') {
-                    let key = part[..colon_pos].trim();
-                    let field_path = part[colon_pos + 1..].trim();
-                    let extracted = self.extract_field(value, field_path)?;
-                    result.insert(key.to_string(), extracted);
-                }
-            }
-
-            return Ok(Value::Object(result));
-        }
-
-        // Handle simple field access
-        self.extract_field(value, filter)
-    }
-
-    /// Split object fields handling nested braces
-    fn split_object_fields(s: &str) -> Vec<String> {
-        let mut fields = Vec::new();
-        let mut current = String::new();
-        let mut depth = 0;
-
-        for c in s.chars() {
-            match c {
-                '{' | '[' => {
-                    depth += 1;
-                    current.push(c);
-                }
-                '}' | ']' => {
-                    depth -= 1;
-                    current.push(c);
-                }
-                ',' if depth == 0 => {
-                    fields.push(current.trim().to_string());
-                    current = String::new();
-                }
-                _ => current.push(c),
-            }
-        }
-
-        if !current.trim().is_empty() {
-            fields.push(current.trim().to_string());
-        }
-
-        fields
-    }
-
-    /// Extract a field from JSON using dot notation
-    fn extract_field(&self, value: &Value, path: &str) -> Result<Value, String> {
-        let path = path.trim();
-
-        if path == "." {
-            return Ok(value.clone());
-        }
-
-        let path = path.strip_prefix('.').unwrap_or(path);
-        let mut current = value;
-
-        for part in path.split('.') {
-            let part = part.trim();
-            if part.is_empty() {
-                continue;
-            }
-
-            match current {
-                Value::Object(map) => {
-                    current = map
-                        .get(part)
-                        .ok_or_else(|| format!("Field '{}' not found", part))?;
-                }
-                Value::Array(arr) => {
-                    if let Ok(index) = part.parse::<usize>() {
-                        current = arr
-                            .get(index)
-                            .ok_or_else(|| format!("Index {} out of bounds", index))?;
-                    } else {
-                        return Err(format!("Cannot access '{}' on array", part));
-                    }
-                }
-                _ => return Err(format!("Cannot access '{}' on non-object", part)),
-            }
-        }
-
-        Ok(current.clone())
     }
 }
 
@@ -271,7 +374,7 @@ impl Tool for X402FetchTool {
         }
 
         // Get the x402 client
-        let client = match self.get_client(context) {
+        let client = match get_x402_client(context) {
             Ok(c) => c,
             Err(e) => return ToolResult::error(e),
         };
@@ -384,7 +487,7 @@ impl Tool for X402FetchTool {
             }
         };
 
-        let filtered = match self.apply_jq_filter(&json_value, &preset.jq_filter) {
+        let filtered = match apply_jq_filter(&json_value, &preset.jq_filter) {
             Ok(f) => f,
             Err(e) => return ToolResult::error(format!("Filter error: {}", e)),
         };

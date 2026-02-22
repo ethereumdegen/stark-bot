@@ -21,6 +21,7 @@ mod erc8128_fetch;
 mod siwa_auth;
 mod x402_agent_invoke;
 mod x402_preset_fetch;
+mod swap_token;
 mod x402_post;
 mod x402_rpc;
 
@@ -32,6 +33,7 @@ pub use decode_calldata::DecodeCalldataTool;
 pub use list_queued_web3_tx::ListQueuedWeb3TxTool;
 pub use network_lookup::load_networks;
 pub use set_address::SetAddressTool;
+pub use swap_token::SwapTokenTool;
 pub use select_web3_network::SelectWeb3NetworkTool;
 pub use to_raw_amount::ToRawAmountTool;
 pub use token_lookup::{load_tokens, TokenLookupTool};

@@ -83,7 +83,7 @@ impl ToRawAmountTool {
 
     /// Convert human-readable amount to raw units
     /// Handles decimal amounts like "1.5" properly
-    fn convert_to_raw(amount: &str, decimals: u8) -> Result<String, String> {
+    pub fn convert_to_raw(amount: &str, decimals: u8) -> Result<String, String> {
         let amount = amount.trim();
 
         // Handle the conversion based on whether there's a decimal point

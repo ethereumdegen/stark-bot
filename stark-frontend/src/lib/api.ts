@@ -915,6 +915,7 @@ export interface BackupResponse {
   has_settings?: boolean;
   has_heartbeat?: boolean;
   has_soul?: boolean;
+  backup_size_bytes?: number;
   message?: string;
   error?: string;
 }
@@ -939,6 +940,7 @@ export interface CloudBackupPreview {
   has_settings?: boolean;
   has_heartbeat?: boolean;
   has_soul?: boolean;
+  backup_size_bytes?: number;
   backup_version?: number;
   message?: string;
   error?: string;

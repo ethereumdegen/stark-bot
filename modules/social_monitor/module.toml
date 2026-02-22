@@ -1,0 +1,143 @@
+[module]
+name = "social_monitor"
+version = "1.0.0"
+author = "starkbot"
+description = "Monitor Twitter/X accounts for tweet activity, topic trends, and sentiment analysis"
+
+[service]
+command = "uv run service.py"
+default_port = 9102
+port_env_var = "SOCIAL_MONITOR_PORT"
+has_dashboard = true
+health_endpoint = "/rpc/status"
+backup_endpoint = "/rpc/backup/export"
+restore_endpoint = "/rpc/backup/restore"
+dashboard_endpoint = "/"
+
+[service.env_vars]
+TWITTER_CONSUMER_KEY = { required = true, description = "Twitter API consumer key" }
+TWITTER_CONSUMER_SECRET = { required = true, description = "Twitter API consumer secret" }
+TWITTER_ACCESS_TOKEN = { required = true, description = "Twitter API access token" }
+TWITTER_ACCESS_TOKEN_SECRET = { required = true, description = "Twitter API access token secret" }
+
+[[tools]]
+name = "social_monitor_watchlist"
+description = "Manage the social monitor watchlist. Add/remove Twitter/X accounts to monitor, manage tracked keywords."
+group = "social"
+rpc_method = "POST"
+rpc_endpoint = "/rpc/tools/watchlist"
+
+[tools.parameters.action]
+type = "string"
+description = "Action: 'add_account', 'remove_account', 'list_accounts', 'update_account', 'add_keyword', 'remove_keyword', 'list_keywords'"
+required = true
+enum = ["add_account", "remove_account", "list_accounts", "update_account", "add_keyword", "remove_keyword", "list_keywords"]
+
+[tools.parameters.username]
+type = "string"
+description = "Twitter/X username (with or without @). Required for 'add_account'."
+
+[tools.parameters.id]
+type = "integer"
+description = "Entry ID. Required for 'remove_account', 'update_account', 'remove_keyword'."
+
+[tools.parameters.notes]
+type = "string"
+description = "Notes about this account"
+
+[tools.parameters.monitor_enabled]
+type = "boolean"
+description = "Enable/disable monitoring for this account"
+
+[tools.parameters.custom_keywords]
+type = "string"
+description = "Comma-separated custom keywords to track for this account"
+
+[tools.parameters.keyword]
+type = "string"
+description = "Keyword to track. Required for 'add_keyword'."
+
+[tools.parameters.category]
+type = "string"
+description = "Keyword category: 'nft_collection', 'protocol', 'person', 'token'"
+
+[tools.parameters.aliases]
+type = "string"
+description = "Comma-separated aliases for the keyword"
+
+[[tools]]
+name = "social_monitor_tweets"
+description = "Query captured tweets from monitored Twitter/X accounts. View recent tweets, search by text, filter by account."
+group = "social"
+rpc_method = "POST"
+rpc_endpoint = "/rpc/tools/tweets"
+
+[tools.parameters.action]
+type = "string"
+description = "Action: 'recent', 'search', 'by_account', 'stats'"
+required = true
+enum = ["recent", "search", "by_account", "stats"]
+
+[tools.parameters.username]
+type = "string"
+description = "Filter by username (for 'by_account' action)"
+
+[tools.parameters.search_text]
+type = "string"
+description = "Search text to filter tweets (for 'search' action)"
+
+[tools.parameters.tweet_type]
+type = "string"
+description = "Filter by tweet type: 'original', 'reply', 'quote'"
+
+[tools.parameters.limit]
+type = "integer"
+description = "Max results to return (default 25, max 200)"
+default = 25
+
+[[tools]]
+name = "social_monitor_forensics"
+description = "Social media forensics and intelligence. Analyze topic trends, sentiment history, and get full forensics reports for monitored accounts."
+group = "social"
+rpc_method = "POST"
+rpc_endpoint = "/rpc/tools/forensics"
+
+[tools.parameters.action]
+type = "string"
+description = "Action: 'topics', 'sentiment', 'report', 'signals'"
+required = true
+enum = ["topics", "sentiment", "report", "signals"]
+
+[tools.parameters.username]
+type = "string"
+description = "Filter by username"
+
+[tools.parameters.account_id]
+type = "integer"
+description = "Filter by account ID"
+
+[tools.parameters.topic]
+type = "string"
+description = "Filter by topic name"
+
+[tools.parameters.trend]
+type = "string"
+description = "Filter by trend: 'rising', 'falling', 'stable', 'new', 'dormant'"
+
+[tools.parameters.limit]
+type = "integer"
+description = "Max results to return (default 25)"
+default = 25
+
+[[tools]]
+name = "social_monitor_control"
+description = "Check the social monitor service health and status."
+group = "social"
+rpc_method = "POST"
+rpc_endpoint = "/rpc/tools/control"
+
+[tools.parameters.action]
+type = "string"
+description = "Action: 'status' to check service health"
+required = true
+enum = ["status"]

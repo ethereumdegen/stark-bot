@@ -1,9 +1,15 @@
 import { useState, useEffect } from 'react';
-import { Cloud, Upload, Download, Shield, AlertCircle, CheckCircle, X, Key, Brain, Settings, Link2, RefreshCw, Clock, AlertTriangle, Heart, MessageSquare, Sparkles, Zap, Coins } from 'lucide-react';
+import { Cloud, Upload, Download, Shield, AlertCircle, CheckCircle, X, Key, Brain, Settings, Link2, RefreshCw, Clock, AlertTriangle, Heart, MessageSquare, Sparkles, Zap, Coins, HardDrive } from 'lucide-react';
 import { JsonRpcProvider, Contract, formatUnits } from 'ethers';
 import Card, { CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import { backupKeysToCloud, restoreKeysFromCloud, previewCloudBackup, CloudBackupPreview, getConfigStatus } from '@/lib/api';
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
 
 export default function CloudBackup() {
   const [isUploading, setIsUploading] = useState(false);
@@ -104,7 +110,7 @@ export default function CloudBackup() {
       const result = await backupKeysToCloud();
       setMessage({
         type: 'success',
-        text: `Backup complete! ${result.key_count || 0} keys, ${result.node_count || 0} impulse nodes, ${result.connection_count || 0} connections, ${result.cron_job_count || 0} cron jobs, ${result.channel_count || 0} channels, ${result.skill_count || 0} skills, ${result.agent_settings_count || 0} AI models${result.has_settings ? ', settings' : ''}${result.has_heartbeat ? ', heartbeat' : ''}${result.has_soul ? ', soul' : ''}`
+        text: `Backup complete! ${result.key_count || 0} keys, ${result.node_count || 0} impulse nodes, ${result.connection_count || 0} connections, ${result.cron_job_count || 0} cron jobs, ${result.channel_count || 0} channels, ${result.skill_count || 0} skills, ${result.agent_settings_count || 0} AI models${result.has_settings ? ', settings' : ''}${result.has_heartbeat ? ', heartbeat' : ''}${result.has_soul ? ', soul' : ''}${result.backup_size_bytes ? ` (${formatBytes(result.backup_size_bytes)})` : ''}`
       });
       setNoBackupWarning(false);
       // Refresh preview after successful backup
@@ -129,7 +135,7 @@ export default function CloudBackup() {
       const result = await restoreKeysFromCloud();
       setMessage({
         type: 'success',
-        text: `Restore complete! ${result.key_count || 0} keys, ${result.node_count || 0} impulse nodes, ${result.connection_count || 0} connections, ${result.cron_job_count || 0} cron jobs, ${result.channel_count || 0} channels, ${result.skill_count || 0} skills, ${result.agent_settings_count || 0} AI models${result.has_settings ? ', settings' : ''}${result.has_heartbeat ? ', heartbeat' : ''}${result.has_soul ? ', soul' : ''}`
+        text: `Restore complete! ${result.key_count || 0} keys, ${result.node_count || 0} impulse nodes, ${result.connection_count || 0} connections, ${result.cron_job_count || 0} cron jobs, ${result.channel_count || 0} channels, ${result.skill_count || 0} skills, ${result.agent_settings_count || 0} AI models${result.has_settings ? ', settings' : ''}${result.has_heartbeat ? ', heartbeat' : ''}${result.has_soul ? ', soul' : ''}${result.backup_size_bytes ? ` (${formatBytes(result.backup_size_bytes)})` : ''}`
       });
     } catch (err) {
       setMessage({ type: 'error', text: formatKeystoreError(err) });
@@ -378,12 +384,18 @@ export default function CloudBackup() {
                   </div>
                 )}
 
-                {/* Backup Version */}
-                {previewData.backup_version && (
-                  <p className="text-xs text-slate-500 text-center">
-                    Backup format version: {previewData.backup_version}
-                  </p>
-                )}
+                {/* Backup Size & Version */}
+                <div className="flex items-center justify-center gap-4 text-xs text-slate-500">
+                  {previewData.backup_size_bytes && (
+                    <span className="flex items-center gap-1">
+                      <HardDrive className="w-3 h-3" />
+                      {formatBytes(previewData.backup_size_bytes)}
+                    </span>
+                  )}
+                  {previewData.backup_version && (
+                    <span>v{previewData.backup_version}</span>
+                  )}
+                </div>
               </div>
             ) : (
               <div className="text-center py-12 text-slate-500">

@@ -143,7 +143,7 @@ impl TokenLookupTool {
         }
     }
 
-    fn lookup(symbol: &str, network: &str) -> Option<TokenInfo> {
+    pub fn lookup(symbol: &str, network: &str) -> Option<TokenInfo> {
         let symbol_upper = symbol.to_uppercase();
         let tokens = get_tokens();
 
