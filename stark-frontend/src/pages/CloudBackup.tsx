@@ -20,7 +20,12 @@ export default function CloudBackup() {
 
   // STARKBOT token balance
   const STARKBOT_TOKEN = '0x587Cd533F418825521f3A1daa7CCd1E7339A1B07';
-  const BASE_RPC = 'https://mainnet.base.org';
+  const BASE_RPCS = [
+    'https://mainnet.base.org',
+    'https://base.llamarpc.com',
+    'https://rpc.ankr.com/base',
+    'https://1rpc.io/base',
+  ];
   const [starkbotBalance, setStarkbotBalance] = useState<string | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(true);
 
@@ -39,10 +44,17 @@ export default function CloudBackup() {
         setBalanceLoading(false);
         return;
       }
-      const provider = new JsonRpcProvider(BASE_RPC);
-      const contract = new Contract(STARKBOT_TOKEN, ['function balanceOf(address) view returns (uint256)'], provider);
-      const balance = await contract.balanceOf(config.wallet_address);
-      setStarkbotBalance(formatUnits(balance, 18));
+      for (const rpc of BASE_RPCS) {
+        try {
+          const provider = new JsonRpcProvider(rpc);
+          const contract = new Contract(STARKBOT_TOKEN, ['function balanceOf(address) view returns (uint256)'], provider);
+          const balance = await contract.balanceOf(config.wallet_address);
+          setStarkbotBalance(formatUnits(balance, 18));
+          break;
+        } catch (rpcErr) {
+          console.warn(`STARKBOT balance RPC failed (${rpc}):`, rpcErr);
+        }
+      }
     } catch (err) {
       console.error('Failed to fetch STARKBOT balance:', err);
     } finally {

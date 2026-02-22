@@ -27,7 +27,7 @@ RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/li
 COPY . .
 
 # Build all workspace binaries
-RUN cargo build --release -p stark-backend -p discord-tipping-service -p wallet-monitor-service
+RUN cargo build --release -p stark-backend
 
 # Runtime stage
 FROM debian:bookworm-slim
@@ -75,8 +75,6 @@ RUN curl -fsSL "https://github.com/steipete/gogcli/releases/download/v0.11.0/gog
 
 # Copy the binaries
 COPY --from=backend-builder /app/target/release/stark-backend /app/stark-backend-bin
-COPY --from=backend-builder /app/target/release/discord-tipping-service /app/discord-tipping-service
-COPY --from=backend-builder /app/target/release/wallet-monitor-service /app/wallet-monitor-service
 
 # Copy the built frontend (dist folder)
 COPY --from=frontend-builder /app/stark-frontend/dist /app/stark-frontend/dist
@@ -93,8 +91,17 @@ COPY skills /app/skills
 # Copy soul_template (default SOUL.md and GUIDELINES.md, copied to soul dir on startup)
 COPY soul_template /app/soul_template
 
+# Copy bundled modules (discord_tipping, etc.)
+COPY modules /app/modules
+
+# Pre-warm uv cache: download Python + dependencies for all module services
+# so first-run startup is instant instead of waiting for downloads
+RUN for svc in /app/modules/*/service.py; do \
+        [ -f "$svc" ] && (cd "$(dirname "$svc")" && uv run --quiet python -c "print('ok')" 2>/dev/null) || true; \
+    done
+
 # Create directories for workspace, journal, soul, and memory (under stark-backend)
-RUN mkdir -p /app/stark-backend/workspace /app/stark-backend/journal /app/stark-backend/soul /app/stark-backend/memory
+RUN mkdir -p /app/stark-backend/workspace /app/stark-backend/journal /app/stark-backend/soul /app/stark-backend/memory /app/stark-backend/notes /app/stark-backend/modules
 
 # Expose ports (HTTP + Gateway WebSocket)
 EXPOSE 8080

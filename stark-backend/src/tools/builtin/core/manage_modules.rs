@@ -1,9 +1,10 @@
-//! Module management tool — install, uninstall, enable, disable, list, search StarkHub, install remote
+//! Module management tool — install, uninstall, enable, disable, list, search StarkHub, install remote, import ZIP, export
 //!
 //! Modules are standalone microservices. This tool manages the bot's
 //! record of which modules are installed/enabled and hot-registers their tools.
 //! It also integrates with StarkHub (hub.starkbot.ai) for discovering and
-//! downloading remote modules.
+//! downloading remote modules. Supports importing modules from ZIP files and
+//! exporting module manifests for publishing.
 
 use crate::tools::registry::Tool;
 use crate::tools::types::{
@@ -26,7 +27,7 @@ impl ManageModulesTool {
             "action".to_string(),
             PropertySchema {
                 schema_type: "string".to_string(),
-                description: "Action: 'list' available modules, 'install' a builtin module, 'uninstall', 'enable', 'disable', 'status', 'search_hub' to search StarkHub, 'install_remote' to download from StarkHub, or 'update' to check for updates".to_string(),
+                description: "Action: 'list' available modules, 'install' a builtin module, 'uninstall', 'enable', 'disable', 'status', 'search_hub' to search StarkHub, 'install_remote' to download from StarkHub, 'update' to check for updates, 'import_zip' to install from a ZIP file, or 'export' to get module manifest for publishing".to_string(),
                 default: None,
                 items: None,
                 enum_values: Some(vec![
@@ -39,6 +40,8 @@ impl ManageModulesTool {
                     "search_hub".to_string(),
                     "install_remote".to_string(),
                     "update".to_string(),
+                    "import_zip".to_string(),
+                    "export".to_string(),
                 ]),
             },
         );
@@ -65,10 +68,21 @@ impl ManageModulesTool {
             },
         );
 
+        properties.insert(
+            "path".to_string(),
+            PropertySchema {
+                schema_type: "string".to_string(),
+                description: "File path for 'import_zip' action (path to the ZIP file on disk)".to_string(),
+                default: None,
+                items: None,
+                enum_values: None,
+            },
+        );
+
         ManageModulesTool {
             definition: ToolDefinition {
                 name: "manage_modules".to_string(),
-                description: "Manage StarkBot plugin modules. List, install/uninstall local modules, search StarkHub for remote modules, or download and install modules from StarkHub.".to_string(),
+                description: "Manage StarkBot plugin modules. List, install/uninstall local modules, search StarkHub for remote modules, download and install modules from StarkHub, import modules from ZIP files, or export module manifests for publishing.".to_string(),
                 input_schema: ToolInputSchema {
                     schema_type: "object".to_string(),
                     properties,
@@ -86,6 +100,7 @@ struct ModuleParams {
     action: String,
     name: Option<String>,
     query: Option<String>,
+    path: Option<String>,
 }
 
 /// Parse "@username/slug" into (username, slug).
@@ -477,8 +492,128 @@ impl Tool for ManageModulesTool {
                 }
             }
 
+            "import_zip" => {
+                let zip_path = match params.path.as_deref() {
+                    Some(p) => p,
+                    None => return ToolResult::error("'path' is required for 'import_zip' action (path to the ZIP file on disk)"),
+                };
+
+                // Read ZIP file from disk
+                let zip_data = match std::fs::read(zip_path) {
+                    Ok(data) => data,
+                    Err(e) => return ToolResult::error(format!("Failed to read ZIP file '{}': {}", zip_path, e)),
+                };
+
+                // ZIP bomb protection
+                if zip_data.len() > crate::disk_quota::MAX_SKILL_ZIP_BYTES {
+                    return ToolResult::error(format!(
+                        "ZIP file too large ({} bytes). Maximum allowed: 10MB.",
+                        zip_data.len()
+                    ));
+                }
+
+                // Parse the ZIP
+                let parsed = match crate::modules::zip_parser::parse_module_zip(&zip_data) {
+                    Ok(p) => p,
+                    Err(e) => return ToolResult::error(format!("Failed to parse module ZIP: {}", e)),
+                };
+
+                let module_name = parsed.module_name.clone();
+
+                // Check if already installed
+                if db.is_module_installed(&module_name).unwrap_or(false) {
+                    return ToolResult::error(format!(
+                        "Module '{}' is already installed. Uninstall it first, then re-import.",
+                        module_name
+                    ));
+                }
+
+                // Extract to runtime modules directory
+                let modules_dir = crate::config::runtime_modules_dir();
+                let module_dir = match crate::modules::zip_parser::extract_module_to_dir(&parsed, &modules_dir) {
+                    Ok(dir) => dir,
+                    Err(e) => return ToolResult::error(format!("Failed to extract module: {}", e)),
+                };
+
+                // Read manifest info for DB registration
+                let manifest = &parsed.manifest;
+                let has_tools = !manifest.tools.is_empty();
+                let has_dashboard = manifest.service.has_dashboard;
+                let author = manifest.module.author.as_deref();
+                let manifest_path = module_dir.join("module.toml");
+
+                // Register in database
+                match db.install_module_full(
+                    &module_name,
+                    &manifest.module.description,
+                    &manifest.module.version,
+                    has_tools,
+                    has_dashboard,
+                    "zip_import",
+                    Some(&manifest_path.to_string_lossy()),
+                    None, // no binary path
+                    author,
+                    None, // no checksum
+                ) {
+                    Ok(_) => {
+                        // Install bundled skill if present
+                        if let Some(ref skill_cfg) = manifest.skill {
+                            let skill_path = module_dir.join(&skill_cfg.content_file);
+                            if let Ok(skill_content) = std::fs::read_to_string(&skill_path) {
+                                if let Some(skill_registry) = context.skill_registry.as_ref() {
+                                    match skill_registry.create_skill_from_markdown(&skill_content) {
+                                        Ok(_) => log::info!("[MODULE] Installed skill from module '{}'", module_name),
+                                        Err(e) => log::warn!("[MODULE] Failed to install skill from module '{}': {}", module_name, e),
+                                    }
+                                }
+                            }
+                        }
+
+                        let mut result = vec![
+                            format!("Module '{}' imported from ZIP successfully!", module_name),
+                            format!("Version: {}", manifest.module.version),
+                            format!("Location: {}", module_dir.display()),
+                        ];
+                        if has_tools {
+                            let tool_names: Vec<_> = manifest.tools.iter().map(|t| t.name.as_str()).collect();
+                            result.push(format!("Tools: {}", tool_names.join(", ")));
+                        }
+                        result.push("Restart StarkBot to activate the module and its tools.".to_string());
+                        ToolResult::success(result.join("\n"))
+                    }
+                    Err(e) => ToolResult::error(format!("Failed to register module: {}", e)),
+                }
+            }
+
+            "export" => {
+                let name = match params.name.as_deref() {
+                    Some(n) => n,
+                    None => return ToolResult::error("'name' is required for 'export' action"),
+                };
+
+                let modules_dir = crate::config::runtime_modules_dir();
+                let manifest_path = modules_dir.join(name).join("module.toml");
+
+                if !manifest_path.exists() {
+                    return ToolResult::error(format!(
+                        "Module '{}' not found at {}. Only modules in the runtime modules directory can be exported.",
+                        name, manifest_path.display()
+                    ));
+                }
+
+                match std::fs::read_to_string(&manifest_path) {
+                    Ok(content) => {
+                        ToolResult::success(format!(
+                            "**Module manifest for '{}':**\n\n```toml\n{}\n```",
+                            name, content
+                        ))
+                    }
+                    Err(e) => ToolResult::error(format!("Failed to read module.toml: {}", e)),
+                }
+            }
+
             _ => ToolResult::error(format!(
-                "Unknown action: '{}'. Use 'list', 'install', 'uninstall', 'enable', 'disable', 'status', 'search_hub', 'install_remote', or 'update'.",
+                "Unknown action: '{}'. Use 'list', 'install', 'uninstall', 'enable', 'disable', 'status', 'search_hub', 'install_remote', 'update', 'import_zip', or 'export'.",
                 params.action
             )),
         }

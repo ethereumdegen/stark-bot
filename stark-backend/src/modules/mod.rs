@@ -4,22 +4,43 @@
 //! Each module has its own database, HTTP server, and dashboard.
 //! The main bot communicates with modules via JSON RPC over HTTP.
 
-pub mod discord_tipping;
 pub mod dynamic_module;
 pub mod dynamic_tool;
 pub mod loader;
 pub mod manifest;
 pub mod registry;
-pub mod social_monitor;
-pub mod wallet_monitor;
+pub mod zip_parser;
 
 use async_trait::async_trait;
 use crate::db::Database;
 use crate::tools::registry::Tool;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 pub use registry::ModuleRegistry;
+
+/// Info about an external endpoint exposed by a module.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtEndpointInfo {
+    /// Method name (used in URL path)
+    pub method_name: String,
+    /// Description of the endpoint
+    pub description: Option<String>,
+    /// The RPC endpoint path on the module service
+    pub rpc_endpoint: String,
+    /// Allowed HTTP methods
+    pub http_methods: Vec<String>,
+}
+
+/// Raw HTTP response from proxying to a module (preserves status, headers, body).
+pub struct RawProxyResponse {
+    pub status: u16,
+    pub headers: HashMap<String, String>,
+    pub body: Vec<u8>,
+}
 
 /// Trait that all modules must implement.
 ///
@@ -49,6 +70,16 @@ pub trait Module: Send + Sync {
     /// Return tool instances to register with the bot
     fn create_tools(&self) -> Vec<Arc<dyn Tool>>;
 
+    /// Shell command from manifest to start the service (if any)
+    fn manifest_command(&self) -> Option<String> {
+        None
+    }
+
+    /// Directory containing the module on disk (if available)
+    fn module_dir(&self) -> Option<&PathBuf> {
+        None
+    }
+
     /// Optional: skill markdown content to install
     fn skill_content(&self) -> Option<&str> {
         None
@@ -72,5 +103,31 @@ pub trait Module: Send + Sync {
     /// Restore module data from a cloud backup (sent to service)
     async fn restore_data(&self, _db: &Database, _data: &Value) -> Result<(), String> {
         Ok(())
+    }
+
+    /// Whether this module declares any external HTTP endpoints
+    fn has_ext_endpoints(&self) -> bool {
+        false
+    }
+
+    /// Find an external endpoint by method name
+    fn find_ext_endpoint(&self, _method: &str) -> Option<ExtEndpointInfo> {
+        None
+    }
+
+    /// List all external endpoints declared by this module
+    fn ext_endpoint_list(&self) -> Vec<ExtEndpointInfo> {
+        Vec::new()
+    }
+
+    /// Proxy an HTTP request to a module's external endpoint, preserving raw status/headers/body
+    async fn proxy_ext_request(
+        &self,
+        _rpc_endpoint: &str,
+        _http_method: &str,
+        _body: Vec<u8>,
+        _headers: HashMap<String, String>,
+    ) -> Result<RawProxyResponse, String> {
+        Err("Module does not support ext endpoints".to_string())
     }
 }

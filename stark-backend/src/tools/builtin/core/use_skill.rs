@@ -162,7 +162,7 @@ impl Tool for UseSkillTool {
         }
 
         // Replace {baseDir} placeholder with actual skill directory
-        let skills_dir = crate::config::skills_dir();
+        let skills_dir = crate::config::runtime_skills_dir();
         let skill_base_dir = format!("{}/{}", skills_dir, skill.name);
         let instructions = if !skill.body.is_empty() {
             skill.body.replace("{baseDir}", &skill_base_dir)

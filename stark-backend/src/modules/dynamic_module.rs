@@ -2,12 +2,16 @@
 //! at runtime. No compiled module-specific code needed.
 
 use async_trait::async_trait;
+use crate::db::Database;
 use crate::tools::registry::Tool;
+use serde_json::Value;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::dynamic_tool::DynamicModuleTool;
 use super::manifest::ModuleManifest;
+use super::{ExtEndpointInfo, RawProxyResponse};
 
 /// A module loaded dynamically from a manifest file on disk.
 pub struct DynamicModule {
@@ -69,6 +73,116 @@ impl DynamicModule {
     pub fn manifest_port_env_var(&self) -> Option<String> {
         self.manifest.service.port_env_var.clone()
     }
+
+    /// URL env var from manifest (if present).
+    pub fn manifest_url_env_var(&self) -> Option<String> {
+        self.manifest.service.url_env_var.clone()
+    }
+
+    /// Shell command from manifest (if present).
+    pub fn manifest_command(&self) -> Option<String> {
+        self.manifest.service.command.clone()
+    }
+
+    /// Generic HTTP POST to a module endpoint, returning the `data` field from `{success, data, error}`.
+    async fn rpc_post(&self, endpoint: &str, body: &Value) -> Result<Value, String> {
+        let url = format!("{}{}", self.manifest.service_url(), endpoint);
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(&url)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| format!("{} service unavailable: {}", self.manifest.module.name, e))?;
+        let json: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("Invalid response from {}: {}", self.manifest.module.name, e))?;
+        if json.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+            Ok(json.get("data").cloned().unwrap_or(Value::Null))
+        } else {
+            let err = json.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error");
+            Err(err.to_string())
+        }
+    }
+
+    /// Generic HTTP POST with empty body.
+    async fn rpc_post_empty(&self, endpoint: &str) -> Result<Value, String> {
+        let url = format!("{}{}", self.manifest.service_url(), endpoint);
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(&url)
+            .send()
+            .await
+            .map_err(|e| format!("{} service unavailable: {}", self.manifest.module.name, e))?;
+        let json: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("Invalid response from {}: {}", self.manifest.module.name, e))?;
+        if json.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+            Ok(json.get("data").cloned().unwrap_or(Value::Null))
+        } else {
+            let err = json.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error");
+            Err(err.to_string())
+        }
+    }
+
+    /// Raw HTTP proxy to a module endpoint — preserves status code, headers, and body.
+    /// Unlike `rpc_post` which unwraps the `{success, data, error}` envelope, this
+    /// passes through the response verbatim for ext endpoint proxying.
+    async fn proxy_ext_raw(
+        &self,
+        rpc_endpoint: &str,
+        http_method: &str,
+        body: Vec<u8>,
+        headers: HashMap<String, String>,
+    ) -> Result<RawProxyResponse, String> {
+        let url = format!("{}{}", self.manifest.service_url(), rpc_endpoint);
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+        let method = reqwest::Method::from_bytes(http_method.as_bytes())
+            .map_err(|_| format!("Invalid HTTP method: {}", http_method))?;
+
+        let mut req = client.request(method, &url);
+
+        // Forward headers
+        for (key, value) in &headers {
+            if let Ok(header_name) = reqwest::header::HeaderName::from_bytes(key.as_bytes()) {
+                if let Ok(header_value) = reqwest::header::HeaderValue::from_str(value) {
+                    req = req.header(header_name, header_value);
+                }
+            }
+        }
+
+        // Attach body for methods that support it
+        if !body.is_empty() {
+            req = req.body(body);
+        }
+
+        let resp = req.send().await.map_err(|e| {
+            format!("{} service unavailable: {}", self.manifest.module.name, e)
+        })?;
+
+        let status = resp.status().as_u16();
+        let mut resp_headers = HashMap::new();
+        for (key, value) in resp.headers() {
+            if let Ok(v) = value.to_str() {
+                resp_headers.insert(key.as_str().to_string(), v.to_string());
+            }
+        }
+        let resp_body = resp.bytes().await.map_err(|e| {
+            format!("Failed to read response body from {}: {}", self.manifest.module.name, e)
+        })?;
+
+        Ok(RawProxyResponse {
+            status,
+            headers: resp_headers,
+            body: resp_body.to_vec(),
+        })
+    }
 }
 
 #[async_trait]
@@ -112,7 +226,95 @@ impl super::Module for DynamicModule {
             .collect()
     }
 
+    fn manifest_command(&self) -> Option<String> {
+        self.manifest.service.command.clone()
+    }
+
+    fn module_dir(&self) -> Option<&PathBuf> {
+        Some(&self.module_dir)
+    }
+
     fn skill_content(&self) -> Option<&str> {
         self.skill_content.as_deref()
+    }
+
+    async fn dashboard_data(&self, _db: &Database) -> Option<Value> {
+        let endpoint = self.manifest.service.dashboard_endpoint.as_deref()?;
+        let url = format!("{}{}", self.manifest.service_url(), endpoint);
+        let client = reqwest::Client::new();
+        let resp = client.get(&url).send().await.ok()?;
+        resp.json::<Value>().await.ok()
+    }
+
+    async fn backup_data(&self, _db: &Database) -> Option<Value> {
+        let endpoint = self.manifest.service.backup_endpoint.as_deref()?;
+        match self.rpc_post_empty(endpoint).await {
+            Ok(data) => {
+                // Skip empty arrays / null
+                if data.is_null() {
+                    return None;
+                }
+                if let Some(arr) = data.as_array() {
+                    if arr.is_empty() {
+                        return None;
+                    }
+                }
+                Some(data)
+            }
+            Err(e) => {
+                log::warn!("[MODULE] backup_data for '{}' failed: {}", self.manifest.module.name, e);
+                None
+            }
+        }
+    }
+
+    async fn restore_data(&self, _db: &Database, data: &Value) -> Result<(), String> {
+        let endpoint = match self.manifest.service.restore_endpoint.as_deref() {
+            Some(ep) => ep,
+            None => return Ok(()), // no restore endpoint configured
+        };
+        let _ = self.rpc_post(endpoint, data).await?;
+        log::info!(
+            "[MODULE] Restored data for '{}' via {}",
+            self.manifest.module.name,
+            endpoint
+        );
+        Ok(())
+    }
+
+    fn has_ext_endpoints(&self) -> bool {
+        !self.manifest.ext_endpoints.is_empty()
+    }
+
+    fn find_ext_endpoint(&self, method: &str) -> Option<ExtEndpointInfo> {
+        self.manifest.find_ext_endpoint(method).map(|ep| ExtEndpointInfo {
+            method_name: ep.method_name.clone(),
+            description: ep.description.clone(),
+            rpc_endpoint: ep.rpc_endpoint.clone(),
+            http_methods: ep.http_methods.clone(),
+        })
+    }
+
+    fn ext_endpoint_list(&self) -> Vec<ExtEndpointInfo> {
+        self.manifest
+            .ext_endpoints
+            .iter()
+            .map(|ep| ExtEndpointInfo {
+                method_name: ep.method_name.clone(),
+                description: ep.description.clone(),
+                rpc_endpoint: ep.rpc_endpoint.clone(),
+                http_methods: ep.http_methods.clone(),
+            })
+            .collect()
+    }
+
+    async fn proxy_ext_request(
+        &self,
+        rpc_endpoint: &str,
+        http_method: &str,
+        body: Vec<u8>,
+        headers: HashMap<String, String>,
+    ) -> Result<RawProxyResponse, String> {
+        self.proxy_ext_raw(rpc_endpoint, http_method, body, headers).await
     }
 }

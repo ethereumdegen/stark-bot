@@ -18,4 +18,8 @@ services:
       - ./soul:/app/stark-backend/soul
       # Persistent memory for agent memories
       - ./memory:/app/stark-backend/memory
+      # Persistent notes
+      - ./notes:/app/stark-backend/notes
+      # Persistent modules runtime data (databases, user-uploaded modules)
+      - ./stark-backend/modules:/app/stark-backend/modules
     restart: unless-stopped

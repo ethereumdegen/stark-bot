@@ -1,0 +1,43 @@
+[module]
+name = "discord_tipping"
+version = "1.0.0"
+author = "starkbot"
+description = "Discord user profile & wallet address linking for tipping"
+
+[service]
+command = "uv run service.py"
+default_port = 9101
+port_env_var = "DISCORD_TIPPING_PORT"
+has_dashboard = true
+health_endpoint = "/rpc/status"
+backup_endpoint = "/rpc/backup/export"
+restore_endpoint = "/rpc/backup/restore"
+dashboard_endpoint = "/"
+
+[[tools]]
+name = "discord_tipping_profile"
+description = "Manage Discord user profiles and their linked Ethereum wallet addresses for tipping. Use 'get_or_create' when a user interacts, 'register' to link a wallet, 'unregister' to unlink, 'get' to look up a user, 'get_by_address' to find who owns an address, 'list' for all profiles, 'list_registered' for registered only, 'stats' for aggregate counts."
+group = "social"
+rpc_method = "POST"
+rpc_endpoint = "/rpc/profile"
+
+[tools.parameters.action]
+type = "string"
+description = "Action to perform"
+required = true
+enum = ["get_or_create", "get", "get_by_address", "register", "unregister", "list", "list_registered", "stats"]
+
+[tools.parameters.discord_user_id]
+type = "string"
+description = "Discord user ID (required for get_or_create, get, register, unregister)"
+required = false
+
+[tools.parameters.username]
+type = "string"
+description = "Discord username (used with get_or_create)"
+required = false
+
+[tools.parameters.address]
+type = "string"
+description = "Ethereum wallet address (required for register and get_by_address)"
+required = false

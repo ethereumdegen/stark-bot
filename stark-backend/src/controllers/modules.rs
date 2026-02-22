@@ -4,7 +4,9 @@
 //! install/uninstall/enable/disable state in the bot's database and
 //! hot-registers/unregisters their tools at runtime.
 
+use actix_multipart::Multipart;
 use actix_web::{web, HttpRequest, HttpResponse};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use crate::AppState;
 
@@ -26,7 +28,8 @@ fn kill_service_on_port(port: u16) {
     }
 }
 
-/// Start a module's service binary if not already running.
+/// Start a module's service if not already running.
+/// Checks the module manifest for a `command` field first, falling back to binary discovery.
 fn start_module_service(module_name: &str, port: u16, db: &crate::db::Database) {
     // Already running?
     if std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok() {
@@ -34,10 +37,45 @@ fn start_module_service(module_name: &str, port: u16, db: &crate::db::Database) 
         return;
     }
 
+    // Check if the module has a command in its manifest
+    let registry = crate::modules::ModuleRegistry::new();
+    if let Some(module) = registry.get(module_name) {
+        if let Some(command) = module.manifest_command() {
+            let module_dir = match module.module_dir() {
+                Some(dir) => dir.clone(),
+                None => {
+                    log::warn!("[MODULE] {} has command but no module_dir — cannot start", module_name);
+                    return;
+                }
+            };
+            let mut cmd = std::process::Command::new("sh");
+            cmd.arg("-c").arg(&command);
+            cmd.current_dir(&module_dir);
+            cmd.stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit());
+            cmd.env("MODULE_PORT", port.to_string());
+
+            // Pass API keys from database
+            if let Ok(Some(key)) = db.get_api_key("ALCHEMY_API_KEY") {
+                cmd.env("ALCHEMY_API_KEY", &key.api_key);
+            } else if let Ok(val) = std::env::var("ALCHEMY_API_KEY") {
+                if !val.is_empty() {
+                    cmd.env("ALCHEMY_API_KEY", &val);
+                }
+            }
+
+            match cmd.spawn() {
+                Ok(_) => log::info!("[MODULE] Started {} via `{}` (port {})", module_name, command, port),
+                Err(e) => log::error!("[MODULE] Failed to start {} via `{}`: {}", module_name, command, e),
+            }
+            return;
+        }
+    }
+
+    // Fallback: binary discovery
     let self_exe = std::env::current_exe().unwrap_or_default();
     let exe_dir = self_exe.parent().unwrap_or(std::path::Path::new("."));
 
-    // Map module name to binary name
     let binary_name = module_name.replace('_', "-") + "-service";
     let exe_path = exe_dir.join(&binary_name);
     if !exe_path.exists() {
@@ -74,6 +112,8 @@ struct ModuleInfo {
     has_tools: bool,
     has_dashboard: bool,
     has_skill: bool,
+    has_ext_endpoints: bool,
+    ext_endpoint_count: usize,
     service_url: String,
     service_port: u16,
     installed_at: Option<String>,
@@ -133,6 +173,7 @@ async fn list_modules(data: web::Data<AppState>) -> HttpResponse {
     for module in registry.available_modules() {
         let installed_entry = installed.iter().find(|m| m.module_name == module.name());
 
+        let ext_endpoints = module.ext_endpoint_list();
         modules.push(ModuleInfo {
             name: module.name().to_string(),
             description: module.description().to_string(),
@@ -142,6 +183,8 @@ async fn list_modules(data: web::Data<AppState>) -> HttpResponse {
             has_tools: module.has_tools(),
             has_dashboard: module.has_dashboard(),
             has_skill: module.has_skill(),
+            has_ext_endpoints: !ext_endpoints.is_empty(),
+            ext_endpoint_count: ext_endpoints.len(),
             service_url: module.service_url(),
             service_port: module.default_port(),
             installed_at: installed_entry.map(|e| e.installed_at.to_rfc3339()),
@@ -542,10 +585,139 @@ async fn module_proxy(
     }
 }
 
+/// POST /api/modules/upload — import a module from a ZIP file upload
+async fn upload_module(
+    data: web::Data<AppState>,
+    mut payload: Multipart,
+) -> HttpResponse {
+    // Read the uploaded file
+    let mut file_data: Vec<u8> = Vec::new();
+
+    while let Some(item) = payload.next().await {
+        match item {
+            Ok(mut field) => {
+                while let Some(chunk) = field.next().await {
+                    match chunk {
+                        Ok(bytes) => file_data.extend_from_slice(&bytes),
+                        Err(e) => {
+                            return HttpResponse::BadRequest().json(serde_json::json!({
+                                "error": format!("Failed to read upload data: {}", e)
+                            }));
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                return HttpResponse::BadRequest().json(serde_json::json!({
+                    "error": format!("Failed to process upload: {}", e)
+                }));
+            }
+        }
+    }
+
+    if file_data.is_empty() {
+        return HttpResponse::BadRequest().json(serde_json::json!({
+            "error": "No file uploaded"
+        }));
+    }
+
+    // ZIP bomb protection
+    if file_data.len() > crate::disk_quota::MAX_SKILL_ZIP_BYTES {
+        return HttpResponse::BadRequest().json(serde_json::json!({
+            "error": format!(
+                "Upload rejected: file size ({} bytes) exceeds the 10MB limit.",
+                file_data.len()
+            )
+        }));
+    }
+
+    // Parse the module ZIP
+    let parsed = match crate::modules::zip_parser::parse_module_zip(&file_data) {
+        Ok(p) => p,
+        Err(e) => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "error": format!("Failed to parse module ZIP: {}", e)
+            }));
+        }
+    };
+
+    let module_name = parsed.module_name.clone();
+
+    // Check if already installed
+    if data.db.is_module_installed(&module_name).unwrap_or(false) {
+        return HttpResponse::Conflict().json(serde_json::json!({
+            "error": format!("Module '{}' is already installed. Uninstall it first.", module_name)
+        }));
+    }
+
+    // Extract to runtime modules directory
+    let modules_dir = crate::config::runtime_modules_dir();
+    let module_dir = match crate::modules::zip_parser::extract_module_to_dir(&parsed, &modules_dir) {
+        Ok(dir) => dir,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to extract module: {}", e)
+            }));
+        }
+    };
+
+    let manifest = &parsed.manifest;
+    let has_tools = !manifest.tools.is_empty();
+    let has_dashboard = manifest.service.has_dashboard;
+    let author = manifest.module.author.as_deref();
+    let manifest_path = module_dir.join("module.toml");
+
+    // Register in database
+    match data.db.install_module_full(
+        &module_name,
+        &manifest.module.description,
+        &manifest.module.version,
+        has_tools,
+        has_dashboard,
+        "zip_import",
+        Some(&manifest_path.to_string_lossy()),
+        None,
+        author,
+        None,
+    ) {
+        Ok(_) => {
+            // Hot-activate: register tools immediately
+            activate_module(&data, &module_name).await;
+
+            // Install bundled skill if present
+            if let Some(ref skill_cfg) = manifest.skill {
+                let skill_path = module_dir.join(&skill_cfg.content_file);
+                if let Ok(skill_content) = std::fs::read_to_string(&skill_path) {
+                    let _ = data.skill_registry.create_skill_from_markdown(&skill_content);
+                }
+            }
+
+            HttpResponse::Ok().json(serde_json::json!({
+                "status": "imported",
+                "module": module_name,
+                "version": manifest.module.version,
+                "description": manifest.module.description,
+                "has_tools": has_tools,
+                "has_dashboard": has_dashboard,
+                "location": module_dir.display().to_string(),
+                "message": format!("Module '{}' imported and activated.", module_name)
+            }))
+        }
+        Err(e) => {
+            // Clean up extracted files on DB failure
+            let _ = std::fs::remove_dir_all(&module_dir);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to register module: {}", e)
+            }))
+        }
+    }
+}
+
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/api/modules")
             .route("", web::get().to(list_modules))
+            .route("/upload", web::post().to(upload_module))
             .route("/reload", web::post().to(reload_modules))
             .route("/{name}/dashboard", web::get().to(module_dashboard))
             .route("/{name}/status", web::get().to(module_status))

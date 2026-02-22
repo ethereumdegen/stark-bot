@@ -321,6 +321,8 @@ pub struct BackupResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note_count: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub module_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -371,6 +373,8 @@ pub struct PreviewKeysResponse {
     pub memory_count: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub module_count: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backup_version: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -711,6 +715,7 @@ async fn backup_to_cloud(state: web::Data<AppState>, req: HttpRequest) -> impl R
                 special_role_assignment_count: None,
                 memory_count: None,
                 note_count: None,
+                module_count: None,
                 message: None,
                 error: Some("No wallet configured".to_string()),
             });
@@ -741,6 +746,7 @@ async fn backup_to_cloud(state: web::Data<AppState>, req: HttpRequest) -> impl R
                 special_role_assignment_count: None,
                 memory_count: None,
                 note_count: None,
+                module_count: None,
                 message: None,
                 error: Some(format!("Failed to get encryption key: {}", e)),
             });
@@ -771,6 +777,7 @@ async fn backup_to_cloud(state: web::Data<AppState>, req: HttpRequest) -> impl R
             special_role_assignment_count: None,
             memory_count: None,
             note_count: None,
+            module_count: None,
             message: None,
             error: Some("No data to backup".to_string()),
         });
@@ -788,6 +795,7 @@ async fn backup_to_cloud(state: web::Data<AppState>, req: HttpRequest) -> impl R
     let agent_settings_count = backup.agent_settings.len();
     let memory_count = backup.memories.as_ref().map(|m| m.len()).unwrap_or(0);
     let note_count = backup.notes.len();
+    let module_count = backup.modules.len();
     let has_settings = backup.bot_settings.is_some();
     let has_heartbeat = backup.heartbeat_config.is_some();
     let item_count = backup.item_count();
@@ -816,6 +824,7 @@ async fn backup_to_cloud(state: web::Data<AppState>, req: HttpRequest) -> impl R
                 special_role_assignment_count: None,
                 memory_count: None,
                 note_count: None,
+                module_count: None,
                 message: None,
                 error: Some("Failed to serialize backup".to_string()),
             });
@@ -846,6 +855,7 @@ async fn backup_to_cloud(state: web::Data<AppState>, req: HttpRequest) -> impl R
                 special_role_assignment_count: None,
                 memory_count: None,
                 note_count: None,
+                module_count: None,
                 message: None,
                 error: Some("Failed to encrypt backup".to_string()),
             });
@@ -884,8 +894,9 @@ async fn backup_to_cloud(state: web::Data<AppState>, req: HttpRequest) -> impl R
                 special_role_assignment_count: None,
                 memory_count: Some(memory_count),
                 note_count: Some(note_count),
+                module_count: Some(module_count),
                 message: Some(format!(
-                    "Backed up {} items ({} keys, {} nodes, {} connections, {} cron jobs, {} channels, {} channel settings, {} discord registrations, {} skills, {} AI models, {} memories, {} notes{}{}{}{})",
+                    "Backed up {} items ({} keys, {} nodes, {} connections, {} cron jobs, {} channels, {} channel settings, {} discord registrations, {} skills, {} AI models, {} memories, {} notes, {} modules{}{}{}{})",
                     item_count,
                     key_count,
                     node_count,
@@ -898,6 +909,7 @@ async fn backup_to_cloud(state: web::Data<AppState>, req: HttpRequest) -> impl R
                     agent_settings_count,
                     memory_count,
                     note_count,
+                    module_count,
                     if has_settings { ", settings" } else { "" },
                     if has_heartbeat { ", heartbeat" } else { "" },
                     if has_soul { ", soul" } else { "" },
@@ -927,6 +939,7 @@ async fn backup_to_cloud(state: web::Data<AppState>, req: HttpRequest) -> impl R
                 special_role_assignment_count: None,
                 memory_count: None,
                 note_count: None,
+                module_count: None,
                 message: None,
                 error: resp.error.or(Some("Failed to upload to keystore".to_string())),
             })
@@ -952,6 +965,7 @@ async fn backup_to_cloud(state: web::Data<AppState>, req: HttpRequest) -> impl R
                 special_role_assignment_count: None,
                 memory_count: None,
                 note_count: None,
+                module_count: None,
                 message: None,
                 error: Some(format!("Keystore error: {}", e)),
             })
@@ -988,6 +1002,7 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
                 special_role_assignment_count: None,
                 memory_count: None,
                 note_count: None,
+                module_count: None,
                 message: None,
                 error: Some("No wallet configured".to_string()),
             });
@@ -1017,6 +1032,7 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
                 special_role_assignment_count: None,
                 memory_count: None,
                 note_count: None,
+                module_count: None,
                 message: None,
                 error: Some(format!("Failed to get encryption key: {}", e)),
             });
@@ -1050,6 +1066,7 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
                 special_role_assignment_count: None,
                 memory_count: None,
                 note_count: None,
+                module_count: None,
                 message: None,
                 error: Some(format!("Keystore error: {}", e)),
             });
@@ -1078,6 +1095,7 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
                 special_role_assignment_count: None,
                 memory_count: None,
                 note_count: None,
+                module_count: None,
                 message: None,
                 error: Some(error),
             });
@@ -1101,6 +1119,7 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
             special_role_assignment_count: None,
             memory_count: None,
             note_count: None,
+            module_count: None,
             message: None,
             error: Some(error),
         });
@@ -1128,6 +1147,7 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
                 special_role_assignment_count: None,
                 memory_count: None,
                 note_count: None,
+                module_count: None,
                 message: None,
                 error: Some("No encrypted data in response".to_string()),
             });
@@ -1158,6 +1178,7 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
                 special_role_assignment_count: None,
                 memory_count: None,
                 note_count: None,
+                module_count: None,
                 message: None,
                 error: Some("Failed to decrypt backup (wrong wallet?)".to_string()),
             });
@@ -1192,6 +1213,7 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
                         special_role_assignment_count: None,
                         memory_count: None,
                         note_count: None,
+                        module_count: None,
                         message: None,
                         error: Some("Invalid backup data format".to_string()),
                     });
@@ -1667,91 +1689,169 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
         }
     }
 
-    // Restore skills (version-aware: won't downgrade bundled skills that have newer versions on disk)
-    let mut restored_skills = 0;
-    for skill_entry in &backup_data.skills {
-        let now = chrono::Utc::now().to_rfc3339();
-        let arguments: std::collections::HashMap<String, crate::skills::types::SkillArgument> =
-            serde_json::from_str(&skill_entry.arguments).unwrap_or_default();
+    // Restore modules — write folder files to disk (only if backup version is newer),
+    // re-seed bundled, auto-install
+    let mut restored_modules = 0;
+    if !backup_data.modules.is_empty() {
+        let runtime_modules_dir = crate::config::runtime_modules_dir();
+        std::fs::create_dir_all(&runtime_modules_dir).ok();
 
-        let requires_api_keys: std::collections::HashMap<String, crate::skills::types::SkillApiKey> =
-            serde_json::from_str(&skill_entry.requires_api_keys).unwrap_or_default();
-
-        let db_skill = crate::skills::DbSkill {
-            id: None,
-            name: skill_entry.name.clone(),
-            description: skill_entry.description.clone(),
-            body: skill_entry.body.clone(),
-            version: skill_entry.version.clone(),
-            author: skill_entry.author.clone(),
-            homepage: skill_entry.homepage.clone(),
-            metadata: skill_entry.metadata.clone(),
-            enabled: skill_entry.enabled,
-            requires_tools: skill_entry.requires_tools.clone(),
-            requires_binaries: skill_entry.requires_binaries.clone(),
-            arguments,
-            tags: skill_entry.tags.clone(),
-            subagent_type: skill_entry.subagent_type.clone(),
-            requires_api_keys,
-            created_at: now.clone(),
-            updated_at: now.clone(),
-        };
-
-        match state.db.create_skill(&db_skill) {
-            Ok(skill_id) => {
-                // Restore scripts for this skill
-                for script in &skill_entry.scripts {
-                    let db_script = crate::skills::DbSkillScript {
-                        id: None,
-                        skill_id,
-                        name: script.name.clone(),
-                        code: script.code.clone(),
-                        language: script.language.clone(),
-                        created_at: now.clone(),
-                    };
-                    if let Err(e) = state.db.create_skill_script(&db_script) {
-                        log::warn!("Failed to restore script '{}' for skill '{}': {}", script.name, skill_entry.name, e);
-                    }
-                }
-                // Restore ABIs for this skill
-                for abi in &skill_entry.abis {
-                    let db_abi = crate::skills::DbSkillAbi {
-                        id: None,
-                        skill_id,
-                        name: abi.name.clone(),
-                        content: abi.content.clone(),
-                        created_at: now.clone(),
-                    };
-                    if let Err(e) = state.db.create_skill_abi(&db_abi) {
-                        log::warn!("Failed to restore ABI '{}' for skill '{}': {}", abi.name, skill_entry.name, e);
-                    }
-                }
-                // Restore preset for this skill
-                if let Some(ref presets_content) = skill_entry.presets_content {
-                    let db_preset = crate::skills::DbSkillPreset {
-                        id: None,
-                        skill_id,
-                        content: presets_content.clone(),
-                        created_at: now.clone(),
-                    };
-                    if let Err(e) = state.db.create_skill_preset(&db_preset) {
-                        log::warn!("Failed to restore presets for skill '{}': {}", skill_entry.name, e);
-                    }
-                }
-                restored_skills += 1;
+        for module_entry in &backup_data.modules {
+            if module_entry.folder_files.is_empty() {
+                continue;
             }
-            Err(e) => {
-                log::warn!("Failed to restore skill '{}': {}", skill_entry.name, e);
+            let module_dir = runtime_modules_dir.join(&module_entry.name);
+
+            // Semver check: only overwrite if backup version is newer (or module missing)
+            if module_dir.exists() {
+                let local_version = crate::config::extract_version_from_module_toml_pub(&module_dir);
+                if let Some(ref local_v) = local_version {
+                    if !module_entry.version.is_empty() && !crate::config::semver_is_newer(&module_entry.version, local_v) {
+                        log::info!(
+                            "Skipping module '{}' restore: local v{} >= backup v{}",
+                            module_entry.name, local_v, module_entry.version
+                        );
+                        continue;
+                    }
+                    log::info!(
+                        "Upgrading module '{}' from v{} to v{} (backup is newer)",
+                        module_entry.name, local_v, module_entry.version
+                    );
+                }
+            } else {
+                log::info!("Restoring module '{}' v{} from backup", module_entry.name, module_entry.version);
+            }
+
+            for file_entry in &module_entry.folder_files {
+                // Path traversal protection
+                if file_entry.relative_path.contains("..") || file_entry.relative_path.contains('\0')
+                    || file_entry.relative_path.starts_with('/') || file_entry.relative_path.starts_with('\\') {
+                    log::warn!("Skipping module file with unsafe path: {}", file_entry.relative_path);
+                    continue;
+                }
+                let file_path = module_dir.join(&file_entry.relative_path);
+                if let Some(parent) = file_path.parent() {
+                    std::fs::create_dir_all(parent).ok();
+                }
+                if let Err(e) = std::fs::write(&file_path, &file_entry.content) {
+                    log::warn!("Failed to write module file {}/{}: {}", module_entry.name, file_entry.relative_path, e);
+                }
+            }
+            restored_modules += 1;
+        }
+
+        // Re-apply bundled modules (newer bundled versions take precedence over restored)
+        if let Err(e) = crate::config::seed_modules() {
+            log::warn!("Failed to re-seed bundled modules after restore: {}", e);
+        }
+
+        // Auto-install restored modules (reload registry to pick up newly written modules)
+        let module_registry = crate::modules::ModuleRegistry::new();
+        for module_entry in &backup_data.modules {
+            if let Some(module) = module_registry.get(&module_entry.name) {
+                if !state.db.is_module_installed(&module_entry.name).unwrap_or(true) {
+                    let _ = state.db.install_module(
+                        &module_entry.name,
+                        module.description(),
+                        module.version(),
+                        module.has_tools(),
+                        module.has_dashboard(),
+                    );
+                    log::info!("Auto-installed restored module '{}'", module_entry.name);
+                }
+                // Restore enabled/disabled state
+                let _ = state.db.set_module_enabled(&module_entry.name, module_entry.enabled);
+            }
+        }
+
+        if restored_modules > 0 {
+            log::info!("Restored {} modules from backup", restored_modules);
+        }
+    }
+
+    // Restore skills — write to disk first, then sync to DB
+    let mut restored_skills = 0;
+    let runtime_skills_dir = std::path::PathBuf::from(crate::config::runtime_skills_dir());
+    std::fs::create_dir_all(&runtime_skills_dir).ok();
+
+    for skill_entry in &backup_data.skills {
+        // Write to disk: prefer folder_files (new format), fall back to legacy reconstruction
+        let skill_dir = runtime_skills_dir.join(&skill_entry.name);
+
+        if !skill_entry.folder_files.is_empty() {
+            // New folder-based format: write all files directly
+            for file_entry in &skill_entry.folder_files {
+                // Path traversal protection
+                if file_entry.relative_path.contains("..") || file_entry.relative_path.contains('\0')
+                    || file_entry.relative_path.starts_with('/') || file_entry.relative_path.starts_with('\\') {
+                    log::warn!("Skipping skill file with unsafe path: {}", file_entry.relative_path);
+                    continue;
+                }
+                let file_path = skill_dir.join(&file_entry.relative_path);
+                if let Some(parent) = file_path.parent() {
+                    std::fs::create_dir_all(parent).ok();
+                }
+                if let Err(e) = std::fs::write(&file_path, &file_entry.content) {
+                    log::warn!("Failed to write skill file {}/{}: {}", skill_entry.name, file_entry.relative_path, e);
+                }
+            }
+            restored_skills += 1;
+        } else {
+            // Legacy format: reconstruct folder from individual fields
+            let arguments: std::collections::HashMap<String, crate::skills::types::SkillArgument> =
+                serde_json::from_str(&skill_entry.arguments).unwrap_or_default();
+            let requires_api_keys: std::collections::HashMap<String, crate::skills::types::SkillApiKey> =
+                serde_json::from_str(&skill_entry.requires_api_keys).unwrap_or_default();
+
+            let parsed = crate::skills::ParsedSkill {
+                name: skill_entry.name.clone(),
+                description: skill_entry.description.clone(),
+                body: skill_entry.body.clone(),
+                version: skill_entry.version.clone(),
+                author: skill_entry.author.clone(),
+                homepage: skill_entry.homepage.clone(),
+                metadata: skill_entry.metadata.clone(),
+                requires_tools: skill_entry.requires_tools.clone(),
+                requires_binaries: skill_entry.requires_binaries.clone(),
+                arguments,
+                tags: skill_entry.tags.clone(),
+                subagent_type: skill_entry.subagent_type.clone(),
+                requires_api_keys,
+                scripts: skill_entry.scripts.iter().map(|s| crate::skills::ParsedScript {
+                    name: s.name.clone(),
+                    code: s.code.clone(),
+                    language: s.language.clone(),
+                }).collect(),
+                abis: skill_entry.abis.iter().map(|a| crate::skills::ParsedAbi {
+                    name: a.name.clone(),
+                    content: a.content.clone(),
+                }).collect(),
+                presets_content: skill_entry.presets_content.clone(),
+            };
+
+            match crate::skills::write_skill_folder(&runtime_skills_dir, &parsed) {
+                Ok(()) => restored_skills += 1,
+                Err(e) => log::warn!("Failed to restore skill folder '{}': {}", skill_entry.name, e),
             }
         }
     }
 
-    // Re-apply bundled skills from disk to ensure newer versions aren't downgraded by cloud restore
+    // Re-apply bundled skills (newer bundled versions take precedence over restored)
+    if let Err(e) = crate::config::seed_skills() {
+        log::warn!("Failed to re-seed bundled skills after restore: {}", e);
+    }
+
+    // Sync all disk skills to DB
     if restored_skills > 0 {
         match state.skill_registry.reload().await {
-            Ok(count) => log::info!("Re-applied {} file-based skills after cloud restore (ABIs/presets reloaded)", count),
-            Err(e) => log::warn!("Failed to re-apply file-based skills after restore: {}", e),
+            Ok(count) => log::info!("Synced {} skills from disk after cloud restore (ABIs/presets reloaded)", count),
+            Err(e) => log::warn!("Failed to sync skills after restore: {}", e),
         }
+    }
+
+    // Restore enabled/disabled state from backup
+    for skill_entry in &backup_data.skills {
+        state.skill_registry.set_enabled(&skill_entry.name, skill_entry.enabled);
     }
 
     // Restore agent settings (AI model configurations)
@@ -1970,8 +2070,9 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
         special_role_assignment_count: Some(restored_special_role_assignments),
         memory_count: Some(restored_memories),
         note_count: Some(restored_notes),
+        module_count: Some(restored_modules),
         message: Some(format!(
-            "Restored {} keys, {} nodes, {} connections, {} cron jobs, {} channels, {} channel settings, {} discord registrations, {} skills, {} AI models, {} special roles, {} role assignments, {} memories, {} notes{}{}{}{}",
+            "Restored {} keys, {} nodes, {} connections, {} cron jobs, {} channels, {} channel settings, {} discord registrations, {} skills, {} AI models, {} special roles, {} role assignments, {} memories, {} notes, {} modules{}{}{}{}",
             restored_keys,
             restored_nodes,
             restored_connections,
@@ -1985,6 +2086,7 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
             restored_special_role_assignments,
             restored_memories,
             restored_notes,
+            restored_modules,
             if has_settings { ", settings" } else { "" },
             if has_heartbeat { ", heartbeat" } else { "" },
             if has_soul { ", soul" } else { "" },
@@ -2033,6 +2135,7 @@ async fn preview_cloud_keys(state: web::Data<AppState>, req: HttpRequest) -> imp
                 special_role_assignment_count: None,
                 memory_count: None,
                 note_count: None,
+                module_count: None,
                 backup_version: None,
                 message: None,
                 error: Some("No wallet configured".to_string()),
@@ -2064,6 +2167,7 @@ async fn preview_cloud_keys(state: web::Data<AppState>, req: HttpRequest) -> imp
                 special_role_assignment_count: None,
                 memory_count: None,
                 note_count: None,
+                module_count: None,
                 backup_version: None,
                 message: None,
                 error: Some(format!("Failed to get encryption key: {}", e)),
@@ -2099,6 +2203,7 @@ async fn preview_cloud_keys(state: web::Data<AppState>, req: HttpRequest) -> imp
                 special_role_assignment_count: None,
                 memory_count: None,
                 note_count: None,
+                module_count: None,
                 backup_version: None,
                 message: None,
                 error: Some(format!("Keystore error: {}", e)),
@@ -2129,6 +2234,7 @@ async fn preview_cloud_keys(state: web::Data<AppState>, req: HttpRequest) -> imp
                 special_role_assignment_count: None,
                 memory_count: None,
                 note_count: None,
+                module_count: None,
                 backup_version: None,
                 message: None,
                 error: Some(error),
@@ -2154,6 +2260,7 @@ async fn preview_cloud_keys(state: web::Data<AppState>, req: HttpRequest) -> imp
             special_role_assignment_count: None,
             memory_count: None,
             note_count: None,
+            module_count: None,
             backup_version: None,
             message: None,
             error: Some(error),
@@ -2183,6 +2290,7 @@ async fn preview_cloud_keys(state: web::Data<AppState>, req: HttpRequest) -> imp
                 special_role_assignment_count: None,
                 memory_count: None,
                 note_count: None,
+                module_count: None,
                 backup_version: None,
                 message: None,
                 error: Some("No encrypted data in response".to_string()),
@@ -2215,6 +2323,7 @@ async fn preview_cloud_keys(state: web::Data<AppState>, req: HttpRequest) -> imp
                 special_role_assignment_count: None,
                 memory_count: None,
                 note_count: None,
+                module_count: None,
                 backup_version: None,
                 message: None,
                 error: Some("Failed to decrypt backup (wrong wallet?)".to_string()),
@@ -2264,6 +2373,7 @@ async fn preview_cloud_keys(state: web::Data<AppState>, req: HttpRequest) -> imp
             special_role_assignment_count: Some(backup_data.special_role_assignments.len()),
             memory_count: Some(backup_data.memories.as_ref().map(|m| m.len()).unwrap_or(0)),
             note_count: Some(backup_data.notes.len()),
+            module_count: Some(backup_data.modules.len()),
             backup_version: Some(backup_data.version),
             message: Some("Cloud backup retrieved successfully".to_string()),
             error: None,
@@ -2295,6 +2405,7 @@ async fn preview_cloud_keys(state: web::Data<AppState>, req: HttpRequest) -> imp
                 special_role_assignment_count: None,
                 memory_count: None,
                 note_count: None,
+                module_count: None,
                 backup_version: None,
                 message: None,
                 error: Some("Invalid backup data format".to_string()),
@@ -2331,6 +2442,7 @@ async fn preview_cloud_keys(state: web::Data<AppState>, req: HttpRequest) -> imp
         special_role_assignment_count: None,
         memory_count: None,
         note_count: None,
+        module_count: None,
         backup_version: None,
         message: Some("Cloud keys retrieved successfully (legacy format)".to_string()),
         error: None,

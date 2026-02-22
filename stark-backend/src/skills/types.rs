@@ -2,15 +2,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Source of a skill
+/// Source of a skill (simplified — all skills are disk-primary now)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SkillSource {
-    /// Bundled with the application
+    /// Bundled with the application (legacy compat)
     Bundled,
-    /// Managed (installed from a registry)
+    /// Managed / installed (disk-primary)
     Managed,
-    /// Workspace-specific skill
+    /// Workspace-specific skill (legacy compat)
     Workspace,
 }
 
@@ -26,7 +26,7 @@ impl SkillSource {
     pub fn from_str(s: &str) -> Option<SkillSource> {
         match s.to_lowercase().as_str() {
             "bundled" => Some(SkillSource::Bundled),
-            "managed" => Some(SkillSource::Managed),
+            "managed" | "disk" => Some(SkillSource::Managed),
             "workspace" => Some(SkillSource::Workspace),
             _ => None,
         }
@@ -35,9 +35,9 @@ impl SkillSource {
     /// Priority for skill loading (higher = takes precedence)
     pub fn priority(&self) -> u8 {
         match self {
-            SkillSource::Workspace => 3, // Highest priority
+            SkillSource::Workspace => 3,
             SkillSource::Managed => 2,
-            SkillSource::Bundled => 1, // Lowest priority
+            SkillSource::Bundled => 1,
         }
     }
 }
@@ -96,7 +96,7 @@ pub struct SkillMetadata {
     /// ABI files bundled with this skill (e.g. ["0x_settler"])
     #[serde(default)]
     pub abis: Option<Vec<String>>,
-    /// Skill-local presets RON file (e.g. "presets.ron")
+    /// Skill-local web3 presets RON file (e.g. "web3_presets.ron")
     #[serde(default)]
     pub presets_file: Option<String>,
 }

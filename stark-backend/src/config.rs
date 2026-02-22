@@ -11,6 +11,7 @@ pub mod env_vars {
     pub const DATABASE_URL: &str = "DATABASE_URL";
     pub const WORKSPACE_DIR: &str = "STARK_WORKSPACE_DIR";
     pub const SKILLS_DIR: &str = "STARK_SKILLS_DIR";
+    pub const RUNTIME_SKILLS_DIR: &str = "STARK_RUNTIME_SKILLS_DIR";
     pub const NOTES_DIR: &str = "STARK_NOTES_DIR";
     pub const NOTES_REINDEX_INTERVAL_SECS: &str = "STARK_NOTES_REINDEX_INTERVAL_SECS";
     pub const SOUL_DIR: &str = "STARK_SOUL_DIR";
@@ -70,9 +71,32 @@ pub fn workspace_dir() -> String {
     resolve_backend_dir(env_vars::WORKSPACE_DIR, defaults::WORKSPACE_DIR)
 }
 
-/// Get the skills directory from environment or default
-pub fn skills_dir() -> String {
+/// Get the bundled skills directory (repo_root/skills/ — read-only source)
+pub fn bundled_skills_dir() -> String {
     resolve_dir(env_vars::SKILLS_DIR, defaults::SKILLS_DIR)
+}
+
+/// Get the runtime skills directory (stark-backend/skills/ — mutable working copy)
+pub fn runtime_skills_dir() -> String {
+    resolve_backend_dir(env_vars::RUNTIME_SKILLS_DIR, defaults::SKILLS_DIR)
+}
+
+/// Deprecated alias — use bundled_skills_dir() or runtime_skills_dir()
+pub fn skills_dir() -> String {
+    bundled_skills_dir()
+}
+
+/// Get the bundled modules directory (repo_root/modules/ — read-only source)
+pub fn bundled_modules_dir() -> PathBuf {
+    repo_root().join("modules")
+}
+
+/// Get the runtime modules directory (stark-backend/modules/ — mutable working copy)
+pub fn runtime_modules_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("STARKBOT_MODULES_DIR") {
+        return PathBuf::from(dir);
+    }
+    backend_dir().join("modules")
 }
 
 /// Get the notes directory from environment or default
@@ -276,6 +300,354 @@ fn find_original_soul() -> Option<PathBuf> {
 fn find_original_guidelines() -> Option<PathBuf> {
     let path = soul_template_dir().join("GUIDELINES.md");
     if path.exists() { Some(path) } else { None }
+}
+
+/// Extract semver (major, minor, patch) from a version string like "1.2.3" or "1.2.3-beta"
+fn parse_semver(version: &str) -> Option<(u64, u64, u64)> {
+    // Strip pre-release suffix (e.g. "1.2.3-beta.1" → "1.2.3")
+    let version = version.split('-').next().unwrap_or(version);
+    let parts: Vec<&str> = version.split('.').collect();
+    if parts.len() >= 3 {
+        let major = parts[0].parse().ok()?;
+        let minor = parts[1].parse().ok()?;
+        let patch = parts[2].parse().ok()?;
+        Some((major, minor, patch))
+    } else if parts.len() == 2 {
+        let major = parts[0].parse().ok()?;
+        let minor = parts[1].parse().ok()?;
+        Some((major, minor, 0))
+    } else if parts.len() == 1 {
+        let major = parts[0].parse().ok()?;
+        Some((major, 0, 0))
+    } else {
+        None
+    }
+}
+
+/// Compare two semver strings. Returns true if `a` is newer than `b`.
+pub fn semver_is_newer(a: &str, b: &str) -> bool {
+    match (parse_semver(a), parse_semver(b)) {
+        (Some(va), Some(vb)) => va > vb,
+        _ => false,
+    }
+}
+
+/// Extract the version from a skill directory's frontmatter.
+/// Checks {dirname}.md first (matching loader priority), then SKILL.md.
+fn extract_version_from_skill_dir(dir: &Path) -> Option<String> {
+    // Match loader priority: {name}.md first, then SKILL.md
+    let name_md = dir.file_name()
+        .map(|n| dir.join(format!("{}.md", n.to_string_lossy())));
+    let skill_md = dir.join("SKILL.md");
+
+    let md_path = if let Some(ref p) = name_md {
+        if p.exists() { p.clone() } else if skill_md.exists() { skill_md } else { return None; }
+    } else if skill_md.exists() {
+        skill_md
+    } else {
+        return None;
+    };
+
+    let content = std::fs::read_to_string(&md_path).ok()?;
+    // Quick parse: find "version:" in YAML frontmatter
+    if !content.starts_with("---") {
+        return None;
+    }
+    for line in content.lines().skip(1) {
+        if line.trim() == "---" {
+            break;
+        }
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("version:") {
+            let version = rest.trim().trim_matches('"').trim_matches('\'').to_string();
+            if !version.is_empty() {
+                return Some(version);
+            }
+        }
+    }
+    None
+}
+
+/// Recursively copy a directory and all its contents (skips symlinks)
+pub fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        // Skip symlinks to prevent infinite recursion and symlink escape
+        if file_type.is_symlink() {
+            log::warn!("Skipping symlink during copy: {:?}", entry.path());
+            continue;
+        }
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
+/// Seed runtime skills directory from bundled skills.
+/// Copies skill folders from bundled_skills_dir() to runtime_skills_dir()
+/// only if the runtime copy is missing or has an older semver version.
+pub fn seed_skills() -> std::io::Result<()> {
+    let bundled = PathBuf::from(bundled_skills_dir());
+    let runtime = PathBuf::from(runtime_skills_dir());
+
+    if !bundled.exists() {
+        log::info!("Bundled skills directory {:?} does not exist, skipping seed", bundled);
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(&runtime)?;
+
+    let entries = std::fs::read_dir(&bundled)?;
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                log::warn!("Failed to read bundled skill entry: {}", e);
+                continue;
+            }
+        };
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy().to_string();
+
+        // Skip non-directories, inactive, managed, and _-prefixed directories
+        let file_type = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(e) => {
+                log::warn!("Failed to get file type for '{}': {}", name_str, e);
+                continue;
+            }
+        };
+        if !file_type.is_dir() || file_type.is_symlink() {
+            continue;
+        }
+        if name_str == "inactive" || name_str == "managed" || name_str.starts_with('_') {
+            continue;
+        }
+
+        let runtime_skill = runtime.join(&name);
+
+        let should_copy = if runtime_skill.exists() {
+            // Check if bundled version is newer
+            let bundled_version = extract_version_from_skill_dir(&entry.path());
+            let runtime_version = extract_version_from_skill_dir(&runtime_skill);
+
+            match (bundled_version, runtime_version) {
+                (Some(bv), Some(rv)) => {
+                    if semver_is_newer(&bv, &rv) {
+                        log::info!(
+                            "Upgrading skill '{}' from v{} to v{} (bundled is newer)",
+                            name_str, rv, bv
+                        );
+                        true
+                    } else {
+                        false
+                    }
+                }
+                (Some(bv), None) => {
+                    // Bundled has version, runtime doesn't — treat as upgrade
+                    log::info!(
+                        "Upgrading skill '{}' (bundled has v{}, runtime has no version)",
+                        name_str, bv
+                    );
+                    true
+                }
+                _ => false,
+            }
+        } else {
+            log::info!("Seeding skill '{}' from bundled", name_str);
+            true
+        };
+
+        if should_copy {
+            // Atomic upgrade: copy to temp dir, then rename
+            if runtime_skill.exists() {
+                let tmp_name = format!(".{}.seed_tmp", name_str);
+                let tmp_dir = runtime.join(&tmp_name);
+                // Clean up any leftover temp dir from a previous failed attempt
+                if tmp_dir.exists() {
+                    let _ = std::fs::remove_dir_all(&tmp_dir);
+                }
+                match copy_dir_recursive(&entry.path(), &tmp_dir) {
+                    Ok(()) => {
+                        if let Err(e) = std::fs::remove_dir_all(&runtime_skill) {
+                            log::error!("Failed to remove old skill '{}': {}", name_str, e);
+                            let _ = std::fs::remove_dir_all(&tmp_dir);
+                            continue;
+                        }
+                        if let Err(e) = std::fs::rename(&tmp_dir, &runtime_skill) {
+                            log::error!("Failed to rename temp dir for skill '{}': {}", name_str, e);
+                            continue;
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to copy bundled skill '{}': {}", name_str, e);
+                        let _ = std::fs::remove_dir_all(&tmp_dir);
+                        continue;
+                    }
+                }
+            } else {
+                // Fresh copy — no existing runtime dir to protect
+                if let Err(e) = copy_dir_recursive(&entry.path(), &runtime_skill) {
+                    log::error!("Failed to seed skill '{}': {}", name_str, e);
+                    let _ = std::fs::remove_dir_all(&runtime_skill);
+                    continue;
+                }
+            }
+        }
+    }
+
+    log::info!("Skill seeding complete (runtime dir: {:?})", runtime);
+    Ok(())
+}
+
+/// Extract the version from a module directory's `module.toml` (public for backup).
+pub fn extract_version_from_module_toml_pub(dir: &Path) -> Option<String> {
+    extract_version_from_module_toml(dir)
+}
+
+/// Extract the version from a module directory's `module.toml`.
+fn extract_version_from_module_toml(dir: &Path) -> Option<String> {
+    let toml_path = dir.join("module.toml");
+    let content = std::fs::read_to_string(&toml_path).ok()?;
+    // Quick parse: find 'version = "x.y.z"' in [module] section
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("version") {
+            let rest = rest.trim();
+            if let Some(rest) = rest.strip_prefix('=') {
+                let version = rest.trim().trim_matches('"').trim_matches('\'').to_string();
+                if !version.is_empty() {
+                    return Some(version);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Seed runtime modules directory from bundled modules.
+/// Copies module folders from bundled_modules_dir() to runtime_modules_dir()
+/// only if the runtime copy is missing or has an older semver version.
+pub fn seed_modules() -> std::io::Result<()> {
+    let bundled = bundled_modules_dir();
+    let runtime = runtime_modules_dir();
+
+    if !bundled.exists() {
+        log::info!("Bundled modules directory {:?} does not exist, skipping seed", bundled);
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(&runtime)?;
+
+    let entries = std::fs::read_dir(&bundled)?;
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                log::warn!("Failed to read bundled module entry: {}", e);
+                continue;
+            }
+        };
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy().to_string();
+
+        // Skip non-directories, symlinks, and _-prefixed directories
+        let file_type = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(e) => {
+                log::warn!("Failed to get file type for '{}': {}", name_str, e);
+                continue;
+            }
+        };
+        if !file_type.is_dir() || file_type.is_symlink() {
+            continue;
+        }
+        if name_str.starts_with('_') {
+            continue;
+        }
+
+        // Must have a module.toml to be a valid module
+        if !entry.path().join("module.toml").exists() {
+            continue;
+        }
+
+        let runtime_module = runtime.join(&name);
+
+        let should_copy = if runtime_module.exists() {
+            let bundled_version = extract_version_from_module_toml(&entry.path());
+            let runtime_version = extract_version_from_module_toml(&runtime_module);
+
+            match (bundled_version, runtime_version) {
+                (Some(bv), Some(rv)) => {
+                    if semver_is_newer(&bv, &rv) {
+                        log::info!(
+                            "Upgrading module '{}' from v{} to v{} (bundled is newer)",
+                            name_str, rv, bv
+                        );
+                        true
+                    } else {
+                        false
+                    }
+                }
+                (Some(bv), None) => {
+                    log::info!(
+                        "Upgrading module '{}' (bundled has v{}, runtime has no version)",
+                        name_str, bv
+                    );
+                    true
+                }
+                _ => false,
+            }
+        } else {
+            log::info!("Seeding module '{}' from bundled", name_str);
+            true
+        };
+
+        if should_copy {
+            if runtime_module.exists() {
+                // Atomic upgrade: copy to temp dir, then rename
+                let tmp_name = format!(".{}.seed_tmp", name_str);
+                let tmp_dir = runtime.join(&tmp_name);
+                if tmp_dir.exists() {
+                    let _ = std::fs::remove_dir_all(&tmp_dir);
+                }
+                match copy_dir_recursive(&entry.path(), &tmp_dir) {
+                    Ok(()) => {
+                        if let Err(e) = std::fs::remove_dir_all(&runtime_module) {
+                            log::error!("Failed to remove old module '{}': {}", name_str, e);
+                            let _ = std::fs::remove_dir_all(&tmp_dir);
+                            continue;
+                        }
+                        if let Err(e) = std::fs::rename(&tmp_dir, &runtime_module) {
+                            log::error!("Failed to rename temp dir for module '{}': {}", name_str, e);
+                            continue;
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to copy bundled module '{}': {}", name_str, e);
+                        let _ = std::fs::remove_dir_all(&tmp_dir);
+                        continue;
+                    }
+                }
+            } else {
+                if let Err(e) = copy_dir_recursive(&entry.path(), &runtime_module) {
+                    log::error!("Failed to seed module '{}': {}", name_str, e);
+                    let _ = std::fs::remove_dir_all(&runtime_module);
+                    continue;
+                }
+            }
+        }
+    }
+
+    log::info!("Module seeding complete (runtime dir: {:?})", runtime);
+    Ok(())
 }
 
 /// Initialize the workspace, notes, and soul directories

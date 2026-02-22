@@ -248,6 +248,12 @@ pub fn serde_yaml_parse(yaml: &str) -> Result<SkillMetadata, String> {
                             metadata.abis = Some(parse_inline_list(value));
                         }
                     }
+                    "subagent_type" | "sets_agent_subtype" => {
+                        let v = unquote(value);
+                        if !v.is_empty() {
+                            metadata.subagent_type = Some(v);
+                        }
+                    }
                     "presets_file" => {
                         let v = unquote(value);
                         if !v.is_empty() {
@@ -339,7 +345,7 @@ pub fn serde_yaml_parse(yaml: &str) -> Result<SkillMetadata, String> {
 fn unquote(s: &str) -> String {
     let s = s.trim();
     if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
-        s[1..s.len() - 1].to_string()
+        s[1..s.len() - 1].replace("\\\"", "\"").replace("\\'", "'")
     } else {
         s.to_string()
     }

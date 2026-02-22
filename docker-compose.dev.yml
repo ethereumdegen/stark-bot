@@ -21,6 +21,8 @@ services:
       - ./skills:/app/skills
       # Mount soul_template (default SOUL.md and GUIDELINES.md)
       - ./soul_template:/app/soul_template
+      # Mount bundled modules directory
+      - ./modules:/app/modules
       # Mount workspace directory for agent files
       - ./workspace:/app/stark-backend/workspace
       # Mount journal directory for agent notes

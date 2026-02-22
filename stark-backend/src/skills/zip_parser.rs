@@ -152,11 +152,14 @@ pub fn parse_skill_zip(data: &[u8]) -> Result<ParsedSkill, String> {
                 && normalized.ends_with(".json")
         };
 
-        // Check if this is a presets.ron file
+        // Check if this is a web3_presets.ron file (also accept legacy presets.ron)
         let is_presets = if base_dir.is_empty() {
-            normalized == "presets.ron"
+            normalized == "web3_presets.ron" || normalized == "presets.ron"
         } else {
-            normalized == format!("{}/presets.ron", base_dir) || normalized == "presets.ron"
+            normalized == format!("{}/web3_presets.ron", base_dir)
+                || normalized == "web3_presets.ron"
+                || normalized == format!("{}/presets.ron", base_dir)
+                || normalized == "presets.ron"
         };
 
         if is_script {
@@ -193,7 +196,7 @@ pub fn parse_skill_zip(data: &[u8]) -> Result<ParsedSkill, String> {
         } else if is_presets {
             let mut content = String::new();
             file.read_to_string(&mut content)
-                .map_err(|e| format!("Failed to read presets.ron: {}", e))?;
+                .map_err(|e| format!("Failed to read web3_presets.ron: {}", e))?;
 
             presets_content = Some(content);
         }

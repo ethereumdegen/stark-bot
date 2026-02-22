@@ -7,7 +7,6 @@ mod discord_read;
 mod discord_write;
 mod figma;
 mod github_user;
-pub mod social_monitor;
 mod telegram_read;
 mod twitter_post;
 pub mod twitter_oauth;

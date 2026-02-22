@@ -301,7 +301,7 @@ fn default_rpc_presets() -> HashMap<String, RpcPreset> {
 }
 
 /// Default Web3 presets (fallback if config not found)
-/// All presets now live in skill-local presets.ron files.
+/// All presets now live in skill-local web3_presets.ron files.
 fn default_web3_presets() -> HashMap<String, Web3Preset> {
     HashMap::new()
 }

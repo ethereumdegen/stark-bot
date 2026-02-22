@@ -271,6 +271,24 @@ export async function setSkillEnabled(name: string, enabled: boolean): Promise<v
   });
 }
 
+// Bundled Skills API
+export interface BundledSkillInfo {
+  name: string;
+  description: string;
+  version: string;
+  tags: string[];
+}
+
+export async function getBundledAvailableSkills(): Promise<BundledSkillInfo[]> {
+  return apiFetch('/skills/bundled/available');
+}
+
+export async function restoreBundledSkill(name: string): Promise<void> {
+  await apiFetch(`/skills/bundled/restore/${encodeURIComponent(name)}`, {
+    method: 'POST',
+  });
+}
+
 // Sessions API
 export async function getSessions(): Promise<Array<{
   id: number;
@@ -1480,6 +1498,8 @@ export interface IntrinsicFileInfo {
   description: string;
   writable: boolean;
   deletable?: boolean;
+  is_dir?: boolean;
+  size?: number;
 }
 
 export interface IntrinsicFileContent {
@@ -1505,19 +1525,24 @@ export async function listIntrinsicFiles(): Promise<IntrinsicFileInfo[]> {
   return response.files || [];
 }
 
-export async function readIntrinsicFile(name: string): Promise<IntrinsicFileContent> {
-  return apiFetch(`/intrinsic/${encodeURIComponent(name)}`);
+export async function listIntrinsicDir(path: string): Promise<IntrinsicFileInfo[]> {
+  const response = await apiFetch<ListIntrinsicResponse>(`/intrinsic/${path}`);
+  return response.files || [];
 }
 
-export async function writeIntrinsicFile(name: string, content: string): Promise<WriteIntrinsicResponse> {
-  return apiFetch(`/intrinsic/${encodeURIComponent(name)}`, {
+export async function readIntrinsicFile(path: string): Promise<IntrinsicFileContent> {
+  return apiFetch(`/intrinsic/${path}`);
+}
+
+export async function writeIntrinsicFile(path: string, content: string): Promise<WriteIntrinsicResponse> {
+  return apiFetch(`/intrinsic/${path}`, {
     method: 'PUT',
     body: JSON.stringify({ content }),
   });
 }
 
-export async function deleteIntrinsicFile(name: string): Promise<WriteIntrinsicResponse> {
-  return apiFetch(`/intrinsic/${encodeURIComponent(name)}`, {
+export async function deleteIntrinsicFile(path: string): Promise<WriteIntrinsicResponse> {
+  return apiFetch(`/intrinsic/${path}`, {
     method: 'DELETE',
   });
 }

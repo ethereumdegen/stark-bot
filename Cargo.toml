@@ -1,3 +1,3 @@
 [workspace]
 resolver = "3"
-members = ["stark-backend", "modules/wallet-monitor/types", "modules/wallet-monitor", "modules/discord-tipping/types", "modules/discord-tipping", "modules/social-monitor/types", "modules/social-monitor", "modules/opencode/types", "modules/opencode"]
+members = ["stark-backend"]

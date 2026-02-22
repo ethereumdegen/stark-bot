@@ -1,12 +1,12 @@
 ---
 name: starkhub
-description: "Browse, search, install, and submit skills on StarkHub (hub.starkbot.ai) — the decentralized skills directory for StarkBot agents."
-version: 2.8.0
+description: "Browse, search, install, and submit skills and modules on StarkHub (hub.starkbot.ai) — the decentralized skills & modules directory for StarkBot agents."
+version: 2.9.0
 author: starkbot
 homepage: https://hub.starkbot.ai
 metadata: {"clawdbot":{"emoji":"🌐"}}
-requires_tools: [web_fetch, manage_skills, read_skill, erc8128_fetch, import_identity, define_tasks]
-tags: [general, all, skills, hub, discovery, meta, management]
+requires_tools: [web_fetch, manage_skills, read_skill, erc8128_fetch, import_identity, define_tasks, manage_modules]
+tags: [general, all, skills, modules, hub, discovery, meta, management]
 arguments:
   query:
     description: "Search query, skill slug, or tag name"
@@ -344,6 +344,13 @@ Only the original author can update their skill.
 3. `erc8128_fetch POST /api/submit` with `raw_markdown` in body
 4. Confirm pending status to user
 
+### "Publish my module to StarkHub"
+
+1. `erc8128_fetch GET /api/auth/me` — if no username, read identity via `import_identity` (no params) and `erc8128_fetch PUT /api/authors/me/username`
+2. Export the module manifest via `manage_modules(action="export", name="module_name")`
+3. `erc8128_fetch POST /api/modules/submit` with `manifest_toml` in body
+4. Confirm pending status to user
+
 ### "What categories exist?"
 
 1. Fetch tags: `web_fetch GET /api/tags`
@@ -402,6 +409,60 @@ Use `author_username` + `slug` to construct the scoped URL: `/api/skills/@{autho
 ## Paid Skills (x402)
 
 Skills with `x402_cost` > `"0"` cost STARKBOT tokens to install. The `/download` endpoint returns **402 Payment Required** with x402 payment instructions for paid skills — `erc8128_fetch` handles this automatically.
+
+---
+
+## Module Publishing
+
+Modules are standalone microservices that extend StarkBot with tools, dashboards, and services. You can publish modules to StarkHub just like skills.
+
+### Module Discovery
+
+Module search and install are handled by the `manage_modules` tool:
+
+- **Search:** `manage_modules(action="search_hub", query="price tracker")`
+- **Install:** `manage_modules(action="install_remote", name="@username/module-slug")`
+
+### Submit a Module to StarkHub
+
+**For submit module:**
+
+```json
+{"tool": "define_tasks", "tasks": [
+  "TASK 1 — Ensure username: use erc8128_fetch to GET /api/auth/me. If no username, read identity via import_identity (no params) and PUT /api/authors/me/username via erc8128_fetch. See starkhub skill 'Ensure Username'.",
+  "TASK 2 — Export: get the module manifest via manage_modules(action='export', name='module_name').",
+  "TASK 3 — Submit: POST the module manifest to StarkHub via erc8128_fetch.",
+  "TASK 4 — Confirm: say_to_user summarizing whether the module was or was not successfully submitted."
+]}
+```
+
+#### Step 1: Export the Module Manifest
+
+```json
+{
+  "tool": "manage_modules",
+  "action": "export",
+  "name": "module_name"
+}
+```
+
+Returns the full `module.toml` content needed for submission.
+
+#### Step 2: Submit to StarkHub
+
+```json
+{
+  "tool": "erc8128_fetch",
+  "url": "https://hub.starkbot.ai/api/modules/submit",
+  "method": "POST",
+  "body": "{\"manifest_toml\": \"<full module.toml content>\"}",
+  "chain_id": 8453
+}
+```
+
+Returns `{"success": true, "slug": "module-name", "username": "your-username", "status": "pending"}`.
+
+Same requirements as skill submissions: StarkLicense NFT required, rate-limited to 5 per 24h.
 
 ---
 

@@ -700,83 +700,73 @@ async fn restore_backup_data(
         }
     }
 
-    // Restore skills (version-aware: won't downgrade bundled skills that have newer versions on disk)
-    for skill_entry in &backup_data.skills {
-        let now = chrono::Utc::now().to_rfc3339();
-        let arguments: std::collections::HashMap<String, skills::types::SkillArgument> =
-            serde_json::from_str(&skill_entry.arguments).unwrap_or_default();
-        let requires_api_keys: std::collections::HashMap<String, skills::types::SkillApiKey> =
-            serde_json::from_str(&skill_entry.requires_api_keys).unwrap_or_default();
+    // Restore skills — write to disk first (DB sync happens later on registry init)
+    {
+        let runtime_skills_dir = std::path::PathBuf::from(config::runtime_skills_dir());
+        std::fs::create_dir_all(&runtime_skills_dir).ok();
 
-        let db_skill = skills::DbSkill {
-            id: None,
-            name: skill_entry.name.clone(),
-            description: skill_entry.description.clone(),
-            body: skill_entry.body.clone(),
-            version: skill_entry.version.clone(),
-            author: skill_entry.author.clone(),
-            homepage: skill_entry.homepage.clone(),
-            metadata: skill_entry.metadata.clone(),
-            enabled: skill_entry.enabled,
-            requires_tools: skill_entry.requires_tools.clone(),
-            requires_binaries: skill_entry.requires_binaries.clone(),
-            arguments,
-            tags: skill_entry.tags.clone(),
-            subagent_type: skill_entry.subagent_type.clone(),
-            requires_api_keys,
-            created_at: now.clone(),
-            updated_at: now.clone(),
-        };
+        for skill_entry in &backup_data.skills {
+            let arguments: std::collections::HashMap<String, skills::types::SkillArgument> =
+                serde_json::from_str(&skill_entry.arguments).unwrap_or_default();
+            let requires_api_keys: std::collections::HashMap<String, skills::types::SkillApiKey> =
+                serde_json::from_str(&skill_entry.requires_api_keys).unwrap_or_default();
 
-        match db.create_skill(&db_skill) {
-            Ok(skill_id) => {
-                for script in &skill_entry.scripts {
-                    let db_script = skills::DbSkillScript {
-                        id: None,
-                        skill_id,
-                        name: script.name.clone(),
-                        code: script.code.clone(),
-                        language: script.language.clone(),
-                        created_at: now.clone(),
-                    };
-                    if let Err(e) = db.create_skill_script(&db_script) {
-                        log::warn!("[Keystore] Failed to restore script '{}' for skill '{}': {}", script.name, skill_entry.name, e);
+            if !skill_entry.folder_files.is_empty() {
+                // New folder-based format: write files directly
+                let skill_dir = runtime_skills_dir.join(&skill_entry.name);
+                for file_entry in &skill_entry.folder_files {
+                    if file_entry.relative_path.contains("..") { continue; }
+                    let file_path = skill_dir.join(&file_entry.relative_path);
+                    if let Some(parent) = file_path.parent() {
+                        std::fs::create_dir_all(parent).ok();
                     }
-                }
-                // Restore ABIs
-                for abi in &skill_entry.abis {
-                    let db_abi = skills::DbSkillAbi {
-                        id: None,
-                        skill_id,
-                        name: abi.name.clone(),
-                        content: abi.content.clone(),
-                        created_at: now.clone(),
-                    };
-                    if let Err(e) = db.create_skill_abi(&db_abi) {
-                        log::warn!("[Keystore] Failed to restore ABI '{}' for skill '{}': {}", abi.name, skill_entry.name, e);
-                    }
-                }
-                // Restore preset
-                if let Some(ref presets_content) = skill_entry.presets_content {
-                    let db_preset = skills::DbSkillPreset {
-                        id: None,
-                        skill_id,
-                        content: presets_content.clone(),
-                        created_at: now.clone(),
-                    };
-                    if let Err(e) = db.create_skill_preset(&db_preset) {
-                        log::warn!("[Keystore] Failed to restore presets for skill '{}': {}", skill_entry.name, e);
+                    if let Err(e) = std::fs::write(&file_path, &file_entry.content) {
+                        log::warn!("[Keystore] Failed to write skill file {}/{}: {}", skill_entry.name, file_entry.relative_path, e);
                     }
                 }
                 result.skills += 1;
+            } else {
+                // Legacy format: reconstruct folder
+                let parsed = skills::ParsedSkill {
+                    name: skill_entry.name.clone(),
+                    description: skill_entry.description.clone(),
+                    body: skill_entry.body.clone(),
+                    version: skill_entry.version.clone(),
+                    author: skill_entry.author.clone(),
+                    homepage: skill_entry.homepage.clone(),
+                    metadata: skill_entry.metadata.clone(),
+                    requires_tools: skill_entry.requires_tools.clone(),
+                    requires_binaries: skill_entry.requires_binaries.clone(),
+                    arguments,
+                    tags: skill_entry.tags.clone(),
+                    subagent_type: skill_entry.subagent_type.clone(),
+                    requires_api_keys,
+                    scripts: skill_entry.scripts.iter().map(|s| skills::ParsedScript {
+                        name: s.name.clone(),
+                        code: s.code.clone(),
+                        language: s.language.clone(),
+                    }).collect(),
+                    abis: skill_entry.abis.iter().map(|a| skills::ParsedAbi {
+                        name: a.name.clone(),
+                        content: a.content.clone(),
+                    }).collect(),
+                    presets_content: skill_entry.presets_content.clone(),
+                };
+
+                match skills::write_skill_folder(&runtime_skills_dir, &parsed) {
+                    Ok(()) => result.skills += 1,
+                    Err(e) => log::warn!("[Keystore] Failed to restore skill folder '{}': {}", skill_entry.name, e),
+                }
             }
-            Err(e) => {
-                log::warn!("[Keystore] Failed to restore skill '{}': {}", skill_entry.name, e);
-            }
+        }
+
+        // Re-seed bundled skills (newer versions take precedence)
+        if let Err(e) = config::seed_skills() {
+            log::warn!("[Keystore] Failed to re-seed skills after restore: {}", e);
         }
     }
     if result.skills > 0 {
-        log::info!("[Keystore] Restored {} skills", result.skills);
+        log::info!("[Keystore] Restored {} skills to disk", result.skills);
     }
 
     // Restore agent settings (AI model configurations)
@@ -1045,14 +1035,15 @@ async fn spa_fallback() -> actix_web::Result<NamedFile> {
 
 /// Auto-start module service binaries as child processes.
 ///
-/// Finds sibling binaries next to the current executable (same cargo target dir)
-/// and spawns them in the background. Also starts dynamic module services from
-/// `~/.starkbot/modules/`. stdout/stderr are inherited so logs appear in the
-/// same terminal. Child processes are killed when the parent exits.
+/// Discovers modules from `~/.starkbot/modules/`, assigns each a free port,
+/// and spawns them in the background. stdout/stderr are inherited so logs appear
+/// in the same terminal. Child processes are killed when the parent exits.
+///
+/// Port assignment priority:
+/// 1. Explicit env var already set (e.g. WALLET_MONITOR_PORT=9100) — respected as-is
+/// 2. Port already in use (module running externally) — skipped, env var set so starkbot can reach it
+/// 3. Otherwise — OS assigns a free port, passed to child via MODULE_PORT
 fn start_module_services(db: &Database) {
-    let self_exe = std::env::current_exe().unwrap_or_default();
-    let exe_dir = self_exe.parent().unwrap_or(std::path::Path::new("."));
-
     // Load API keys from database (with env fallback) to pass to child services
     let mut api_key_envs: Vec<(String, String)> = Vec::new();
     let alchemy_key = db.get_api_key("ALCHEMY_API_KEY").ok().flatten()
@@ -1061,71 +1052,105 @@ fn start_module_services(db: &Database) {
     if let Some(key) = alchemy_key {
         log::info!("[MODULE] ALCHEMY_API_KEY found — will pass to module services");
         api_key_envs.push(("ALCHEMY_API_KEY".to_string(), key));
-    } else {
-        log::warn!("[MODULE] ALCHEMY_API_KEY not found in database or environment — wallet monitor worker will be disabled");
     }
 
-    // Built-in services (compiled workspace members)
-    let builtin_services = [
-        ("discord-tipping-service", 9101u16),
-        ("wallet-monitor-service", 9100u16),
-    ];
-
-    for (name, default_port) in &builtin_services {
-        let exe_path = exe_dir.join(name);
-        if !exe_path.exists() {
-            log::warn!("[MODULE] Service binary not found: {} — skipping auto-start. Run `cargo build` to build all workspace members.", exe_path.display());
-            continue;
-        }
-
-        let port_env = match *name {
-            "discord-tipping-service" => std::env::var("DISCORD_TIPPING_PORT")
-                .ok().and_then(|s| s.parse().ok()).unwrap_or(*default_port),
-            "wallet-monitor-service" => std::env::var("WALLET_MONITOR_PORT")
-                .ok().and_then(|s| s.parse().ok()).unwrap_or(*default_port),
-            _ => *default_port,
-        };
-
-        // Pass relevant API keys to child services
-        let envs: Vec<(&str, &str)> = match *name {
-            "wallet-monitor-service" => api_key_envs.iter()
-                .filter(|(k, _)| k == "ALCHEMY_API_KEY")
-                .map(|(k, v)| (k.as_str(), v.as_str()))
-                .collect(),
-            _ => Vec::new(),
-        };
-
-        start_service_binary(&exe_path, name, port_env, &envs);
-    }
-
-    // Dynamic module services from ~/.starkbot/modules/
+    // All module services are discovered dynamically from ~/.starkbot/modules/
     let dynamic_services = modules::loader::get_dynamic_service_binaries();
     for svc in &dynamic_services {
-        let port = svc.port_env_var.as_ref()
-            .and_then(|var| std::env::var(var).ok())
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(svc.default_port);
-
-        if !svc.binary_path.exists() {
+        // A module must have either a command or a binary to start
+        let has_command = svc.command.is_some();
+        if !has_command && !svc.binary_path.exists() {
             log::debug!(
-                "[MODULE] Dynamic module '{}' has no service binary at {} — skipping",
+                "[MODULE] Dynamic module '{}' has no command or service binary at {} — skipping",
                 svc.name, svc.binary_path.display()
             );
             continue;
         }
 
-        start_service_binary(&svc.binary_path, &svc.name, port, &[]);
+        // Determine the port: check explicit env var first, then check if
+        // default port is already in use, otherwise find a free port.
+        let explicit_port = svc.port_env_var.as_ref()
+            .and_then(|var| std::env::var(var).ok())
+            .and_then(|s| s.parse::<u16>().ok());
+
+        let port = if let Some(p) = explicit_port {
+            // User explicitly set the port env var — use it
+            p
+        } else if std::net::TcpStream::connect(format!("127.0.0.1:{}", svc.default_port)).is_ok() {
+            // Default port is occupied (module likely running externally) — use it
+            log::info!(
+                "[MODULE] {} already running on default port {} — skipping start",
+                svc.name, svc.default_port
+            );
+            set_module_port_env(&svc, svc.default_port);
+            continue;
+        } else {
+            // Find a free port from the OS
+            match find_free_port() {
+                Some(p) => p,
+                None => {
+                    log::error!("[MODULE] Failed to find free port for '{}' — skipping", svc.name);
+                    continue;
+                }
+            }
+        };
+
+        // If the chosen port is already in use (explicit env case), skip starting
+        if explicit_port.is_some() && std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok() {
+            log::info!("[MODULE] {} already running on port {} — skipping start", svc.name, port);
+            set_module_port_env(&svc, port);
+            continue;
+        }
+
+        // Pass relevant API keys + port to child services
+        let mut envs: Vec<(String, String)> = api_key_envs.clone();
+        envs.push(("MODULE_PORT".to_string(), port.to_string()));
+        if let Some(ref port_var) = svc.port_env_var {
+            envs.push((port_var.clone(), port.to_string()));
+        }
+
+        let env_refs: Vec<(&str, &str)> = envs.iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+
+        if let Some(ref command) = svc.command {
+            start_service_command(command, &svc.module_dir, &svc.name, port, &env_refs);
+        } else {
+            start_service_binary(&svc.binary_path, &svc.name, port, &env_refs);
+        }
+
+        // Set env vars in parent process so manifest.service_url() resolves correctly
+        // when DynamicModule makes RPC calls to this service.
+        set_module_port_env(&svc, port);
     }
 }
 
-/// Start a single service binary if its port is not already in use.
-/// Optional `envs` slice injects extra environment variables (e.g. API keys from DB).
-fn start_service_binary(exe_path: &std::path::Path, name: &str, port: u16, envs: &[(&str, &str)]) {
-    if std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok() {
-        log::info!("[MODULE] {} already running on port {} — skipping", name, port);
-        return;
+/// Set the port/URL env vars in the parent process so manifest.service_url()
+/// can resolve the correct URL for this module's service.
+fn set_module_port_env(svc: &modules::loader::DynamicServiceInfo, port: u16) {
+    // SAFETY: Called during single-threaded startup before any module tools are invoked.
+    // No concurrent reads of these env vars at this point.
+    unsafe {
+        if let Some(ref port_var) = svc.port_env_var {
+            std::env::set_var(port_var, port.to_string());
+        }
+        if let Some(ref url_var) = svc.url_env_var {
+            std::env::set_var(url_var, format!("http://127.0.0.1:{}", port));
+        }
     }
+}
 
+/// Ask the OS for a free TCP port by binding to port 0.
+fn find_free_port() -> Option<u16> {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .ok()
+        .and_then(|l| l.local_addr().ok())
+        .map(|addr| addr.port())
+}
+
+/// Start a single service binary.
+/// The caller is responsible for checking port availability before calling this.
+fn start_service_binary(exe_path: &std::path::Path, name: &str, port: u16, envs: &[(&str, &str)]) {
     let mut cmd = std::process::Command::new(exe_path);
     cmd.stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit());
@@ -1134,13 +1159,35 @@ fn start_service_binary(exe_path: &std::path::Path, name: &str, port: u16, envs:
         cmd.env(key, value);
     }
 
-    match cmd.spawn()
-    {
+    match cmd.spawn() {
         Ok(_child) => {
             log::info!("[MODULE] Started {} (port {})", name, port);
         }
         Err(e) => {
             log::error!("[MODULE] Failed to start {}: {}", name, e);
+        }
+    }
+}
+
+/// Start a service via a shell command (e.g. "uv run service.py").
+/// The command is run from the module directory with `sh -c`.
+fn start_service_command(command: &str, cwd: &std::path::Path, name: &str, port: u16, envs: &[(&str, &str)]) {
+    let mut cmd = std::process::Command::new("sh");
+    cmd.arg("-c").arg(command);
+    cmd.current_dir(cwd);
+    cmd.stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit());
+
+    for (key, value) in envs {
+        cmd.env(key, value);
+    }
+
+    match cmd.spawn() {
+        Ok(_child) => {
+            log::info!("[MODULE] Started {} via `{}` (port {}, cwd={})", name, command, port, cwd.display());
+        }
+        Err(e) => {
+            log::error!("[MODULE] Failed to start {} via `{}`: {}", name, command, e);
         }
     }
 }
@@ -1314,6 +1361,18 @@ async fn main() -> std::io::Result<()> {
         log::error!("Failed to initialize workspace: {}", e);
     }
 
+    // Seed runtime skills directory from bundled skills
+    log::info!("Seeding runtime skills from bundled");
+    if let Err(e) = config::seed_skills() {
+        log::error!("Failed to seed skills: {}", e);
+    }
+
+    // Seed runtime modules directory from bundled modules
+    log::info!("Seeding runtime modules from bundled");
+    if let Err(e) = config::seed_modules() {
+        log::error!("Failed to seed modules: {}", e);
+    }
+
     // Initialize disk quota manager
     let disk_quota_mb = config::disk_quota_mb();
     let disk_quota: Option<Arc<disk_quota::DiskQuotaManager>> = if disk_quota_mb > 0 {
@@ -1398,31 +1457,19 @@ async fn main() -> std::io::Result<()> {
         start_module_services(&db);
     }
 
-    // Auto-migration: if discord_user_profiles table exists but discord_tipping module
-    // is not installed, auto-install it so existing deployments keep tipping on upgrade.
-    {
-        let conn = db.conn();
-        let table_exists: bool = conn
-            .query_row(
-                "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='discord_user_profiles'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap_or(false);
-
-        if table_exists && !db.is_module_installed("discord_tipping").unwrap_or(true) {
-            log::info!("[MODULE] Auto-migrating: discord_user_profiles table found, installing discord_tipping module");
-            if let Some(module) = module_registry.get("discord_tipping") {
-                match db.install_module(
-                    "discord_tipping",
-                    module.description(),
-                    module.version(),
-                    module.has_tools(),
-                    module.has_dashboard(),
-                ) {
-                    Ok(_) => log::info!("[MODULE] Auto-installed discord_tipping module (migration from hardcoded table)"),
-                    Err(e) => log::warn!("[MODULE] Failed to auto-install discord_tipping: {}", e),
-                }
+    // Auto-install discord_tipping module if not already installed.
+    // Covers both fresh installs and migrations from the old hardcoded table.
+    if !db.is_module_installed("discord_tipping").unwrap_or(true) {
+        if let Some(module) = module_registry.get("discord_tipping") {
+            match db.install_module(
+                "discord_tipping",
+                module.description(),
+                module.version(),
+                module.has_tools(),
+                module.has_dashboard(),
+            ) {
+                Ok(_) => log::info!("[MODULE] Auto-installed discord_tipping module (enabled by default)"),
+                Err(e) => log::warn!("[MODULE] Failed to auto-install discord_tipping: {}", e),
             }
         }
     }
@@ -1447,18 +1494,18 @@ async fn main() -> std::io::Result<()> {
     let tool_registry = Arc::new(tool_registry_mut);
     log::info!("Registered {} tools", tool_registry.len());
 
-    // Initialize Skill Registry (database-backed)
+    // Initialize Skill Registry (disk-primary, DB is synced index)
     log::info!("Initializing skill registry");
     let skill_registry = Arc::new(skills::create_default_registry(db.clone()));
 
-    // Load file-based skills into database (for backward compatibility)
-    let skill_count = skill_registry.load_all().await.unwrap_or_else(|e| {
-        log::warn!("Failed to load skills from disk: {}", e);
+    // Sync skills from disk to database
+    let skill_count = skill_registry.sync_to_db().await.unwrap_or_else(|e| {
+        log::warn!("Failed to sync skills from disk: {}", e);
         0
     });
-    log::info!("Loaded {} skills from disk, {} total in database", skill_count, skill_registry.len());
+    log::info!("Synced {} skills from disk, {} total in database", skill_count, skill_registry.len());
 
-    // Load skills from enabled modules
+    // Load skills from enabled modules (write to disk if missing, then sync to DB)
     {
         let installed_modules = db.list_installed_modules().unwrap_or_default();
         for entry in &installed_modules {
@@ -1918,6 +1965,8 @@ async fn main() -> std::io::Result<()> {
             .configure(controllers::special_roles::config)
             .configure(controllers::external_channel::config)
             .configure(controllers::transcribe::config)
+            // Public ext proxy — must be before the SPA catch-all
+            .configure(controllers::ext::config)
             // WebSocket Gateway route (same port as HTTP, required for single-port platforms)
             .route("/ws", web::get().to(gateway::actix_ws::ws_handler));
 

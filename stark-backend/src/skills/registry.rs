@@ -2,45 +2,39 @@ use crate::db::Database;
 use crate::skills::types::{DbSkill, DbSkillScript, Skill, SkillSource};
 use crate::skills::zip_parser::{parse_skill_md, parse_skill_zip, ParsedSkill};
 use crate::skills::types::{DbSkillAbi, DbSkillPreset};
-use std::path::PathBuf;
+use serde::Serialize;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Registry that provides access to skills stored in the database
-/// Also maintains backward compatibility with file-based skills
+/// Info about a bundled skill available for restore (not currently installed).
+#[derive(Serialize, Clone)]
+pub struct BundledSkillInfo {
+    pub name: String,
+    pub description: String,
+    pub version: String,
+    pub tags: Vec<String>,
+}
+
+/// Registry that provides access to skills stored in the database.
+/// The disk (runtime_skills_dir) is the primary store; DB is a synced index
+/// used for embeddings, search, and fast lookups.
 pub struct SkillRegistry {
     db: Arc<Database>,
-    /// Optional paths for file-based skill loading (for backward compatibility)
-    bundled_path: Option<PathBuf>,
-    managed_path: Option<PathBuf>,
-    workspace_path: Option<PathBuf>,
+    /// Path to the runtime skills directory (disk-primary store)
+    skills_dir: PathBuf,
 }
 
 impl SkillRegistry {
-    pub fn new(db: Arc<Database>) -> Self {
-        SkillRegistry {
-            db,
-            bundled_path: None,
-            managed_path: None,
-            workspace_path: None,
-        }
+    pub fn new(db: Arc<Database>, skills_dir: PathBuf) -> Self {
+        SkillRegistry { db, skills_dir }
     }
 
-    /// Create a registry with configured paths (for backward compatibility with file-based skills)
-    pub fn with_paths(
-        db: Arc<Database>,
-        bundled_path: Option<PathBuf>,
-        managed_path: Option<PathBuf>,
-        workspace_path: Option<PathBuf>,
-    ) -> Self {
-        SkillRegistry {
-            db,
-            bundled_path,
-            managed_path,
-            workspace_path,
-        }
+    /// Get the runtime skills directory path
+    pub fn skills_dir(&self) -> &Path {
+        &self.skills_dir
     }
 
-    /// Get a skill by name
+    /// Get a skill by name (from DB — synced index)
     pub fn get(&self, name: &str) -> Option<Skill> {
         match self.db.get_skill(name) {
             Ok(Some(db_skill)) => Some(db_skill.into_skill()),
@@ -48,7 +42,7 @@ impl SkillRegistry {
         }
     }
 
-    /// List all registered skills
+    /// List all registered skills (from DB — synced index)
     pub fn list(&self) -> Vec<Skill> {
         match self.db.list_skills() {
             Ok(skills) => skills.into_iter().map(|s| s.into_skill()).collect(),
@@ -70,7 +64,7 @@ impl SkillRegistry {
         }
     }
 
-    /// Enable or disable a skill
+    /// Enable or disable a skill (DB-only preference, not written to disk)
     pub fn set_enabled(&self, name: &str, enabled: bool) -> bool {
         match self.db.set_skill_enabled(name, enabled) {
             Ok(success) => success,
@@ -96,13 +90,14 @@ impl SkillRegistry {
         self.len() == 0
     }
 
-    /// Create a skill from a parsed ZIP file
+    /// Create a skill from a parsed ZIP file — writes to disk, then syncs to DB
     pub fn create_skill_from_zip(&self, data: &[u8]) -> Result<DbSkill, String> {
         let parsed = parse_skill_zip(data)?;
         self.create_skill_from_parsed(parsed)
     }
 
     /// Create a skill from markdown content, bypassing version checks (force update)
+    /// Writes to disk folder, then syncs to DB
     pub fn create_skill_from_markdown_force(&self, content: &str) -> Result<DbSkill, String> {
         let (metadata, body) = parse_skill_md(content)?;
 
@@ -129,6 +124,7 @@ impl SkillRegistry {
     }
 
     /// Create a skill from markdown content (SKILL.md format)
+    /// Writes to disk folder, then syncs to DB
     pub fn create_skill_from_markdown(&self, content: &str) -> Result<DbSkill, String> {
         let (metadata, body) = parse_skill_md(content)?;
 
@@ -146,7 +142,7 @@ impl SkillRegistry {
             tags: metadata.tags,
             subagent_type: metadata.subagent_type,
             requires_api_keys: metadata.requires_api_keys,
-            scripts: Vec::new(), // No scripts for plain markdown
+            scripts: Vec::new(),
             abis: Vec::new(),
             presets_content: None,
         };
@@ -165,6 +161,11 @@ impl SkillRegistry {
     }
 
     fn create_skill_from_parsed_internal(&self, parsed: ParsedSkill, force: bool) -> Result<DbSkill, String> {
+        // Write to disk first
+        write_skill_folder(&self.skills_dir, &parsed)
+            .map_err(|e| format!("Failed to write skill to disk: {}", e))?;
+
+        // Then sync to DB
         let now = chrono::Utc::now().to_rfc3339();
 
         let db_skill = DbSkill {
@@ -239,8 +240,12 @@ impl SkillRegistry {
             .ok_or_else(|| "Skill not found after creation".to_string())
     }
 
-    /// Delete a skill and its scripts
+    /// Delete a skill from disk AND database
     pub fn delete_skill(&self, name: &str) -> Result<bool, String> {
+        // Delete from disk (idempotent — safe if already removed)
+        delete_skill_folder(&self.skills_dir, name);
+
+        // Delete from DB
         self.db.delete_skill(name)
             .map_err(|e| format!("Failed to delete skill: {}", e))
     }
@@ -256,62 +261,44 @@ impl SkillRegistry {
         }
     }
 
-    /// Load skills from all configured paths (backward compatibility)
-    /// This imports file-based skills into the database
-    pub async fn load_all(&self) -> Result<usize, String> {
+    /// Sync all skills from disk to database.
+    /// Reads every skill folder in skills_dir, imports into DB (preserving enabled state).
+    /// Also removes DB entries for skills no longer present on disk.
+    pub async fn sync_to_db(&self) -> Result<usize, String> {
         use crate::skills::loader::load_skills_from_directory;
 
         let mut loaded = 0;
+        let mut disk_skill_names: Vec<String> = Vec::new();
 
-        // Load bundled skills (lowest priority)
-        if let Some(ref path) = self.bundled_path {
-            match load_skills_from_directory(path, SkillSource::Bundled).await {
-                Ok(skills) => {
-                    for skill in skills {
-                        if let Err(e) = self.import_file_skill(&skill) {
-                            log::warn!("Failed to import bundled skill {}: {}", skill.metadata.name, e);
-                        } else {
-                            loaded += 1;
-                        }
+        match load_skills_from_directory(&self.skills_dir, SkillSource::Managed).await {
+            Ok(skills) => {
+                for skill in &skills {
+                    disk_skill_names.push(skill.metadata.name.clone());
+                }
+                for skill in skills {
+                    if let Err(e) = self.import_file_skill(&skill) {
+                        log::warn!("Failed to import skill {}: {}", skill.metadata.name, e);
+                    } else {
+                        loaded += 1;
                     }
                 }
-                Err(e) => log::warn!("Failed to load bundled skills: {}", e),
+            }
+            Err(e) => log::warn!("Failed to load skills from disk: {}", e),
+        }
+
+        // Clean up stale DB entries for skills that no longer exist on disk
+        if !disk_skill_names.is_empty() {
+            if let Ok(db_skills) = self.db.list_skills() {
+                for db_skill in db_skills {
+                    if !disk_skill_names.contains(&db_skill.name) {
+                        log::info!("Removing stale DB entry for skill '{}' (no longer on disk)", db_skill.name);
+                        let _ = self.db.delete_skill(&db_skill.name);
+                    }
+                }
             }
         }
 
-        // Load managed skills (medium priority)
-        if let Some(ref path) = self.managed_path {
-            match load_skills_from_directory(path, SkillSource::Managed).await {
-                Ok(skills) => {
-                    for skill in skills {
-                        if let Err(e) = self.import_file_skill(&skill) {
-                            log::warn!("Failed to import managed skill {}: {}", skill.metadata.name, e);
-                        } else {
-                            loaded += 1;
-                        }
-                    }
-                }
-                Err(e) => log::warn!("Failed to load managed skills: {}", e),
-            }
-        }
-
-        // Load workspace skills (highest priority)
-        if let Some(ref path) = self.workspace_path {
-            match load_skills_from_directory(path, SkillSource::Workspace).await {
-                Ok(skills) => {
-                    for skill in skills {
-                        if let Err(e) = self.import_file_skill(&skill) {
-                            log::warn!("Failed to import workspace skill {}: {}", skill.metadata.name, e);
-                        } else {
-                            loaded += 1;
-                        }
-                    }
-                }
-                Err(e) => log::warn!("Failed to load workspace skills: {}", e),
-            }
-        }
-
-        log::info!("Loaded {} skills total ({} unique)", loaded, self.len());
+        log::info!("Synced {} skills from disk ({} total in DB)", loaded, self.len());
         Ok(loaded)
     }
 
@@ -461,8 +448,13 @@ impl SkillRegistry {
                 }
             }
 
-            // Import presets.ron into DB
-            let presets_path = sd.join("presets.ron");
+            // Import web3_presets.ron into DB (also check legacy presets.ron)
+            let presets_path = sd.join("web3_presets.ron");
+            let presets_path = if presets_path.exists() {
+                presets_path
+            } else {
+                sd.join("presets.ron")
+            };
             if presets_path.exists() {
                 match std::fs::read_to_string(&presets_path) {
                     Ok(content) => {
@@ -486,14 +478,12 @@ impl SkillRegistry {
         Ok(())
     }
 
-    /// Reload all skills from disk (clear and re-import from files)
+    /// Reload all skills from disk (clear in-memory indexes, re-sync from disk)
     pub async fn reload(&self) -> Result<usize, String> {
         // Clear in-memory indexes before reloading
         crate::tools::presets::clear_skill_web3_presets();
         crate::web3::clear_abi_index();
-        // Note: This doesn't clear the database - file-based skills will just be updated
-        // Database-only skills (uploaded via ZIP) are preserved
-        let result = self.load_all().await;
+        let result = self.sync_to_db().await;
         // Reload ABIs and presets from DB into in-memory indexes
         crate::web3::load_all_abis_from_db(&self.db);
         crate::tools::presets::load_all_skill_presets_from_db(&self.db);
@@ -513,6 +503,98 @@ impl SkillRegistry {
             .collect()
     }
 
+    /// List bundled skills that are not currently installed in the runtime directory.
+    /// Returns metadata for each bundled skill that's available for restore.
+    pub async fn list_bundled_available(&self) -> Vec<BundledSkillInfo> {
+        use crate::skills::loader::load_skills_from_directory;
+
+        let bundled_dir = std::path::PathBuf::from(crate::config::bundled_skills_dir());
+        if !bundled_dir.exists() {
+            return Vec::new();
+        }
+
+        // Get installed skill names
+        let installed: std::collections::HashSet<String> = self
+            .list()
+            .into_iter()
+            .map(|s| s.metadata.name)
+            .collect();
+
+        // Load all bundled skills
+        let bundled_skills = match load_skills_from_directory(&bundled_dir, SkillSource::Bundled).await {
+            Ok(skills) => skills,
+            Err(e) => {
+                log::warn!("Failed to load bundled skills directory: {}", e);
+                return Vec::new();
+            }
+        };
+
+        bundled_skills
+            .into_iter()
+            .filter(|s| !installed.contains(&s.metadata.name))
+            .map(|s| BundledSkillInfo {
+                name: s.metadata.name,
+                description: s.metadata.description,
+                version: s.metadata.version,
+                tags: s.metadata.tags,
+            })
+            .collect()
+    }
+
+    /// Restore a bundled skill by copying it from the bundled directory to the runtime
+    /// directory and importing it into the database.
+    pub async fn restore_bundled_skill(&self, name: &str) -> Result<DbSkill, String> {
+        use crate::skills::loader::load_skill_from_file_with_dir;
+
+        // Validate name
+        validate_skill_name(name)?;
+
+        let bundled_dir = std::path::PathBuf::from(crate::config::bundled_skills_dir());
+        let runtime_dir = &self.skills_dir;
+
+        let src = bundled_dir.join(name);
+        let dst = runtime_dir.join(name);
+
+        if !src.exists() {
+            return Err(format!("Bundled skill '{}' not found", name));
+        }
+        if dst.exists() {
+            return Err(format!("Skill '{}' already exists in runtime directory", name));
+        }
+
+        // Copy the bundled skill directory to runtime
+        crate::config::copy_dir_recursive(&src, &dst)
+            .map_err(|e| format!("Failed to copy bundled skill '{}': {}", name, e))?;
+
+        // Find the skill markdown file in the copied directory
+        let named_md = dst.join(format!("{}.md", name));
+        let legacy_md = dst.join("SKILL.md");
+        let skill_file = if named_md.exists() {
+            named_md
+        } else if legacy_md.exists() {
+            legacy_md
+        } else {
+            // Clean up the copy on failure
+            let _ = std::fs::remove_dir_all(&dst);
+            return Err(format!("No SKILL.md found in bundled skill '{}'", name));
+        };
+
+        // Load the skill from the copied file
+        let skill = load_skill_from_file_with_dir(&skill_file, SkillSource::Managed, Some(dst))
+            .await
+            .map_err(|e| format!("Failed to load restored skill '{}': {}", name, e))?;
+
+        // Import into DB
+        self.import_file_skill(&skill)
+            .map_err(|e| format!("Failed to import restored skill '{}': {}", name, e))?;
+
+        // Return the DB skill
+        self.db
+            .get_skill(name)
+            .map_err(|e| format!("Failed to retrieve restored skill: {}", e))?
+            .ok_or_else(|| "Skill not found after restore".to_string())
+    }
+
     /// Search skills by name or tag
     pub fn search(&self, query: &str) -> Vec<Skill> {
         let query_lower = query.to_lowercase();
@@ -530,18 +612,180 @@ impl SkillRegistry {
     }
 }
 
-/// Create a default skill registry with standard paths
-/// Uses config::skills_dir() so paths are stable regardless of CWD
-pub fn create_default_registry(db: Arc<Database>) -> SkillRegistry {
-    let skills_dir = PathBuf::from(crate::config::skills_dir());
-    let workspace_dir = PathBuf::from(crate::config::workspace_dir());
+// ---------------------------------------------------------------------------
+// Disk operations
+// ---------------------------------------------------------------------------
 
-    SkillRegistry::with_paths(
-        db,
-        Some(skills_dir.clone()),
-        Some(skills_dir.join("managed")),
-        Some(workspace_dir.join(".skills")),
-    )
+/// Write a parsed skill to a folder on disk: {skills_dir}/{name}/SKILL.md + scripts + ABIs + presets
+pub fn write_skill_folder(skills_dir: &Path, parsed: &ParsedSkill) -> Result<(), String> {
+    // Validate skill name to prevent path traversal
+    validate_skill_name(&parsed.name)?;
+
+    let skill_dir = skills_dir.join(&parsed.name);
+    std::fs::create_dir_all(&skill_dir)
+        .map_err(|e| format!("Failed to create skill directory: {}", e))?;
+
+    // Write SKILL.md (frontmatter + body)
+    let skill_md = reconstruct_skill_md(parsed);
+    let md_path = skill_dir.join("SKILL.md");
+    std::fs::write(&md_path, &skill_md)
+        .map_err(|e| format!("Failed to write SKILL.md: {}", e))?;
+
+    // Write scripts
+    for script in &parsed.scripts {
+        let script_path = skill_dir.join(&script.name);
+        std::fs::write(&script_path, &script.code)
+            .map_err(|e| format!("Failed to write script {}: {}", script.name, e))?;
+    }
+
+    // Write ABIs
+    if !parsed.abis.is_empty() {
+        let abis_dir = skill_dir.join("abis");
+        std::fs::create_dir_all(&abis_dir)
+            .map_err(|e| format!("Failed to create abis directory: {}", e))?;
+        for abi in &parsed.abis {
+            let abi_path = abis_dir.join(format!("{}.json", abi.name));
+            std::fs::write(&abi_path, &abi.content)
+                .map_err(|e| format!("Failed to write ABI {}: {}", abi.name, e))?;
+        }
+    }
+
+    // Write web3 presets
+    if let Some(ref presets) = parsed.presets_content {
+        let presets_path = skill_dir.join("web3_presets.ron");
+        std::fs::write(&presets_path, presets)
+            .map_err(|e| format!("Failed to write web3_presets.ron: {}", e))?;
+    }
+
+    Ok(())
+}
+
+/// Reconstruct SKILL.md content from a ParsedSkill (YAML frontmatter + body)
+pub fn reconstruct_skill_md(parsed: &ParsedSkill) -> String {
+    let mut lines = Vec::new();
+    lines.push("---".to_string());
+    lines.push(format!("name: \"{}\"", parsed.name.replace('"', "\\\"")));
+    lines.push(format!("description: \"{}\"", parsed.description.replace('"', "\\\"")));
+    lines.push(format!("version: \"{}\"", parsed.version.replace('"', "\\\"")));
+
+    if let Some(ref author) = parsed.author {
+        lines.push(format!("author: \"{}\"", author.replace('"', "\\\"")));
+    }
+    if let Some(ref homepage) = parsed.homepage {
+        lines.push(format!("homepage: \"{}\"", homepage.replace('"', "\\\"")));
+    }
+    if let Some(ref metadata) = parsed.metadata {
+        // metadata is often JSON — quote it to prevent YAML colon issues
+        lines.push(format!("metadata: \"{}\"", metadata.replace('"', "\\\"")));
+    }
+    if let Some(ref subagent_type) = parsed.subagent_type {
+        lines.push(format!("subagent_type: {}", subagent_type));
+    }
+
+    if !parsed.requires_tools.is_empty() {
+        lines.push(format!("requires_tools: [{}]", parsed.requires_tools.join(", ")));
+    }
+    if !parsed.requires_binaries.is_empty() {
+        lines.push(format!("requires_binaries: [{}]", parsed.requires_binaries.join(", ")));
+    }
+    if !parsed.tags.is_empty() {
+        lines.push(format!("tags: [{}]", parsed.tags.join(", ")));
+    }
+
+    if !parsed.scripts.is_empty() {
+        let script_names: Vec<&str> = parsed.scripts.iter().map(|s| s.name.as_str()).collect();
+        lines.push(format!("scripts: [{}]", script_names.join(", ")));
+    }
+
+    if !parsed.arguments.is_empty() {
+        lines.push("arguments:".to_string());
+        for (name, arg) in &parsed.arguments {
+            lines.push(format!("  {}:", name));
+            lines.push(format!("    description: \"{}\"", arg.description.replace('"', "\\\"")));
+            if arg.required {
+                lines.push("    required: true".to_string());
+            }
+            if let Some(ref default) = arg.default {
+                lines.push(format!("    default: \"{}\"", default.replace('"', "\\\"")));
+            }
+        }
+    }
+
+    if !parsed.requires_api_keys.is_empty() {
+        lines.push("requires_api_keys:".to_string());
+        for (key_name, key_def) in &parsed.requires_api_keys {
+            lines.push(format!("  {}:", key_name));
+            lines.push(format!("    description: \"{}\"", key_def.description.replace('"', "\\\"")));
+            if !key_def.secret {
+                lines.push("    secret: false".to_string());
+            }
+        }
+    }
+
+    lines.push("---".to_string());
+    lines.push(String::new());
+    lines.push(parsed.body.clone());
+
+    lines.join("\n")
+}
+
+/// Reconstruct SKILL.md from a DbSkill (for backup restore)
+pub fn reconstruct_skill_md_from_db(db_skill: &DbSkill) -> String {
+    let parsed = ParsedSkill {
+        name: db_skill.name.clone(),
+        description: db_skill.description.clone(),
+        body: db_skill.body.clone(),
+        version: db_skill.version.clone(),
+        author: db_skill.author.clone(),
+        homepage: db_skill.homepage.clone(),
+        metadata: db_skill.metadata.clone(),
+        requires_tools: db_skill.requires_tools.clone(),
+        requires_binaries: db_skill.requires_binaries.clone(),
+        arguments: db_skill.arguments.clone(),
+        tags: db_skill.tags.clone(),
+        subagent_type: db_skill.subagent_type.clone(),
+        requires_api_keys: db_skill.requires_api_keys.clone(),
+        scripts: Vec::new(),
+        abis: Vec::new(),
+        presets_content: None,
+    };
+    reconstruct_skill_md(&parsed)
+}
+
+/// Validate a skill name for filesystem safety
+fn validate_skill_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("Skill name cannot be empty".to_string());
+    }
+    if name.contains("..") || name.contains('/') || name.contains('\\') || name.contains('\0') {
+        return Err("Skill name contains invalid characters".to_string());
+    }
+    if name.starts_with('.') {
+        return Err("Skill name cannot start with '.'".to_string());
+    }
+    Ok(())
+}
+
+/// Delete a skill folder from disk
+pub fn delete_skill_folder(skills_dir: &Path, name: &str) {
+    if let Err(e) = validate_skill_name(name) {
+        log::warn!("Refusing to delete skill with invalid name '{}': {}", name, e);
+        return;
+    }
+    let skill_dir = skills_dir.join(name);
+    if skill_dir.exists() {
+        if let Err(e) = std::fs::remove_dir_all(&skill_dir) {
+            log::warn!("Failed to delete skill folder {:?}: {}", skill_dir, e);
+        } else {
+            log::info!("Deleted skill folder: {:?}", skill_dir);
+        }
+    }
+}
+
+/// Create a default skill registry with the runtime skills directory
+pub fn create_default_registry(db: Arc<Database>) -> SkillRegistry {
+    let skills_dir = PathBuf::from(crate::config::runtime_skills_dir());
+    SkillRegistry::new(db, skills_dir)
 }
 
 #[cfg(test)]

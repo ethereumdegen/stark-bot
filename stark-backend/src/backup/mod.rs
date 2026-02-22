@@ -87,6 +87,9 @@ pub struct BackupData {
     /// Notes (markdown files from the notes directory)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<NoteFileEntry>,
+    /// Installed modules (folder files + install/enable state)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub modules: Vec<ModuleBackupEntry>,
 }
 
 /// Manual Default because DateTime<Utc> doesn't derive Default
@@ -119,6 +122,7 @@ impl Default for BackupData {
             special_role_assignments: Vec::new(),
             tool_configs: HashMap::new(),
             notes: Vec::new(),
+            modules: Vec::new(),
         }
     }
 }
@@ -163,6 +167,7 @@ impl BackupData {
             + self.special_roles.len()
             + self.special_role_assignments.len()
             + self.notes.len()
+            + self.modules.len()
     }
 }
 
@@ -297,6 +302,16 @@ pub struct DiscordRegistrationEntry {
     pub registered_at: Option<String>,
 }
 
+/// A single file from a skill folder (for folder-based backup)
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SkillFileEntry {
+    /// Relative path within the skill folder (e.g. "SKILL.md", "abis/erc20.json")
+    pub relative_path: String,
+    /// Full file content
+    pub content: String,
+}
+
 /// Skill entry in backup
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -329,6 +344,10 @@ pub struct SkillEntry {
     /// Presets RON content for this skill
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub presets_content: Option<String>,
+    /// All files from the skill folder (new folder-based format)
+    /// When present, restore writes these files directly to disk
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folder_files: Vec<SkillFileEntry>,
 }
 
 /// Skill script entry in backup
@@ -458,6 +477,30 @@ pub struct NoteFileEntry {
     /// Relative path within the notes directory (e.g. "my-note.md" or "ideas/note.md")
     pub relative_path: String,
     /// Full file content (markdown with frontmatter)
+    pub content: String,
+}
+
+/// Installed module entry in backup (folder files + install state)
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModuleBackupEntry {
+    /// Module name (directory name, e.g. "discord_tipping")
+    pub name: String,
+    /// Module version from module.toml
+    pub version: String,
+    /// Whether the module was enabled at backup time
+    pub enabled: bool,
+    /// All files from the module folder (module.toml, service.py, etc.)
+    pub folder_files: Vec<ModuleFileEntry>,
+}
+
+/// A single file from a module folder
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModuleFileEntry {
+    /// Relative path within the module folder (e.g. "module.toml", "service.py")
+    pub relative_path: String,
+    /// Full file content
     pub content: String,
 }
 
@@ -701,57 +744,92 @@ pub async fn collect_backup_data(
         }
     }
 
-    // Skills
-    if let Ok(skills) = db.list_skills() {
-        for skill in skills {
-            let skill_id = skill.id.unwrap_or(0);
-            let scripts = db
-                .get_skill_scripts(skill_id)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|s| SkillScriptEntry {
-                    name: s.name,
-                    code: s.code,
-                    language: s.language,
-                })
-                .collect();
-
-            let abis = db
-                .get_skill_abis(skill_id)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|a| SkillAbiEntry {
-                    name: a.name,
-                    content: a.content,
-                })
-                .collect();
-
-            let presets_content = db
-                .get_skill_preset(skill_id)
-                .ok()
-                .flatten()
-                .map(|p| p.content);
-
-            backup.skills.push(SkillEntry {
-                name: skill.name,
-                description: skill.description,
-                body: skill.body,
-                version: skill.version,
-                author: skill.author,
-                homepage: skill.homepage,
-                metadata: skill.metadata,
-                enabled: skill.enabled,
-                requires_tools: skill.requires_tools.clone(),
-                requires_binaries: skill.requires_binaries.clone(),
-                arguments: serde_json::to_string(&skill.arguments).unwrap_or_default(),
-                tags: skill.tags,
-                subagent_type: skill.subagent_type,
-                requires_api_keys: serde_json::to_string(&skill.requires_api_keys)
-                    .unwrap_or_default(),
-                scripts,
-                abis,
-                presets_content,
+    // Modules — collect folder files from runtime modules directory
+    {
+        let runtime_modules = crate::config::runtime_modules_dir();
+        let installed = db.list_installed_modules().unwrap_or_default();
+        for entry in &installed {
+            let module_dir = runtime_modules.join(&entry.module_name);
+            if !module_dir.is_dir() {
+                continue;
+            }
+            let folder_files = collect_module_folder_files(&module_dir);
+            if folder_files.is_empty() {
+                continue;
+            }
+            // Extract version from module.toml
+            let version = crate::config::extract_version_from_module_toml_pub(&module_dir)
+                .unwrap_or_default();
+            backup.modules.push(ModuleBackupEntry {
+                name: entry.module_name.clone(),
+                version,
+                enabled: entry.enabled,
+                folder_files,
             });
+        }
+        if !backup.modules.is_empty() {
+            log::info!("[Backup] Collected {} installed modules", backup.modules.len());
+        }
+    }
+
+    // Skills — read from disk (primary), fall back to DB for legacy fields
+    {
+        let runtime_skills = std::path::PathBuf::from(crate::config::runtime_skills_dir());
+        if let Ok(skills) = db.list_skills() {
+            for skill in skills {
+                let skill_id = skill.id.unwrap_or(0);
+                let scripts = db
+                    .get_skill_scripts(skill_id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|s| SkillScriptEntry {
+                        name: s.name,
+                        code: s.code,
+                        language: s.language,
+                    })
+                    .collect();
+
+                let abis = db
+                    .get_skill_abis(skill_id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|a| SkillAbiEntry {
+                        name: a.name,
+                        content: a.content,
+                    })
+                    .collect();
+
+                let presets_content = db
+                    .get_skill_preset(skill_id)
+                    .ok()
+                    .flatten()
+                    .map(|p| p.content);
+
+                // Collect all files from the skill's disk folder
+                let folder_files = collect_skill_folder_files(&runtime_skills, &skill.name);
+
+                backup.skills.push(SkillEntry {
+                    name: skill.name,
+                    description: skill.description,
+                    body: skill.body,
+                    version: skill.version,
+                    author: skill.author,
+                    homepage: skill.homepage,
+                    metadata: skill.metadata,
+                    enabled: skill.enabled,
+                    requires_tools: skill.requires_tools.clone(),
+                    requires_binaries: skill.requires_binaries.clone(),
+                    arguments: serde_json::to_string(&skill.arguments).unwrap_or_default(),
+                    tags: skill.tags,
+                    subagent_type: skill.subagent_type,
+                    requires_api_keys: serde_json::to_string(&skill.requires_api_keys)
+                        .unwrap_or_default(),
+                    scripts,
+                    abis,
+                    presets_content,
+                    folder_files,
+                });
+            }
         }
     }
 
@@ -889,6 +967,55 @@ pub async fn collect_backup_data(
 
 /// Collect config files from tool directories that need to persist across restarts.
 ///
+/// Collect all files from a skill's disk folder as SkillFileEntry items.
+/// Returns empty vec if the folder doesn't exist or is unreadable.
+fn collect_skill_folder_files(skills_dir: &std::path::Path, skill_name: &str) -> Vec<SkillFileEntry> {
+    let skill_dir = skills_dir.join(skill_name);
+    if !skill_dir.is_dir() {
+        return Vec::new();
+    }
+
+    let mut files = Vec::new();
+    if let Ok(entries) = collect_dir_files_recursive(&skill_dir, &skill_dir) {
+        for (rel_path, content) in entries {
+            // Only include text files (skip binary)
+            if let Ok(text) = String::from_utf8(content) {
+                files.push(SkillFileEntry {
+                    relative_path: rel_path,
+                    content: text,
+                });
+            }
+        }
+    }
+    files
+}
+
+/// Collect all files from a module's disk folder as ModuleFileEntry items.
+/// Skips the SQLite database file (*.db) and binary files.
+fn collect_module_folder_files(module_dir: &std::path::Path) -> Vec<ModuleFileEntry> {
+    if !module_dir.is_dir() {
+        return Vec::new();
+    }
+
+    let mut files = Vec::new();
+    if let Ok(entries) = collect_dir_files_recursive(module_dir, module_dir) {
+        for (rel_path, content) in entries {
+            // Skip database files — they contain runtime data backed up via module_data
+            if rel_path.ends_with(".db") || rel_path.ends_with(".db-wal") || rel_path.ends_with(".db-shm") {
+                continue;
+            }
+            // Only include text files (skip binary)
+            if let Ok(text) = String::from_utf8(content) {
+                files.push(ModuleFileEntry {
+                    relative_path: rel_path,
+                    content: text,
+                });
+            }
+        }
+    }
+    files
+}
+
 /// Currently supports:
 /// - `gogcli`: ~/.config/gogcli/ (Google Workspace CLI auth tokens)
 fn collect_tool_configs(backup: &mut BackupData) {

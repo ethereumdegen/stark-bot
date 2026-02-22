@@ -83,10 +83,6 @@ fn register_all_tools(registry: &mut ToolRegistry) {
     registry.register(Arc::new(builtin::VerifyTxBroadcastTool::new()));
     // Network selection for chain-specific operations
     registry.register(Arc::new(builtin::SelectWeb3NetworkTool::new()));
-    // DexScreener market data
-    registry.register(Arc::new(builtin::DexScreenerTool::new()));
-    // GeckoTerminal interactive price charts
-    registry.register(Arc::new(builtin::GeckoTerminalTool::new()));
     // Cross-chain USDC bridging via Across Protocol
     registry.register(Arc::new(builtin::BridgeUsdcTool::new()));
     // ERC-8128 signed HTTP requests (Ethereum identity)

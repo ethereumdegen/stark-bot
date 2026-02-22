@@ -10,6 +10,7 @@ pub mod dashboard;
 pub mod heartbeat;
 pub mod dev_chat;
 pub mod eip8004;
+pub mod ext;
 pub mod external_channel;
 pub mod files;
 pub mod gmail;

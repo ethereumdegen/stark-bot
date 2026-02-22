@@ -1,480 +1,430 @@
-# StarkBot
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/c4276f9d-46f2-4576-a691-ea822fe3aa00" alt="StarkBot" width="400" />
+</p>
 
+<h1 align="center">StarkBot</h1>
 
-![starkbot_intro1](https://github.com/user-attachments/assets/c4276f9d-46f2-4576-a691-ea822fe3aa00)
+<p align="center">
+  <strong>An autonomous AI agent with a crypto wallet, on-chain identity, and a soul.</strong><br/>
+  Thinks, trades, deploys, and pays for its own services — across every chain and every chat platform.<br/>
+  Your agent. Your keys. Your infrastructure.
+</p>
 
+<p align="center">
+  <a href="https://github.com/ethereumdegen/stark-bot">
+    <img src="https://img.shields.io/static/v1?label=Core&message=Rust&color=DEA584" />
+  </a>
+  <a href="https://github.com/ethereumdegen/stark-bot">
+    <img src="https://img.shields.io/github/stars/ethereumdegen/stark-bot?style=flat&color=yellow" />
+  </a>
+  <a href="https://github.com/ethereumdegen/stark-bot">
+    <img src="https://img.shields.io/static/v1?label=Frontend&message=React+%2B+TypeScript&color=61DAFB" />
+  </a>
+</p>
 
+<p align="center">
+  <a href="#the-problem">The Problem</a> •
+  <a href="#capabilities">Capabilities</a> •
+  <a href="#how-it-works">How It Works</a> •
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#tech-stack">Tech Stack</a> •
+  <a href="#skills-system">Skills</a>
+</p>
 
-[![Deploy to DigitalOcean](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/apps/new?repo=https://github.com/ethereumdegen/stark-bot/tree/master)
+> **One-click deploy:** [![Deploy to DigitalOcean](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/apps/new?repo=https://github.com/ethereumdegen/stark-bot/tree/master) — or run locally, Docker, Railway, AWS. Connect your wallet, add an API key, go.
 
-A cloud-deployable agentic AI assistant built with Rust and Actix. StarkBot is an intelligent automation hub that interfaces with messaging platforms, executes blockchain transactions, and handles complex multi-step tasks autonomously.
+<p align="center">
+  <img width="1351" height="646" alt="StarkBot Dashboard" src="https://github.com/user-attachments/assets/4e66b1ce-59f7-405c-9353-67a8bead4868" />
+</p>
 
-**Key Features:**
-- **Multi-platform messaging**: Discord, Slack, Telegram integration
-- **Skills system**: Extensible markdown-based skills for code review, deployments, trading, and more
-- **Web3 native**: Token swaps, wallet management, transaction execution on EVM chains
-- **Memory & continuity**: Persistent memory system with daily logs and user preferences
-- **Tool execution**: File operations, git workflows, web fetching, shell commands
-- **SIWE authentication**: Sign In With Ethereum wallet authentication
-- **Scheduling**: Cron-based task scheduling for automated workflows
-- **x402 protocol**: Support for HTTP 402 micropayments
-- **Easy deployment**: DigitalOcean, AWS, Docker support
+---
 
-<img width="1351" height="646" alt="Starkbot1" src="https://github.com/user-attachments/assets/4e66b1ce-59f7-405c-9353-67a8bead4868" />
+## The Problem
 
-## Use at your own risk 
+Most AI agents can talk. Few can *do* anything. They can't hold a wallet. They can't sign a transaction. They can't pay for an API call with real money. They can't remember what you told them yesterday. They live inside a single chat window, disconnected from the systems that actually matter.
 
-AI Agents that directly interface with private keys always pose a serious risk. Use small amounts of cryptocurrency. Guard rails are built in to StarkBot but no guarantee is given that your funds will be safe. Significant testing has NOT been done with this tool - there is no assumption of safety or liability.
+The agents that *can* interact with crypto are usually toy wrappers around an LLM with a private key bolted on — no memory, no identity, no safety rails, no real tool system. They can't execute a multi-step DeFi strategy, manage a Gnosis Safe, or generate an image and pay for it autonomously.
 
+StarkBot is the full stack. An autonomous agent built in Rust with a real wallet, persistent graph memory, 60+ extensible skills, multi-platform presence, on-chain identity, and the ability to pay for services using the x402 micropayment protocol — without asking you for permission every time.
 
+---
 
+## Built for Autonomy
 
+StarkBot isn't a chatbot with a wallet taped on. It's an autonomous system that converges AI reasoning with blockchain execution. It has its own wallet, its own identity, its own memory, and its own judgment about when to act.
 
-## Star History
+**For DeFi operators** — StarkBot executes swaps via 0x, lends on Aave V3, trades prediction markets on Polymarket, manages yield on Pendle, and handles multi-sig operations through Gnosis Safe. It understands allowances, health factors, and slippage. It doesn't just submit transactions — it reasons about whether it should.
 
-[![Star History Chart](https://api.star-history.com/svg?repos=ethereumdegen/stark-bot&type=date&legend=top-left)](https://www.star-history.com/#ethereumdegen/stark-bot&type=date&legend=top-left)
+**For teams and communities** — drop StarkBot into Discord, Slack, Telegram, or Twitter. It normalizes conversations across platforms into a unified context, maintains per-user memory, and operates with configurable safety modes so you control what it can do in each channel.
 
+**For builders** — 60+ markdown-based skills mean you extend StarkBot without touching Rust. Write a `.md` file that describes a workflow, drop it in, and the agent picks it up immediately. Skills can bundle ABIs, scripts, and tool presets. Install custom skills through the web UI or create your own.
 
+**For sovereign agents** — EIP-8004 on-chain identity gives StarkBot a verifiable presence on-chain. It mints its own identity NFT, builds reputation through a public registry, and can be discovered and validated by other agents. This isn't a gimmick — it's the foundation for an agent economy.
 
+### Deploy Your Way
 
-## Local Development
+| Method | What You Get |
+|--------|-------------|
+| **[DigitalOcean](https://cloud.digitalocean.com/apps/new?repo=https://github.com/ethereumdegen/stark-bot/tree/master)** | One-click deploy. Set env vars, done. |
+| **Docker** | `docker compose up` — production-ready with persistent storage. |
+| **Docker Dev** | `docker compose -f docker-compose.dev.yml up` — hot reload for both frontend and backend. |
+| **Local** | `cargo run -p stark-backend` — API + frontend on port 8080. |
+| **Railway** | Push to GitHub Container Registry, deploy from image. |
+
+---
+
+## Capabilities
+
+### Web3 Execution
+
+StarkBot has a real Ethereum wallet and knows how to use it:
+
+- **Token swaps** — DEX trading via 0x aggregator with automatic allowance management
+- **Lending & borrowing** — Aave V3 across Ethereum, Base, Arbitrum, Optimism, Polygon, and Avalanche
+- **Prediction markets** — Polymarket trading with order book and position tracking (Ed25519 API auth)
+- **Yield trading** — Pendle Finance with Principal Tokens, Yield Tokens, and LP strategies
+- **Multi-sig management** — Deploy 1-of-N Gnosis Safes, propose/sign/execute transactions, manage signers
+- **Token transfers** — ETH and ERC-20 transfers on Base and Ethereum
+- **WETH operations** — Wrap and unwrap with a single command
+- **USDC bridging** — Cross-network USDC transfers
+- **On-chain data** — Alchemy Enhanced APIs, DexScreener charts, GeckoTerminal analytics
+
+Two wallet modes, same interface:
+
+| Mode | Provider | Keys |
+|------|----------|------|
+| **Standard** | `EnvWalletProvider` | Private key in `.env` — you hold the key |
+| **Flash** | `FlashWalletProvider` | Privy-custodied embedded wallet — keys never touch the host |
+
+### x402 Autonomous Payments
+
+StarkBot pays for its own services. The [x402 protocol](https://www.x402.org/) lets any HTTP endpoint return `402 Payment Required` with a price, and StarkBot autonomously signs a permit and pays — no human in the loop.
+
+- **AI image generation** — Flux Schnell, Kling v3, Kling O3 via SuperRouter
+- **AI video generation** — MiniMax Hailuo, Kling v3 Standard/Pro
+- **DeFi market data** — PayToll API for on-chain analytics
+- **Custom endpoints** — any x402-compatible service via the `x402_post` tool
+- **Spending limits** — per-token configurable limits in the database
+
+Payment token: **STARKBOT** (ERC-20 on Base) — `0x587Cd533F418825521f3A1daa7CCd1E7339A1B07`
+
+### Messaging
+
+Native adapters for five platforms with a unified message dispatcher:
+
+| Platform | Features |
+|----------|----------|
+| **Discord** | Full bot API — server discovery, message management, moderation, emoji/sticker uploads, reactions |
+| **Slack** | Slack Morphism SDK — workspace-aware messaging with event handling |
+| **Telegram** | Teloxide — direct DMs, group support, media attachments |
+| **Twitter/X** | OAuth 1.0a — post, reply, quote tweet |
+| **Web Chat** | Built-in dashboard — real-time streaming via WebSocket |
+
+Per-channel configuration: safety modes (Safe / Standard / Dangerous), rate limits, tool restrictions, payment mode (free / x402 / metered). The agent can be simultaneously present on all platforms with a single deployment.
+
+### Memory
+
+Not a vector database with raw dumps. StarkBot's memory is a three-tier system that combines keyword precision, semantic flexibility, and graph-based context:
+
+**Tier 1: Typed Memory Store** — Seven categories (daily logs, long-term memory, preferences, facts, entities, tasks, observations) with importance scoring, expiration tracking, and per-user isolation.
+
+**Tier 2: Vector Embeddings** — 384-dimensional embeddings for semantic similarity search. Find related memories even when the words don't match.
+
+**Tier 3: Graph Associations** — Typed relationships (RelatedTo, Updates, Contradicts, CausedBy, ResultOf, PartOf) connecting memories into a navigable knowledge graph.
+
+**Retrieval**: Reciprocal Rank Fusion merging all three tiers. The agent doesn't dump search results — it synthesizes relevant context from structured knowledge.
+
+Memory markers for automatic storage:
+- `[REMEMBER: fact]` → long-term memory
+- `[DAILY_LOG: note]` → session logging
+- Graph associations auto-created for connected memories
+
+### Multi-Agent Orchestration
+
+StarkBot runs a hierarchical agent system:
+
+- **Director agent** — routes tasks, spawns specialized subagents
+- **Subagent roles** — finance, code engineering, secretary — each with constrained tool sets
+- **Isolated execution** — subagents get their own session context, preventing cross-contamination
+- **Parallel execution** — multiple subagents work simultaneously with result synthesis
+- **Session lane manager** — prevents race conditions across concurrent sessions
+
+### Scheduling & Automation
+
+- **Cron jobs** — flexible cron expressions with max 5 concurrent executions
+- **Heartbeat system** — periodic self-reflection cycles (configurable intervals, active hours, day-of-week)
+- **Impulse maps** — knowledge graph nodes the agent traverses and refines autonomously
+- **Error resilience** — exponential backoff (30s → 1m → 5m → 15m → 60m), 10-minute timeout per job
+- **Task system** — `define_tasks` for breaking complex operations into sequential steps
+
+### Tools
+
+35+ built-in tools across six categories:
+
+| Category | Tools |
+|----------|-------|
+| **File ops** | `read_file`, `write_file`, `edit_file`, `delete_file`, `rename_file`, `glob`, `grep`, `list_files` |
+| **Git & code** | `git`, `committer`, `pr_quality`, `apply_patch` |
+| **Memory** | `memory_store`, `memory_get`, `multi_memory_search`, `memory_graph`, `memory_associate`, `memory_merge` |
+| **Web3** | `web3_tx`, `web3_function_call`, `token_lookup`, `send_eth`, `swap_execute`, `erc20_approve_swap`, `x402_post`, `x402_rpc` |
+| **Communication** | `say_to_user`, `ask_user`, `agent_send`, `discord_read`, `discord_write`, `twitter_post` |
+| **System** | `exec`, `process_status`, `web_fetch`, `subagent`, `notes`, `define_tasks` |
+
+### Dashboard
+
+A full React + TypeScript frontend with 30+ pages:
+
+- **Agent Chat** — conversational interface with real-time streaming
+- **Skills Browser** — enable/disable skills, upload custom `.md` or `.zip` skills, relationship graph visualization
+- **Memory Browser** — browse typed memories, explore the knowledge graph, visualize associations
+- **Crypto Transactions** — transaction history, payment logs, spending tracking
+- **Scheduling** — cron job management, heartbeat configuration
+- **Channels** — Discord/Slack/Telegram channel configuration and safety modes
+- **API Keys** — manage Anthropic, GitHub, Twitter, Polymarket, and other service credentials
+- **Cloud Backup** — ECIES-encrypted backup and restore of agent state
+- **Identity** — EIP-8004 on-chain identity registration and management
+- **Kanban Board** — task tracking with column state
+- **Impulse Map** — knowledge graph visualization with D3.js
+- **System** — logs, file browser, configuration editor
+
+---
+
+## How It Works
+
+### The Agent Loop
+
+```
+User sends message (Discord / Slack / Telegram / Twitter / Web)
+    → Message dispatcher normalizes it
+        → AI engine processes with tool-calling loop
+            → Agent reasons, selects tools, executes
+            → Tools interact with blockchain, files, APIs, memory
+            → x402 payments happen autonomously when needed
+        → Response streamed back via WebSocket
+    → Response delivered to originating platform
+```
+
+### The Wallet
+
+StarkBot's wallet isn't an afterthought. It's woven into the execution layer:
+
+- **SIWE authentication** — the agent proves its identity with Ethereum signatures
+- **EIP-2612 permits** — gasless token approvals for x402 payments
+- **Typed data signing** — full EIP-712 support for DeFi protocol interactions
+- **ECIES encryption** — encrypt agent state for secure cloud backup
+- **Multi-sig** — deploy and manage Gnosis Safe wallets with threshold signing
+
+### The Skills System
+
+Skills are markdown files. No Rust compilation required.
+
+```
+skills/
+├── swap.md              # DEX token swaps
+├── aave.md              # Lending & borrowing
+├── polymarket_us.md     # Prediction markets
+├── safe_wallet.md       # Gnosis Safe management
+├── github.md            # PR workflows & code quality
+├── discord.md           # Discord operations
+├── image_generation.md  # AI image gen (x402-paid)
+├── video_generation.md  # AI video gen (x402-paid)
+├── notes.md             # Persistent note-taking
+├── heartbeat.md         # Self-reflection automation
+├── scheduling.md        # Cron job setup
+└── ...                  # 60+ skills total
+```
+
+Each skill can bundle:
+- **Tool definitions** — custom tools with parameters and execution logic
+- **ABI files** — smart contract interfaces for on-chain interactions
+- **Scripts** — Python/shell scripts for complex operations
+- **Presets** — pre-configured tool parameters for common operations
+
+Install custom skills through the web UI or drop `.md` files into the skills directory.
+
+### The Memory Graph
+
+```
+[Fact: "User prefers Base network"]
+    ──RelatedTo──→ [Preference: "Low gas fees"]
+    ──Updates───→ [Fact: "User previously used Ethereum mainnet"]
+
+[Decision: "Swapped 100 USDC for ETH"]
+    ──CausedBy──→ [Observation: "ETH price dropped 5%"]
+    ──PartOf────→ [Task: "Rebalance portfolio"]
+```
+
+Memories decay over time. Identity memories are exempt. The graph is traversable, searchable, and automatically pruned.
+
+---
+
+## Quick Start
 
 ### Prerequisites
 
-- Rust 1.88+ (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`)
-- SQLite3 (usually pre-installed on Linux)
-- Node.js 18+ (for frontend development)
-- [uv](https://docs.astral.sh/uv/) (for Python-based skill scripts — replaces system python3/pip)
+- **Rust** 1.88+ ([rustup.rs](https://rustup.rs/))
+- **Node.js** 18+ (for frontend)
+- **SQLite3** (usually pre-installed on Linux)
+- **[uv](https://docs.astral.sh/uv/)** (for Python-based skill scripts)
 
-### Environment Setup
+### Build and Run
 
-Both local development and Docker configurations read from a `.env` file. Set this up once and all commands will use it automatically.
-
-Your `.env` file should contain:
 ```bash
-# Required: Ethereum address that can log in via SIWE (Sign In With Ethereum)
-# This is the wallet address you'll use to authenticate with MetaMask
-LOGIN_ADMIN_PUBLIC_ADDRESS=0xYourEthereumWalletAddress
+git clone https://github.com/ethereumdegen/stark-bot
+cd stark-bot
 
-# Optional: Private key for bot to spend USDC on Base (for future features)
+# Build frontend
+cd stark-frontend && npm install && npm run build && cd ..
+
+# Run (API + frontend on port 8080)
+cargo run -p stark-backend
+```
+
+### Configure
+
+Create a `.env` file:
+
+```bash
+# Required: Ethereum address for SIWE login
+LOGIN_ADMIN_PUBLIC_ADDRESS=0xYourWalletAddress
+
+# Optional: Private key for wallet operations
 BURNER_WALLET_BOT_PRIVATE_KEY=
 
-# Optional server configuration
+# Server
 PORT=8080
 GATEWAY_PORT=8081
 DATABASE_URL=./.db/stark.db
 RUST_LOG=info
 ```
 
-### Authentication
+### First Login
 
-StarkBot uses **SIWE (Sign In With Ethereum)** for authentication:
+1. Open `http://localhost:8080`
+2. Click **Connect Wallet** → approve in MetaMask → sign the challenge
+3. Go to **API Keys** → add your Anthropic API key
+4. Start chatting
 
-1. Navigate to `http://localhost:8080`
-2. Click "Connect Wallet"
-3. Approve the connection in MetaMask
-4. Sign the challenge message
-5. You're logged in!
+API keys are stored in the local SQLite database, not in environment variables. No secrets in `.env` beyond the wallet key.
 
-Only the wallet address specified in `LOGIN_ADMIN_PUBLIC_ADDRESS` can authenticate.
-
-### Configure AI (After First Login)
-
-API keys are managed through the web UI, not environment variables:
-
-1. Start the server and login
-2. Go to **API Keys** in the sidebar
-3. Add your Anthropic API key (get one from [console.anthropic.com](https://console.anthropic.com/))
-4. Your key is stored securely in the local SQLite database
-
-### Run Locally
-
-There are three ways to run StarkBot locally:
-
-#### Option 1: Backend serves frontend (simplest)
-
-```bash
-# Build frontend first
-cd stark-frontend && npm install && npm run build && cd ..
-
-# Run the server (serves API + frontend on port 8080)
-cargo run -p stark-backend
-```
-
-The server starts at `http://localhost:8080`
-
-#### Option 2: Separate frontend dev server (for frontend development)
-
-This gives you hot-reload for frontend changes:
-
-```bash
-# Terminal 1: Run backend only (API on 8080, WebSocket on 8081)
-DISABLE_FRONTEND=1 cargo run -p stark-backend
-
-# Terminal 2: Run frontend dev server (on 5173, proxies to backend)
-cd stark-frontend && npm run dev
-```
-
-Open `http://localhost:5173` for hot-reloading frontend.
-
-#### Option 3: Docker dev environment
-
-```bash
-docker compose -f docker-compose.dev.yml up --build
-```
-
-Open `http://localhost:8080`
-
-### Development Modes Summary
+### Development Modes
 
 | Environment | Command | API | WebSocket | Frontend |
 |-------------|---------|-----|-----------|----------|
-| **Local (combined)** | `cargo run -p stark-backend` | localhost:8080 | localhost:8081 | localhost:8080 |
-| **Local (separate)** | `DISABLE_FRONTEND=1 cargo run` + `npm run dev` | localhost:8080 | localhost:8081 | localhost:5173 |
-| **Docker dev** | `docker compose -f docker-compose.dev.yml up` | internal:8082 | localhost:8081 | localhost:8080 |
-| **Docker prod** | `docker compose up` | localhost:8080 | localhost:8081 | localhost:8080 |
+| **Local (combined)** | `cargo run -p stark-backend` | :8080 | :8081 | :8080 |
+| **Local (separate)** | `DISABLE_FRONTEND=1 cargo run` + `npm run dev` | :8080 | :8081 | :5173 |
+| **Docker dev** | `docker compose -f docker-compose.dev.yml up` | internal | :8081 | :8080 |
+| **Docker prod** | `docker compose up` | :8080 | :8081 | :8080 |
 
+---
 
-### Test Endpoints
+## Tech Stack
 
-```bash
-# Health check
-curl http://localhost:8080/health
+| Layer | Technology |
+|-------|-----------|
+| Language | **Rust** (edition 2021) — ~60,000 lines of production backend code |
+| Web framework | **Actix-web 4** with WebSocket support (Actix-WS) |
+| Async runtime | **Tokio** (full features) |
+| Database | **SQLite 3** with WAL mode, R2D2 connection pooling, Moka in-memory cache |
+| Wallet | **Ethers.rs 2.0** — dual wallet provider, SIWE, EIP-2612, EIP-712, ECIES |
+| Frontend | **React 18** + TypeScript 5 + Vite 5 + Tailwind CSS 3 |
+| Visualization | **D3.js 7** (knowledge graphs) + **Anime.js 4** (animations) |
+| Discord | **Serenity** — gateway, cache, events, rich messages |
+| Slack | **slack-morphism** — Socket Mode, events, workspace messaging |
+| Telegram | **teloxide** — long-poll, media, group/DM support |
+| Crypto (frontend) | **ethers.js 6** + **eth-crypto 3** |
+| Deployment | **Docker** multi-stage build, DigitalOcean, Railway, AWS |
 
-# Generate SIWE challenge (step 1 of login)
-curl -X POST http://localhost:8080/api/auth/generate_challenge \
-  -H "Content-Type: application/json" \
-  -d '{"public_address":"0xYourWalletAddress"}'
+No microservices. No Kubernetes. Everything runs in a single binary with an embedded database.
 
-# Validate auth with signature (step 2 of login)
-# Note: In practice, the signature is generated by your wallet
-curl -X POST http://localhost:8080/api/auth/validate_auth \
-  -H "Content-Type: application/json" \
-  -d '{"public_address":"0x...","challenge":"Signing in to StarkBot as 0x... at 1234567890","signature":"0x..."}'
-```
+---
 
-## Local Docker Testing
+## Security
 
-The production Docker setup reads configuration from your `.env` file automatically (no need to pass `-e` flags).
+### Use at Your Own Risk
 
-### Run with Docker Compose (Recommended)
+AI agents that interface with private keys pose inherent risk. Use small amounts of cryptocurrency. Guard rails are built into StarkBot but no guarantee is given that funds will be safe. Significant testing has NOT been done with this tool — there is no assumption of safety or liability.
 
-```bash
-# Start the container (reads from .env automatically)
-docker compose up --build
+### Built-in Protections
 
-# Or run in background
-docker compose up --build -d
+- **SIWE authentication** — only your wallet address can access the dashboard
+- **Per-channel safety modes** — restrict dangerous tools per channel
+- **Session token validation** — on all protected API endpoints
+- **Secret detection** — in git commit workflows
+- **ECIES encryption** — for cloud backup of agent state
+- **Rate limiting** — per-user and per-channel
+- **No API keys in env** — credentials stored encrypted in SQLite
 
-# View logs
-docker compose logs -f
+---
 
-# Stop
-docker compose down
-```
+## Agent Identity (SOUL.md)
 
-This includes persistent database storage in the `./data` directory.
+`SOUL.md` defines who your agent is. Key principles:
 
-### Run with Docker Manually
+- **Action over words** — solve problems, don't narrate them
+- **Genuine assistance** — skip corporate phrases, just help
+- **Have opinions** — disagree when something is a bad idea
+- **Respect the access** — handle keys and user data with care
 
-If you prefer manual Docker commands:
+Customize `SOUL.md` to adjust personality, behavior, and guardrails for your use case.
 
-```bash
-# Build the image
-docker build -t starkbot .
-
-# Run with env file
-docker run -p 8080:8080 --env-file .env -v $(pwd)/data:/app/.db starkbot
-
-# Or run in detached mode
-docker run -d -p 8080:8080 --env-file .env -v $(pwd)/data:/app/.db --name starkbot starkbot
-
-# Stop and remove
-docker stop starkbot && docker rm starkbot
-```
-
-### Build and Push to Registry (Railway)
-
-To build and push a new Docker image to the GitHub Container Registry for Railway deployment:
-
-```bash
-# Build with tags for flash and latest
-docker build -t ghcr.io/starkbotai/starkbot:flash -t ghcr.io/starkbotai/starkbot:latest .
-
-# Push both tags
-docker push ghcr.io/starkbotai/starkbot:flash
-docker push ghcr.io/starkbotai/starkbot:latest
-```
-
-### Test the Container
-
-```bash
-# Health check
-curl http://localhost:8080/health
-
-# Open in browser
-xdg-open http://localhost:8080  # Linux
-open http://localhost:8080      # macOS
-```
-
-## Development with Hot Reload (Docker)
-
-For active development, use the dev Docker configuration which provides automatic hot reloading for both frontend and backend changes.
-
-### Start Development Environment
-
-```bash
-# Start with hot reload (first run will take longer to build)
-docker compose -f docker-compose.dev.yml up --build
-
-# Or run in background
-docker compose -f docker-compose.dev.yml up --build -d
-
-# View logs when running in background
-docker compose -f docker-compose.dev.yml logs -f
-```
-
-
-
-
-
-### Stop Development Environment
-
-```bash
-# Stop containers
-docker compose -f docker-compose.dev.yml down
-
-# Stop and remove volumes (clean slate)
-docker compose -f docker-compose.dev.yml down -v
-```
-
-## Deploy to DigitalOcean App Platform
-
-### 1. Push to GitHub
-
-```bash
-git init
-git add .
-git commit -m "Initial commit"
-git remote add origin git@github.com:yourusername/starkbot.git
-git push -u origin main
-```
-
-### 2. Create App on DigitalOcean
-
-1. Go to [DigitalOcean App Platform](https://cloud.digitalocean.com/apps)
-2. Click **Create App**
-3. Select **GitHub** and authorize access
-4. Choose your `starkbot` repository
-5. Select the branch (e.g., `main`)
-
-### 3. Configure the App
-
-DigitalOcean should auto-detect the Dockerfile. If not, manually configure:
-
-- **Type**: Web Service
-- **Source**: Dockerfile
-- **HTTP Port**: 8080
-- **Health Check Path**: `/health`
-
-### 4. Set Environment Variables
-
-In the App settings, add:
-
-| Variable | Value |
-|----------|-------|
-| `LOGIN_ADMIN_PUBLIC_ADDRESS` | Your Ethereum wallet address (e.g., `0x1234...`) |
-| `RUST_LOG` | `info` |
-| `DATABASE_URL` | `/app/.db/stark.db` |
-
-### 5. Configure Persistent Storage (Optional)
-
-For persistent SQLite data across deploys:
-
-1. Go to **Components** > your web service > **Settings**
-2. Under **Volumes**, click **Add Volume**
-3. Set mount path to `/app/.db`
-4. Update `DATABASE_URL` to `/app/.db/stark.db`
-
-### 6. Deploy
-
-Click **Create Resources** to deploy. The build takes a few minutes.
-
-Your app will be available at: `https://your-app-name.ondigitalocean.app`
-
-## App Spec (Alternative)
-
-You can also deploy using a `.do/app.yaml` spec file:
-
-```yaml
-name: starkbot
-services:
-  - name: web
-    dockerfile_path: Dockerfile
-    github:
-      repo: yourusername/starkbot
-      branch: main
-      deploy_on_push: true
-    http_port: 8080
-    health_check:
-      http_path: /health
-    instance_size_slug: basic-xxs
-    instance_count: 1
-    envs:
-      - key: LOGIN_ADMIN_PUBLIC_ADDRESS
-        scope: RUN_TIME
-        value: "0xYourEthereumWalletAddress"
-      - key: RUST_LOG
-        scope: RUN_TIME
-        value: info
-      - key: DATABASE_URL
-        scope: RUN_TIME
-        value: /app/.db/stark.db
-```
-
-Deploy with:
-```bash
-doctl apps create --spec .do/app.yaml
-```
+---
 
 ## Project Structure
 
 ```
-starkbot-monorepo/
+stark-bot/
 ├── Cargo.toml                 # Workspace manifest
 ├── Dockerfile                 # Production multi-stage build
-├── Dockerfile.dev             # Development build with hot reload
 ├── docker-compose.yml         # Production Docker Compose
-├── docker-compose.dev.yml     # Dev environment with volume mounts
-├── SOUL.md                    # Agent identity and personality config
-├── skills/                    # Markdown-based skill definitions
-│   ├── bankr.md               # Bankr token trading
-│   ├── polymarket.md          # Polymarket predictions
-│   ├── swap.md                # DEX token swaps
-│   ├── github.md              # GitHub integration
-│   ├── discord.md             # Discord operations
-│   └── ...                    # 20+ skills available
+├── docker-compose.dev.yml     # Dev environment with hot reload
+├── SOUL.md                    # Agent personality config
+├── skills/                    # 60+ markdown-based skill definitions
+│   ├── swap.md                # DEX trading
+│   ├── aave.md                # Lending/borrowing
+│   ├── polymarket_us.md       # Prediction markets
+│   ├── safe_wallet.md         # Gnosis Safe multi-sig
+│   ├── image_generation.md    # AI image generation
+│   └── ...
 ├── stark-backend/             # Actix web server (Rust)
 │   └── src/
 │       ├── main.rs            # Server entry point
-│       ├── config.rs          # Environment config
-│       ├── ai/                # AI agent logic
-│       ├── channels/          # Discord, Slack, Telegram integrations
-│       ├── controllers/       # API endpoints
-│       ├── db/                # SQLite database
+│       ├── ai/                # AI agent logic & orchestration
+│       ├── channels/          # Discord, Slack, Telegram, Twitter
+│       ├── controllers/       # API endpoints (30+)
+│       ├── db/                # SQLite schema (50+ tables)
 │       ├── execution/         # Tool execution engine
 │       ├── gateway/           # WebSocket gateway
-│       ├── memory/            # Agent memory system
-│       ├── scheduler/         # Cron scheduling
-│       ├── skills/            # Skill loading and parsing
+│       ├── memory/            # Three-tier memory system
+│       ├── scheduler/         # Cron & heartbeat scheduling
+│       ├── skills/            # Skill loading & registry
+│       ├── wallet/            # Dual wallet provider
+│       ├── x402/              # x402 payment protocol
 │       └── tools/builtin/     # 35+ built-in tools
-└── stark-frontend/            # React/TypeScript frontend
+└── stark-frontend/            # React + TypeScript dashboard
     └── src/
         ├── components/        # Reusable UI components
-        ├── pages/             # Application pages
-        └── views/             # Chat and dashboard views
+        ├── pages/             # 30+ application pages
+        └── views/             # Chat, dashboard, graph views
 ```
 
-## Skills System
+---
 
-StarkBot uses a powerful markdown-based skills system. Skills define capabilities and workflows the agent can execute.
+## Star History
 
-### Built-in Skills
+[![Star History Chart](https://api.star-history.com/svg?repos=ethereumdegen/stark-bot&type=date&legend=top-left)](https://www.star-history.com/#ethereumdegen/stark-bot&type=date&legend=top-left)
 
-| Skill | Description |
-|-------|-------------|
-| `bankr` | Trade tokens on Bankr (Base network) |
-| `polymarket` | Interact with Polymarket prediction markets |
-| `swap` | Execute token swaps on DEXs |
-| `transfer` | Send tokens and ETH |
-| `github` | GitHub repository operations |
-| `discord` | Discord channel management |
-| `moltbook` | Moltbook integrations |
-| `moltx` | MoltX trading |
-| `code-review` | Automated code review |
-| `commit` | Git commit workflows |
-| `deploy-github` | Deploy to GitHub Pages |
-| `create-project` | Scaffold new projects |
-| `create-skill` | Create new skills |
-| `scheduling` | Set up cron-based tasks |
-| `weather` | Weather lookups |
-| `token_price` | Cryptocurrency price checks |
-| `local_wallet` | Local wallet management |
-| `weth` | WETH wrap/unwrap operations |
+---
 
-### Installing Custom Skills
+## Contributing
 
-Skills can be installed through the web UI:
-1. Navigate to **Skills** in the sidebar
-2. Upload a `.md` file or `.zip` archive
-3. Skills are immediately available to the agent
+1. Fork the repo
+2. Create a feature branch
+3. Make your changes
+4. Submit a PR
 
-Skill format follows the Claude Code / Clawd skill specification.
+---
 
-## Built-in Tools
+## License
 
-The agent has access to 35+ built-in tools:
-
-**File Operations**: `read_file`, `write_file`, `edit_file`, `delete_file`, `rename_file`, `glob`, `grep`, `list_files`
-
-**Git & Code**: `git`, `committer`, `pr_quality`, `apply_patch`
-
-**Memory**: `memory_store`, `memory_get`, `multi_memory_search`
-
-**Web3**: `web3_tx`, `web3_function_call`, `token_lookup`
-
-**Communication**: `say_to_user`, `ask_user`, `agent_send`, `discord_lookup`
-
-**System**: `exec`, `process_status`, `task_complete`, `subagent`
-
-**Web**: `web_fetch`, `x402_preset_fetch`, `x402_rpc`
-
-## AI Provider Configuration
-
-StarkBot works with OpenAI-compatible APIs. API keys are managed through the web UI under **API Keys**.
-
-### Using Anthropic Claude
-
-Get an API key from [console.anthropic.com](https://console.anthropic.com/) and add it in the API Keys settings.
-
-### Using DigitalOcean AI Agents
-
-Compatible with DigitalOcean's hosted models (e.g., llama-33-instruct):
-
-```
-Provider Type    : OpenAI Compatible
-API Endpoint URI : https://xxxxxxxxx.agents.do-ai.run/api/v1/chat/completions
-API Key          : your-access-key
-```
-
-## Messaging Integrations
-
-StarkBot can connect to multiple messaging platforms simultaneously:
-
-| Platform | Status | Configuration |
-|----------|--------|---------------|
-| Discord | ✅ Supported | Bot token in API Keys |
-| Slack | ✅ Supported | App credentials in API Keys |
-| Telegram | ✅ Supported | Bot token in API Keys |
-| Web Chat | ✅ Built-in | Available at dashboard |
-
-## Memory & Continuity
-
-StarkBot maintains persistent memory across sessions:
-
-- **Long-term memory**: Facts about users, preferences, important context
-- **Daily logs**: Session notes, decisions, follow-ups
-- **Session history**: Recent conversation context
-
-Memory is automatically stored when the agent uses markers like `[REMEMBER: fact]` or `[DAILY_LOG: note]` in responses.
-
-## Agent Identity (SOUL.md)
-
-The `SOUL.md` file defines StarkBot's personality and behavior guidelines. Key principles:
-
-- **Action over words**: Solve problems, don't narrate them
-- **Genuine assistance**: Skip corporate phrases, just help
-- **Have opinions**: Disagree when something is a bad idea
-- **Respect the access**: Handle API keys and user data with care
-
-You can customize `SOUL.md` to adjust the agent's personality for your use case.
+MIT — see [LICENSE](LICENSE) for details.

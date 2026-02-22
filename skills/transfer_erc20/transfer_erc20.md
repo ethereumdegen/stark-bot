@@ -6,7 +6,7 @@ author: starkbot
 homepage: https://basescan.org
 metadata: {"requires_auth": false, "clawdbot":{"emoji":"🪙"}}
 tags: [crypto, transfer, send, erc20, tokens, base, wallet]
-presets_file: presets.ron
+presets_file: web3_presets.ron
 requires_tools: [set_address, token_lookup, to_raw_amount, web3_preset_function_call, list_queued_web3_tx, broadcast_web3_tx, verify_tx_broadcast, select_web3_network, define_tasks]
 ---
 

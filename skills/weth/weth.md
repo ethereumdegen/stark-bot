@@ -6,7 +6,7 @@ author: starkbot
 metadata: {"clawdbot":{"emoji":"🔄"}}
 tags: [crypto, defi, finance, weth, wrap, unwrap, base]
 abis: [weth]
-presets_file: presets.ron
+presets_file: web3_presets.ron
 requires_tools: [to_raw_amount, web3_preset_function_call, list_queued_web3_tx, broadcast_web3_tx]
 ---
 

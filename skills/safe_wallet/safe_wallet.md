@@ -12,7 +12,7 @@ requires_api_keys:
     description: "Safe (Gnosis) wallet address"
     secret: false
 abis: [safe, safe_proxy_factory]
-presets_file: presets.ron
+presets_file: web3_presets.ron
 ---
 
 # Safe{Wallet} Multi-Sig Skill

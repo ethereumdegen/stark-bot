@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   FileCode,
   RefreshCw,
@@ -12,21 +12,39 @@ import {
   ClipboardList,
   Trash2,
   ArrowLeft,
+  FolderOpen,
+  Folder,
+  ChevronRight,
+  ChevronDown,
 } from 'lucide-react';
 import {
   listIntrinsicFiles,
+  listIntrinsicDir,
   readIntrinsicFile,
   writeIntrinsicFile,
   deleteIntrinsicFile,
   IntrinsicFileInfo,
 } from '@/lib/api';
 
+interface TreeNode {
+  name: string;
+  path: string; // full path relative to /api/intrinsic/, e.g. "skills/aave/SKILL.md"
+  is_dir: boolean;
+  writable: boolean;
+  deletable: boolean;
+  description?: string;
+  children?: TreeNode[];
+  loaded?: boolean;
+}
+
 export default function SystemFiles() {
-  const [files, setFiles] = useState<IntrinsicFileInfo[]>([]);
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [rootNodes, setRootNodes] = useState<TreeNode[]>([]);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [currentPath, setCurrentPath] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [editedContent, setEditedContent] = useState<string>('');
   const [isWritable, setIsWritable] = useState(false);
+  const [isDeletable, setIsDeletable] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingFile, setIsLoadingFile] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -37,50 +55,117 @@ export default function SystemFiles() {
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [mobileView, setMobileView] = useState<'list' | 'preview'>('list');
 
-  const loadFiles = async () => {
+  const loadRootNodes = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
       const fileList = await listIntrinsicFiles();
-      setFiles(fileList);
-    } catch (err) {
+      const nodes: TreeNode[] = fileList.map((f: IntrinsicFileInfo) => ({
+        name: f.name,
+        path: f.name,
+        is_dir: f.is_dir ?? false,
+        writable: f.writable,
+        deletable: f.deletable ?? false,
+        description: f.description,
+        children: f.is_dir ? [] : undefined,
+        loaded: !f.is_dir,
+      }));
+      setRootNodes(nodes);
+    } catch {
       setError('Failed to load system files');
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
-  const loadFile = async (name: string) => {
+  const loadDirChildren = useCallback(async (dirPath: string): Promise<TreeNode[]> => {
+    try {
+      const entries = await listIntrinsicDir(dirPath);
+      return entries.map((e: IntrinsicFileInfo) => ({
+        name: e.name,
+        path: `${dirPath}/${e.name}`,
+        is_dir: e.is_dir ?? false,
+        writable: e.writable,
+        deletable: e.deletable ?? false,
+        description: e.description,
+        children: e.is_dir ? [] : undefined,
+        loaded: !e.is_dir,
+      }));
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const updateNodeChildren = useCallback((nodes: TreeNode[], targetPath: string, children: TreeNode[]): TreeNode[] => {
+    return nodes.map(node => {
+      if (node.path === targetPath) {
+        return { ...node, children, loaded: true };
+      }
+      if (node.children && targetPath.startsWith(node.path + '/')) {
+        return { ...node, children: updateNodeChildren(node.children, targetPath, children) };
+      }
+      return node;
+    });
+  }, []);
+
+  const toggleFolder = useCallback(async (path: string) => {
+    const newExpanded = new Set(expandedFolders);
+    if (newExpanded.has(path)) {
+      newExpanded.delete(path);
+    } else {
+      newExpanded.add(path);
+      // Lazy-load children
+      const children = await loadDirChildren(path);
+      setRootNodes(prev => updateNodeChildren(prev, path, children));
+    }
+    setExpandedFolders(newExpanded);
+  }, [expandedFolders, loadDirChildren, updateNodeChildren]);
+
+  const loadFile = useCallback(async (path: string) => {
     setIsLoadingFile(true);
     setFileError(null);
     setFileContent(null);
-    setSelectedFile(name);
+    setCurrentPath(path);
     setIsEditing(false);
     setSaveMessage(null);
     setMobileView('preview');
     try {
-      const response = await readIntrinsicFile(name);
+      const response = await readIntrinsicFile(path);
       if (response.success && response.content !== undefined) {
         setFileContent(response.content);
         setEditedContent(response.content);
         setIsWritable(response.writable);
+        // Determine deletability from tree node
+        const node = findNode(rootNodes, path);
+        setIsDeletable(node?.deletable ?? false);
       } else {
         setFileError(response.error || 'Failed to load file');
       }
-    } catch (err) {
+    } catch {
       setFileError('Failed to load file');
     } finally {
       setIsLoadingFile(false);
     }
+  }, [rootNodes]);
+
+  const findNode = (nodes: TreeNode[], path: string): TreeNode | undefined => {
+    for (const node of nodes) {
+      if (node.path === path) return node;
+      if (node.children) {
+        const found = findNode(node.children, path);
+        if (found) return found;
+      }
+    }
+    return undefined;
   };
 
   const handleSave = async () => {
-    if (!selectedFile || !isWritable) return;
+    if (!currentPath || !isWritable) return;
 
     setIsSaving(true);
     setSaveMessage(null);
     try {
-      const response = await writeIntrinsicFile(selectedFile, editedContent);
+      const response = await writeIntrinsicFile(currentPath, editedContent);
       if (response.success) {
         setFileContent(editedContent);
         setIsEditing(false);
@@ -89,7 +174,7 @@ export default function SystemFiles() {
       } else {
         setFileError(response.error || 'Failed to save file');
       }
-    } catch (err) {
+    } catch {
       setFileError('Failed to save file');
     } finally {
       setIsSaving(false);
@@ -97,26 +182,32 @@ export default function SystemFiles() {
   };
 
   const handleDelete = async () => {
-    if (!selectedFile) return;
-    const file = files.find(f => f.name === selectedFile);
-    if (!file?.deletable) return;
-    if (!confirm(`Delete ${selectedFile}?`)) return;
+    if (!currentPath) return;
+    if (!confirm(`Delete ${currentPath}?`)) return;
 
     setIsDeleting(true);
     setFileError(null);
     try {
-      const response = await deleteIntrinsicFile(selectedFile);
+      const response = await deleteIntrinsicFile(currentPath);
       if (response.success) {
         setFileContent(null);
-        setSelectedFile(null);
+        setCurrentPath(null);
         setIsEditing(false);
         setSaveMessage(null);
         setMobileView('list');
+        // Refresh parent folder
+        const parentPath = currentPath.split('/').slice(0, -1).join('/');
+        if (parentPath) {
+          const children = await loadDirChildren(parentPath);
+          setRootNodes(prev => updateNodeChildren(prev, parentPath, children));
+        } else {
+          loadRootNodes();
+        }
       } else {
-        setFileError(response.error || 'Failed to delete file');
+        setFileError(response.error || 'Failed to delete');
       }
     } catch {
-      setFileError('Failed to delete file');
+      setFileError('Failed to delete');
     } finally {
       setIsDeleting(false);
     }
@@ -128,15 +219,79 @@ export default function SystemFiles() {
   };
 
   useEffect(() => {
-    loadFiles();
-  }, []);
+    loadRootNodes();
+  }, [loadRootNodes]);
 
   const refresh = () => {
-    loadFiles();
-    if (selectedFile) {
-      loadFile(selectedFile);
+    setExpandedFolders(new Set());
+    loadRootNodes();
+    if (currentPath) {
+      loadFile(currentPath);
     }
   };
+
+  const getFileIcon = (name: string, isDir: boolean, isExpanded: boolean) => {
+    if (isDir) {
+      return isExpanded
+        ? <FolderOpen className="w-4 h-4 flex-shrink-0 text-amber-400" />
+        : <Folder className="w-4 h-4 flex-shrink-0 text-amber-400" />;
+    }
+    if (name === 'soul.md') return <Sparkles className="w-4 h-4 flex-shrink-0 text-purple-400" />;
+    if (name === 'guidelines.md') return <ClipboardList className="w-4 h-4 flex-shrink-0 text-blue-400" />;
+    return <FileCode className="w-4 h-4 flex-shrink-0 text-slate-400" />;
+  };
+
+  const renderTreeNode = (node: TreeNode, depth: number = 0) => {
+    const isExpanded = expandedFolders.has(node.path);
+    const isSelected = currentPath === node.path;
+    const indent = depth * 16;
+
+    return (
+      <div key={node.path}>
+        <button
+          onClick={() => {
+            if (node.is_dir) {
+              toggleFolder(node.path);
+            } else {
+              loadFile(node.path);
+            }
+          }}
+          className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm transition-colors ${
+            isSelected
+              ? 'bg-stark-500/20 text-stark-400'
+              : 'text-slate-300 hover:bg-slate-700/50'
+          }`}
+          style={{ paddingLeft: `${12 + indent}px` }}
+        >
+          {node.is_dir ? (
+            isExpanded
+              ? <ChevronDown className="w-3.5 h-3.5 flex-shrink-0 text-slate-500" />
+              : <ChevronRight className="w-3.5 h-3.5 flex-shrink-0 text-slate-500" />
+          ) : (
+            <span className="w-3.5" />
+          )}
+          {getFileIcon(node.name, node.is_dir, isExpanded)}
+          <span className="truncate flex-1">{node.name}</span>
+          {!node.writable && !node.is_dir && (
+            <Lock className="w-3 h-3 text-slate-500 flex-shrink-0" />
+          )}
+        </button>
+        {node.is_dir && isExpanded && node.children && (
+          <div>
+            {node.children.length === 0 ? (
+              <div className="text-xs text-slate-500 py-1" style={{ paddingLeft: `${28 + indent}px` }}>
+                Empty
+              </div>
+            ) : (
+              node.children.map(child => renderTreeNode(child, depth + 1))
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const displayName = currentPath?.split('/').pop() || currentPath || '';
 
   return (
     <div className="h-full flex flex-col">
@@ -146,7 +301,7 @@ export default function SystemFiles() {
           <div>
             <h1 className="text-2xl font-bold text-white">System Files</h1>
             <p className="text-slate-400 text-sm mt-1 hidden md:block">
-              Core configuration files that define the agent's behavior
+              Core configuration files and installed skills
             </p>
           </div>
           <button
@@ -161,8 +316,8 @@ export default function SystemFiles() {
 
       {/* Content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* File List */}
-        <div className={`w-full md:w-80 border-r border-slate-700 overflow-y-auto ${mobileView === 'preview' ? 'hidden md:block' : ''}`}>
+        {/* Tree Sidebar */}
+        <div className={`w-full md:w-72 lg:w-80 border-r border-slate-700 overflow-y-auto ${mobileView === 'preview' ? 'hidden md:block' : ''}`}>
           {isLoading ? (
             <div className="flex items-center justify-center h-32">
               <RefreshCw className="w-6 h-6 text-slate-400 animate-spin" />
@@ -174,97 +329,57 @@ export default function SystemFiles() {
                 <span className="text-sm">{error}</span>
               </div>
             </div>
-          ) : files.length === 0 ? (
+          ) : rootNodes.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-32 text-slate-400">
               <FileCode className="w-8 h-8 mb-2" />
               <span className="text-sm">No system files found</span>
             </div>
           ) : (
-            <div className="divide-y divide-slate-700/50">
-              {files.map((file) => {
-                const isSelected = selectedFile === file.name;
-                return (
-                  <button
-                    key={file.name}
-                    onClick={() => loadFile(file.name)}
-                    className={`w-full flex items-center gap-3 px-4 py-4 text-left transition-colors ${
-                      isSelected
-                        ? 'bg-stark-500/20 text-stark-400'
-                        : 'text-slate-300 hover:bg-slate-700/50'
-                    }`}
-                  >
-                    {file.name === 'soul.md' ? (
-                      <Sparkles className="w-5 h-5 flex-shrink-0 text-purple-400" />
-                    ) : file.name === 'guidelines.md' ? (
-                      <ClipboardList className="w-5 h-5 flex-shrink-0 text-blue-400" />
-                    ) : (
-                      <FileCode className="w-5 h-5 flex-shrink-0 text-slate-400" />
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium truncate">{file.name}</span>
-                        {!file.writable && (
-                          <span title="Read-only">
-                            <Lock className="w-3.5 h-3.5 text-slate-500" />
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-slate-500 truncate">
-                        {file.description}
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
+            <div className="py-1">
+              {rootNodes.map(node => renderTreeNode(node))}
             </div>
           )}
         </div>
 
         {/* File Preview/Editor */}
         <div className={`flex-1 overflow-hidden flex flex-col bg-slate-900 ${mobileView === 'list' ? 'hidden md:flex' : ''}`}>
-          {selectedFile ? (
+          {currentPath ? (
             <>
               <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
                 <div className="flex items-center gap-2 min-w-0">
                   <button
-                    onClick={() => setMobileView('list')}
+                    onClick={() => { setMobileView('list'); }}
                     className="md:hidden p-1 -ml-1 mr-1 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors flex-shrink-0"
                   >
                     <ArrowLeft className="w-4 h-4" />
                   </button>
-                  {selectedFile === 'soul.md' ? (
-                    <Sparkles className="w-4 h-4 text-purple-400" />
-                  ) : selectedFile === 'guidelines.md' ? (
-                    <ClipboardList className="w-4 h-4 text-blue-400" />
-                  ) : (
-                    <FileCode className="w-4 h-4 text-slate-400" />
-                  )}
-                  <span className="text-sm text-slate-300 font-mono">
-                    {selectedFile}
+                  {getFileIcon(displayName, false, false)}
+                  <span className="text-sm text-slate-300 font-mono truncate" title={currentPath}>
+                    {currentPath}
                   </span>
                   {!isWritable && (
-                    <span className="px-2 py-0.5 text-xs bg-slate-700 text-slate-400 rounded">
+                    <span className="px-2 py-0.5 text-xs bg-slate-700 text-slate-400 rounded flex-shrink-0">
                       Read-only
                     </span>
                   )}
                   {saveMessage && (
-                    <span className="flex items-center gap-1 px-2 py-0.5 text-xs bg-green-500/20 text-green-400 rounded">
+                    <span className="flex items-center gap-1 px-2 py-0.5 text-xs bg-green-500/20 text-green-400 rounded flex-shrink-0">
                       <Check className="w-3 h-3" />
                       {saveMessage}
                     </span>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-shrink-0">
                   {isWritable && !isEditing && (
                     <button
                       onClick={() => setIsEditing(true)}
                       className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
                     >
                       <Edit2 className="w-4 h-4" />
-                      Edit
+                      <span className="hidden sm:inline">Edit</span>
                     </button>
                   )}
-                  {!isEditing && selectedFile && files.find(f => f.name === selectedFile)?.deletable && (
+                  {!isEditing && isDeletable && (
                     <button
                       onClick={handleDelete}
                       disabled={isDeleting}
@@ -275,7 +390,7 @@ export default function SystemFiles() {
                       ) : (
                         <Trash2 className="w-4 h-4" />
                       )}
-                      Delete
+                      <span className="hidden sm:inline">Delete</span>
                     </button>
                   )}
                   {isEditing && (
@@ -285,7 +400,7 @@ export default function SystemFiles() {
                         className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
                       >
                         <X className="w-4 h-4" />
-                        Cancel
+                        <span className="hidden sm:inline">Cancel</span>
                       </button>
                       <button
                         onClick={handleSave}
@@ -297,7 +412,7 @@ export default function SystemFiles() {
                         ) : (
                           <Save className="w-4 h-4" />
                         )}
-                        Save
+                        <span className="hidden sm:inline">Save</span>
                       </button>
                     </>
                   )}

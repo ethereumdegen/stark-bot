@@ -259,6 +259,8 @@ pub fn config(cfg: &mut web::ServiceConfig) {
             .route("/embeddings/backfill", web::post().to(backfill_skill_embeddings))
             .route("/associations", web::post().to(create_skill_association))
             .route("/associations/rebuild", web::post().to(rebuild_skill_associations))
+            .route("/bundled/available", web::get().to(list_bundled_available))
+            .route("/bundled/restore/{name}", web::post().to(restore_bundled_skill))
             .route("/{name}", web::get().to(get_skill))
             .route("/{name}", web::put().to(update_skill))
             .route("/{name}", web::delete().to(delete_skill))
@@ -615,6 +617,67 @@ async fn update_skill(
         updated_at: now,
     };
 
+    // Write updated SKILL.md to disk
+    let skills_dir = std::path::PathBuf::from(crate::config::runtime_skills_dir());
+    let skill_folder = skills_dir.join(&name);
+    if skill_folder.exists() {
+        // Find the existing .md file (SKILL.md or {name}.md)
+        let skill_md_path = skill_folder.join("SKILL.md");
+        let named_md_path = skill_folder.join(format!("{}.md", &name));
+        let md_path = if skill_md_path.exists() {
+            skill_md_path
+        } else if named_md_path.exists() {
+            named_md_path
+        } else {
+            skill_folder.join("SKILL.md")
+        };
+
+        // Read existing file, replace body, write back
+        if let Ok(content) = std::fs::read_to_string(&md_path) {
+            let trimmed = content.trim();
+            if trimmed.starts_with("---") {
+                let rest = &trimmed[3..];
+                if let Some(end_idx) = rest.find("---") {
+                    let frontmatter = &rest[..end_idx + 3]; // include closing ---
+                    let updated = format!("---{}\n\n{}", frontmatter, body.body);
+                    if let Err(e) = std::fs::write(&md_path, &updated) {
+                        log::warn!("Failed to write updated SKILL.md for '{}': {}", name, e);
+                    }
+                }
+            }
+        } else {
+            // No existing file — reconstruct from DbSkill
+            let md_content = crate::skills::reconstruct_skill_md_from_db(&db_skill);
+            if let Err(e) = std::fs::write(&md_path, &md_content) {
+                log::warn!("Failed to write SKILL.md for '{}': {}", name, e);
+            }
+        }
+    } else {
+        // Skill folder doesn't exist — create it
+        let md_content = crate::skills::reconstruct_skill_md_from_db(&db_skill);
+        let parsed = crate::skills::ParsedSkill {
+            name: db_skill.name.clone(),
+            description: db_skill.description.clone(),
+            body: db_skill.body.clone(),
+            version: db_skill.version.clone(),
+            author: db_skill.author.clone(),
+            homepage: db_skill.homepage.clone(),
+            metadata: db_skill.metadata.clone(),
+            requires_tools: db_skill.requires_tools.clone(),
+            requires_binaries: db_skill.requires_binaries.clone(),
+            arguments: db_skill.arguments.clone(),
+            tags: db_skill.tags.clone(),
+            subagent_type: db_skill.subagent_type.clone(),
+            requires_api_keys: db_skill.requires_api_keys.clone(),
+            scripts: Vec::new(),
+            abis: Vec::new(),
+            presets_content: None,
+        };
+        if let Err(e) = crate::skills::write_skill_folder(&skills_dir, &parsed) {
+            log::warn!("Failed to create skill folder for '{}': {}", name, e);
+        }
+    }
+
     // Force-update in database (bypass version check)
     if let Err(e) = state.db.create_skill_force(&db_skill) {
         log::error!("Failed to update skill '{}': {}", name, e);
@@ -723,6 +786,82 @@ async fn delete_skill(
                 message: None,
                 error: Some(format!("Failed to delete skill: {}", e)),
                 count: None,
+            })
+        }
+    }
+}
+
+async fn list_bundled_available(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+) -> impl Responder {
+    if let Err(resp) = validate_session_from_request(&state, &req) {
+        return resp;
+    }
+
+    let available = state.skill_registry.list_bundled_available().await;
+    HttpResponse::Ok().json(available)
+}
+
+async fn restore_bundled_skill(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    path: web::Path<String>,
+) -> impl Responder {
+    if let Err(resp) = validate_session_from_request(&state, &req) {
+        return resp;
+    }
+
+    let name = path.into_inner();
+
+    match state.skill_registry.restore_bundled_skill(&name).await {
+        Ok(db_skill) => {
+            // Load ABIs and presets into memory (same pattern as upload_skill)
+            if let Some(skill_id) = db_skill.id {
+                if let Ok(abis) = state.db.get_skill_abis(skill_id) {
+                    for abi in abis {
+                        crate::web3::register_abi_content(&abi.name, &abi.content);
+                    }
+                }
+                crate::tools::presets::load_skill_presets_from_db(&state.db, skill_id);
+            }
+
+            // Auto-generate embedding + rebuild associations
+            if let Some(skill_id) = db_skill.id {
+                if let Some(ref engine) = state.hybrid_search {
+                    let emb_gen = engine.embedding_generator().clone();
+                    let db = state.db.clone();
+                    let skill_name = db_skill.name.clone();
+                    let emb_text = crate::skills::embeddings::build_skill_embedding_text(&db_skill);
+                    tokio::spawn(async move {
+                        if let Ok(embedding) = emb_gen.generate(&emb_text).await {
+                            let dims = embedding.len() as i32;
+                            if let Err(e) = db.upsert_skill_embedding(skill_id, &embedding, "remote", dims) {
+                                log::warn!("[SKILL-EMB] Failed to auto-embed restored skill '{}': {}", skill_name, e);
+                            } else {
+                                log::info!("[SKILL-EMB] Auto-embedded restored skill '{}'", skill_name);
+                                if let Err(e) = crate::skills::embeddings::rebuild_associations_for_skill(&db, skill_id, 0.30).await {
+                                    log::warn!("[SKILL-ASSOC] Failed to rebuild associations for '{}': {}", skill_name, e);
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+
+            let skill = db_skill.into_skill();
+            HttpResponse::Ok().json(UploadResponse {
+                success: true,
+                skill: Some((&skill).into()),
+                error: None,
+            })
+        }
+        Err(e) => {
+            log::error!("Failed to restore bundled skill '{}': {}", name, e);
+            HttpResponse::BadRequest().json(UploadResponse {
+                success: false,
+                skill: None,
+                error: Some(e),
             })
         }
     }

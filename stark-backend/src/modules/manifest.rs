@@ -20,6 +20,9 @@ pub struct ModuleManifest {
     pub platforms: Option<PlatformConfig>,
     #[serde(default)]
     pub tools: Vec<ToolManifest>,
+    /// External HTTP endpoints exposed publicly via `/ext/{module}/{method}`.
+    #[serde(default)]
+    pub ext_endpoints: Vec<ExtEndpointManifest>,
 }
 
 /// Basic module metadata.
@@ -37,6 +40,10 @@ pub struct ModuleInfo {
 /// Service configuration — how to reach and launch the microservice.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServiceConfig {
+    /// Shell command to start the service (e.g. "uv run service.py").
+    /// When set, takes priority over binary discovery. Run from the module directory.
+    #[serde(default)]
+    pub command: Option<String>,
     pub default_port: u16,
     /// Environment variable that overrides the port (e.g. "WALLET_MONITOR_PORT")
     #[serde(default)]
@@ -48,6 +55,15 @@ pub struct ServiceConfig {
     pub has_dashboard: bool,
     #[serde(default = "default_health_endpoint")]
     pub health_endpoint: String,
+    /// RPC endpoint for backup export (e.g. "/rpc/backup/export"). POST, returns JSON.
+    #[serde(default)]
+    pub backup_endpoint: Option<String>,
+    /// RPC endpoint for backup restore (e.g. "/rpc/backup/restore"). POST with JSON body.
+    #[serde(default)]
+    pub restore_endpoint: Option<String>,
+    /// Path for dashboard data (e.g. "/"). GET, returns HTML or JSON.
+    #[serde(default)]
+    pub dashboard_endpoint: Option<String>,
     /// Extra environment variables the service needs.
     #[serde(default)]
     pub env_vars: HashMap<String, EnvVarSpec>,
@@ -124,6 +140,25 @@ fn default_param_type() -> String {
     "string".to_string()
 }
 
+/// An external HTTP endpoint declaration from `[[ext_endpoints]]` in the manifest.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExtEndpointManifest {
+    /// Method name used in the URL path: `/ext/{module_name}/{method_name}`
+    pub method_name: String,
+    /// Human-readable description of this endpoint
+    #[serde(default)]
+    pub description: Option<String>,
+    /// The RPC endpoint on the module service to proxy to (e.g. "/rpc/ext/tell-a-joke")
+    pub rpc_endpoint: String,
+    /// Allowed HTTP methods (e.g. ["POST"], ["GET", "POST"])
+    #[serde(default = "default_http_methods")]
+    pub http_methods: Vec<String>,
+}
+
+fn default_http_methods() -> Vec<String> {
+    vec!["POST".to_string()]
+}
+
 impl ModuleManifest {
     /// Load a manifest from a `module.toml` file path.
     pub fn from_file(path: &Path) -> Result<Self, String> {
@@ -135,6 +170,11 @@ impl ModuleManifest {
     /// Parse a manifest from a TOML string.
     pub fn from_str(content: &str) -> Result<Self, String> {
         toml::from_str(content).map_err(|e| format!("Failed to parse module.toml: {}", e))
+    }
+
+    /// Find an ext endpoint declaration by method name.
+    pub fn find_ext_endpoint(&self, method: &str) -> Option<&ExtEndpointManifest> {
+        self.ext_endpoints.iter().find(|ep| ep.method_name == method)
     }
 
     /// Build the service URL from environment variables or defaults.
@@ -209,6 +249,76 @@ default_port = 9200
         assert_eq!(manifest.module.name, "test_module");
         assert_eq!(manifest.service.default_port, 9200);
         assert!(manifest.tools.is_empty());
+    }
+
+    #[test]
+    fn test_parse_manifest_with_command() {
+        let toml = r#"
+[module]
+name = "price_tracker"
+version = "0.1.0"
+description = "Track token prices"
+
+[service]
+command = "uv run service.py"
+default_port = 9200
+"#;
+        let manifest = ModuleManifest::from_str(toml).unwrap();
+        assert_eq!(manifest.module.name, "price_tracker");
+        assert_eq!(manifest.service.command.as_deref(), Some("uv run service.py"));
+        assert_eq!(manifest.service.default_port, 9200);
+    }
+
+    #[test]
+    fn test_parse_manifest_with_ext_endpoints() {
+        let toml = r#"
+[module]
+name = "joke_service"
+version = "0.1.0"
+description = "A joke service with x402 payments"
+
+[service]
+command = "uv run service.py"
+default_port = 9300
+
+[[ext_endpoints]]
+method_name = "tell-a-joke"
+description = "Returns a random joke (x402 paid)"
+rpc_endpoint = "/rpc/ext/tell-a-joke"
+http_methods = ["POST"]
+
+[[ext_endpoints]]
+method_name = "list-categories"
+description = "List available joke categories"
+rpc_endpoint = "/rpc/ext/list-categories"
+http_methods = ["GET"]
+"#;
+        let manifest = ModuleManifest::from_str(toml).unwrap();
+        assert_eq!(manifest.ext_endpoints.len(), 2);
+        assert_eq!(manifest.ext_endpoints[0].method_name, "tell-a-joke");
+        assert_eq!(manifest.ext_endpoints[0].rpc_endpoint, "/rpc/ext/tell-a-joke");
+        assert_eq!(manifest.ext_endpoints[0].http_methods, vec!["POST"]);
+        assert_eq!(manifest.ext_endpoints[1].method_name, "list-categories");
+        assert_eq!(manifest.ext_endpoints[1].http_methods, vec!["GET"]);
+
+        // find_ext_endpoint helper
+        assert!(manifest.find_ext_endpoint("tell-a-joke").is_some());
+        assert!(manifest.find_ext_endpoint("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_parse_manifest_without_ext_endpoints() {
+        let toml = r#"
+[module]
+name = "basic_module"
+version = "1.0.0"
+description = "No ext endpoints"
+
+[service]
+default_port = 9200
+"#;
+        let manifest = ModuleManifest::from_str(toml).unwrap();
+        assert!(manifest.ext_endpoints.is_empty());
     }
 
     #[test]

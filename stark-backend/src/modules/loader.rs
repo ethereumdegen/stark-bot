@@ -8,19 +8,9 @@ use super::manifest::ModuleManifest;
 use super::Module;
 use std::path::PathBuf;
 
-/// Default base directory for dynamically installed modules.
+/// Base directory for dynamically installed modules (stark-backend/modules/).
 fn modules_base_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("STARKBOT_MODULES_DIR") {
-        return PathBuf::from(dir);
-    }
-    dirs_or_home().join(".starkbot").join("modules")
-}
-
-/// Get the user's home directory.
-fn dirs_or_home() -> PathBuf {
-    std::env::var("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."))
+    crate::config::runtime_modules_dir()
 }
 
 /// Scan the modules directory and load all valid dynamic modules.
@@ -103,20 +93,32 @@ pub fn get_dynamic_service_binaries() -> Vec<DynamicServiceInfo> {
             let port = m.default_port();
             let binary = m.binary_path();
             let port_env = m.manifest_port_env_var();
+            let url_env = m.manifest_url_env_var();
+            let command = m.manifest_command();
+            let module_dir = m.module_dir().clone();
             DynamicServiceInfo {
                 name,
                 default_port: port,
                 binary_path: binary,
                 port_env_var: port_env,
+                url_env_var: url_env,
+                command,
+                module_dir,
             }
         })
         .collect()
 }
 
-/// Info about a dynamic module service binary for process management.
+/// Info about a dynamic module service for process management.
 pub struct DynamicServiceInfo {
     pub name: String,
     pub default_port: u16,
     pub binary_path: PathBuf,
     pub port_env_var: Option<String>,
+    pub url_env_var: Option<String>,
+    /// Shell command to start the service (e.g. "uv run service.py").
+    /// When set, takes priority over binary_path.
+    pub command: Option<String>,
+    /// Directory containing the module — used as working directory for command.
+    pub module_dir: PathBuf,
 }

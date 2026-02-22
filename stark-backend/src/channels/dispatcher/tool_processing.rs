@@ -409,7 +409,7 @@ impl MessageDispatcher {
         if tool_name == "use_skill" && result.success {
             if let Some(skill_name_val) = tool_arguments.get("skill_name").or_else(|| tool_arguments.get("name")).and_then(|v| v.as_str()) {
                 if let Ok(Some(skill)) = self.db.get_enabled_skill_by_name(skill_name_val) {
-                    let skills_dir = crate::config::skills_dir();
+                    let skills_dir = crate::config::runtime_skills_dir();
                     let skill_base_dir = format!("{}/{}", skills_dir, skill.name);
                     let instructions = skill.body.replace("{baseDir}", &skill_base_dir);
 

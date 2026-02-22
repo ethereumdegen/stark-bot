@@ -1,0 +1,357 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["flask"]
+# ///
+"""
+Discord Tipping module — manages Discord user profiles and linked wallet addresses.
+
+RPC protocol endpoints:
+  GET  /rpc/status             → service health
+  POST /rpc/profile            → unified tool endpoint (action-based)
+  POST /rpc/backup/export      → export profiles for backup
+  POST /rpc/backup/restore     → restore profiles from backup
+  GET  /                       → HTML dashboard
+
+Launch with:  uv run service.py
+"""
+
+from flask import Flask, request, jsonify
+import sqlite3
+import os
+import time
+from datetime import datetime, timezone
+
+app = Flask(__name__)
+
+START_TIME = time.time()
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "discord_tipping.db")
+
+
+# ---------------------------------------------------------------------------
+# Database helpers
+# ---------------------------------------------------------------------------
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn
+
+
+def init_db():
+    conn = get_db()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS discord_user_profiles (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            discord_user_id     TEXT    NOT NULL UNIQUE,
+            discord_username    TEXT,
+            public_address      TEXT,
+            registration_status TEXT    NOT NULL DEFAULT 'unregistered',
+            registered_at       TEXT,
+            last_interaction_at TEXT,
+            created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+            updated_at          TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_profiles_address
+        ON discord_user_profiles (public_address)
+    """)
+    conn.commit()
+    conn.close()
+
+
+def row_to_dict(row):
+    if row is None:
+        return None
+    return dict(row)
+
+
+def now_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+# ---------------------------------------------------------------------------
+# Profile operations
+# ---------------------------------------------------------------------------
+
+def profile_get_or_create(discord_user_id: str, username: str | None = None):
+    conn = get_db()
+    ts = now_iso()
+    conn.execute(
+        "INSERT OR IGNORE INTO discord_user_profiles (discord_user_id, discord_username, created_at, updated_at) VALUES (?, ?, ?, ?)",
+        (discord_user_id, username, ts, ts),
+    )
+    conn.execute(
+        "UPDATE discord_user_profiles SET last_interaction_at = ?, discord_username = COALESCE(?, discord_username), updated_at = ? WHERE discord_user_id = ?",
+        (ts, username, ts, discord_user_id),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM discord_user_profiles WHERE discord_user_id = ?", (discord_user_id,)).fetchone()
+    conn.close()
+    return row_to_dict(row)
+
+
+def profile_get(discord_user_id: str):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM discord_user_profiles WHERE discord_user_id = ?", (discord_user_id,)).fetchone()
+    conn.close()
+    return row_to_dict(row)
+
+
+def profile_get_by_address(address: str):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM discord_user_profiles WHERE LOWER(public_address) = LOWER(?)", (address,)
+    ).fetchone()
+    conn.close()
+    return row_to_dict(row)
+
+
+def profile_register(discord_user_id: str, address: str):
+    conn = get_db()
+    ts = now_iso()
+    conn.execute(
+        "UPDATE discord_user_profiles SET public_address = ?, registration_status = 'registered', registered_at = ?, updated_at = ? WHERE discord_user_id = ?",
+        (address, ts, ts, discord_user_id),
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+
+def profile_unregister(discord_user_id: str):
+    conn = get_db()
+    ts = now_iso()
+    conn.execute(
+        "UPDATE discord_user_profiles SET public_address = NULL, registration_status = 'unregistered', updated_at = ? WHERE discord_user_id = ?",
+        (ts, discord_user_id),
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+
+def profile_list_all():
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM discord_user_profiles ORDER BY updated_at DESC").fetchall()
+    conn.close()
+    return [row_to_dict(r) for r in rows]
+
+
+def profile_list_registered():
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM discord_user_profiles WHERE registration_status = 'registered' AND public_address IS NOT NULL ORDER BY updated_at DESC"
+    ).fetchall()
+    conn.close()
+    return [row_to_dict(r) for r in rows]
+
+
+def profile_stats():
+    conn = get_db()
+    total = conn.execute("SELECT COUNT(*) FROM discord_user_profiles").fetchone()[0]
+    registered = conn.execute(
+        "SELECT COUNT(*) FROM discord_user_profiles WHERE registration_status = 'registered'"
+    ).fetchone()[0]
+    conn.close()
+    return {
+        "total_profiles": total,
+        "registered_count": registered,
+        "unregistered_count": total - registered,
+    }
+
+
+# ---------------------------------------------------------------------------
+# RPC: Unified tool endpoint
+# ---------------------------------------------------------------------------
+
+@app.route("/rpc/profile", methods=["POST"])
+def rpc_profile():
+    body = request.get_json(silent=True) or {}
+    action = body.get("action")
+
+    try:
+        if action == "get_or_create":
+            uid = body.get("discord_user_id")
+            if not uid:
+                return jsonify({"success": False, "error": "discord_user_id is required"})
+            data = profile_get_or_create(uid, body.get("username"))
+            return jsonify({"success": True, "data": data})
+
+        elif action == "get":
+            uid = body.get("discord_user_id")
+            if not uid:
+                return jsonify({"success": False, "error": "discord_user_id is required"})
+            data = profile_get(uid)
+            return jsonify({"success": True, "data": data})
+
+        elif action == "get_by_address":
+            addr = body.get("address")
+            if not addr:
+                return jsonify({"success": False, "error": "address is required"})
+            data = profile_get_by_address(addr)
+            return jsonify({"success": True, "data": data})
+
+        elif action == "register":
+            uid = body.get("discord_user_id")
+            addr = body.get("address")
+            if not uid or not addr:
+                return jsonify({"success": False, "error": "discord_user_id and address are required"})
+            profile_register(uid, addr)
+            return jsonify({"success": True, "data": True})
+
+        elif action == "unregister":
+            uid = body.get("discord_user_id")
+            if not uid:
+                return jsonify({"success": False, "error": "discord_user_id is required"})
+            profile_unregister(uid)
+            return jsonify({"success": True, "data": True})
+
+        elif action == "list":
+            data = profile_list_all()
+            return jsonify({"success": True, "data": data})
+
+        elif action == "list_registered":
+            data = profile_list_registered()
+            return jsonify({"success": True, "data": data})
+
+        elif action == "stats":
+            data = profile_stats()
+            return jsonify({"success": True, "data": data})
+
+        else:
+            return jsonify({"success": False, "error": f"Unknown action: {action}. Valid: get_or_create, get, get_by_address, register, unregister, list, list_registered, stats"})
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+
+# ---------------------------------------------------------------------------
+# RPC: Status
+# ---------------------------------------------------------------------------
+
+@app.route("/rpc/status")
+def rpc_status():
+    stats = profile_stats()
+    return jsonify({
+        "success": True,
+        "data": {
+            "status": "running",
+            "module": "discord_tipping",
+            "uptime_secs": int(time.time() - START_TIME),
+            "total_profiles": stats["total_profiles"],
+            "registered_count": stats["registered_count"],
+        },
+    })
+
+
+# ---------------------------------------------------------------------------
+# RPC: Backup / Restore
+# ---------------------------------------------------------------------------
+
+@app.route("/rpc/backup/export", methods=["POST"])
+def rpc_backup_export():
+    registered = profile_list_registered()
+    entries = []
+    for p in registered:
+        entries.append({
+            "discord_user_id": p["discord_user_id"],
+            "discord_username": p.get("discord_username"),
+            "public_address": p["public_address"],
+            "registered_at": p.get("registered_at"),
+        })
+    return jsonify({"success": True, "data": entries})
+
+
+@app.route("/rpc/backup/restore", methods=["POST"])
+def rpc_backup_restore():
+    body = request.get_json(silent=True) or {}
+    profiles = body.get("profiles", [])
+    if not isinstance(profiles, list):
+        return jsonify({"success": False, "error": "profiles must be a list"})
+
+    conn = get_db()
+    conn.execute("DELETE FROM discord_user_profiles")
+    ts = now_iso()
+    count = 0
+    for entry in profiles:
+        uid = entry.get("discord_user_id")
+        if not uid:
+            continue
+        addr = entry.get("public_address")
+        status = "registered" if addr else "unregistered"
+        conn.execute(
+            "INSERT OR IGNORE INTO discord_user_profiles (discord_user_id, discord_username, public_address, registration_status, registered_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (uid, entry.get("discord_username"), addr, status, entry.get("registered_at"), ts, ts),
+        )
+        count += 1
+    conn.commit()
+    conn.close()
+    return jsonify({"success": True, "data": count})
+
+
+# ---------------------------------------------------------------------------
+# Dashboard
+# ---------------------------------------------------------------------------
+
+@app.route("/")
+def dashboard():
+    stats = profile_stats()
+    profiles = profile_list_all()
+
+    rows_html = ""
+    for p in profiles:
+        addr = p.get("public_address") or ""
+        addr_display = f"{addr[:6]}...{addr[-4:]}" if len(addr) > 10 else (addr or "—")
+        status_class = "registered" if p["registration_status"] == "registered" else "unregistered"
+        rows_html += f"""
+        <tr>
+            <td>{p['discord_user_id']}</td>
+            <td>{p.get('discord_username') or '—'}</td>
+            <td title="{addr}">{addr_display}</td>
+            <td><span class="status {status_class}">{p['registration_status']}</span></td>
+            <td>{p.get('updated_at', '—')}</td>
+        </tr>"""
+
+    html = f"""<!DOCTYPE html>
+<html><head>
+<title>Discord Tipping</title>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 2rem; background: #0d1117; color: #c9d1d9; }}
+  h1 {{ color: #58a6ff; }}
+  .stats {{ display: flex; gap: 1.5rem; margin-bottom: 1.5rem; }}
+  .stat {{ background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem 1.5rem; }}
+  .stat .value {{ font-size: 1.8rem; font-weight: bold; color: #58a6ff; }}
+  .stat .label {{ font-size: 0.85rem; color: #8b949e; }}
+  table {{ border-collapse: collapse; width: 100%; background: #161b22; border-radius: 8px; overflow: hidden; }}
+  th, td {{ padding: 0.6rem 1rem; text-align: left; border-bottom: 1px solid #21262d; }}
+  th {{ background: #0d1117; color: #8b949e; font-weight: 600; }}
+  .status {{ padding: 2px 8px; border-radius: 12px; font-size: 0.8rem; }}
+  .status.registered {{ background: #238636; color: #fff; }}
+  .status.unregistered {{ background: #30363d; color: #8b949e; }}
+</style>
+</head><body>
+<h1>Discord Tipping</h1>
+<div class="stats">
+  <div class="stat"><div class="value">{stats['total_profiles']}</div><div class="label">Total Profiles</div></div>
+  <div class="stat"><div class="value">{stats['registered_count']}</div><div class="label">Registered</div></div>
+  <div class="stat"><div class="value">{stats['unregistered_count']}</div><div class="label">Unregistered</div></div>
+</div>
+<table>
+  <thead><tr><th>Discord ID</th><th>Username</th><th>Address</th><th>Status</th><th>Updated</th></tr></thead>
+  <tbody>{rows_html if rows_html else '<tr><td colspan="5" style="text-align:center;color:#8b949e;">No profiles yet</td></tr>'}</tbody>
+</table>
+</body></html>"""
+    return html
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    init_db()
+    port = int(os.environ.get("MODULE_PORT", os.environ.get("DISCORD_TIPPING_PORT", "9101")))
+    app.run(host="127.0.0.1", port=port)

@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
-import { Zap, Upload, Trash2, ExternalLink, Code, X, Save, Edit2, Network, List } from 'lucide-react';
+import { Zap, Upload, Trash2, ExternalLink, Code, X, Save, Edit2, Network, List, RotateCcw } from 'lucide-react';
 import Card, { CardContent } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
-import { getSkills, uploadSkill, deleteSkill, setSkillEnabled, getSkillDetail, updateSkillBody, SkillInfo, SkillDetail } from '@/lib/api';
+import { getSkills, uploadSkill, deleteSkill, setSkillEnabled, getSkillDetail, updateSkillBody, getBundledAvailableSkills, restoreBundledSkill, SkillInfo, SkillDetail, BundledSkillInfo } from '@/lib/api';
 
 const SkillsGraph = lazy(() => import('./SkillsGraph'));
 
@@ -15,6 +15,8 @@ export default function Skills() {
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [bundledAvailable, setBundledAvailable] = useState<BundledSkillInfo[]>([]);
+  const [restoringSkill, setRestoringSkill] = useState<string | null>(null);
 
   // Filter state
   const [activeFilter, setActiveFilter] = useState('All');
@@ -49,8 +51,12 @@ export default function Skills() {
 
   const loadSkills = async () => {
     try {
-      const data = await getSkills();
+      const [data, bundled] = await Promise.all([
+        getSkills(),
+        getBundledAvailableSkills(),
+      ]);
       setSkills(data);
+      setBundledAvailable(bundled);
     } catch (err) {
       setError('Failed to load skills');
     } finally {
@@ -88,6 +94,8 @@ export default function Skills() {
         setSelectedSkill(null);
         setIsEditing(false);
       }
+      // Refresh bundled available list (deleted skill may now be restorable)
+      getBundledAvailableSkills().then(setBundledAvailable).catch(() => {});
     } catch (err) {
       setError('Failed to delete skill');
     }
@@ -157,6 +165,19 @@ export default function Skills() {
       setError('Failed to save skill');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleRestore = async (name: string) => {
+    setRestoringSkill(name);
+    setError(null);
+    try {
+      await restoreBundledSkill(name);
+      await loadSkills();
+    } catch (err) {
+      setError('Failed to restore skill');
+    } finally {
+      setRestoringSkill(null);
     }
   };
 
@@ -300,12 +321,7 @@ export default function Skills() {
                           </a>
                         )}
                       </div>
-                      {/* Source badge on separate line on mobile */}
-                      {skill.source && (
-                        <span className="inline-block text-xs px-1.5 py-0.5 bg-slate-700/50 text-slate-500 rounded mt-1">
-                          {skill.source}
-                        </span>
-                      )}
+                      {/* Version badge */}
                       {/* Description */}
                       {skill.description && (
                         <p className="text-xs sm:text-sm text-slate-400 mt-1.5">{skill.description}</p>
@@ -450,6 +466,68 @@ export default function Skills() {
             )}
           </CardContent>
         </Card>
+      )}
+
+      {/* Available Default Skills (bundled but not installed) */}
+      {bundledAvailable.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-lg font-semibold text-slate-400 mb-4">
+            Available Default Skills
+            <span className="ml-2 text-sm font-normal text-slate-500">({bundledAvailable.length})</span>
+          </h2>
+          <div className="grid gap-4">
+            {bundledAvailable.map((skill) => (
+              <Card key={skill.name} className="border-dashed opacity-75">
+                <CardContent>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
+                    <div className="flex items-start sm:items-center gap-2 sm:gap-4 min-w-0">
+                      <div className="p-1.5 sm:p-3 bg-slate-700/50 rounded-lg shrink-0">
+                        <Zap className="w-4 h-4 sm:w-6 sm:h-6 text-slate-500" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="font-semibold text-slate-300 text-sm sm:text-base">{skill.name}</h3>
+                          {skill.version && (
+                            <span className="text-xs px-1.5 py-0.5 bg-slate-700 text-slate-500 rounded">
+                              v{skill.version}
+                            </span>
+                          )}
+                        </div>
+                        {skill.description && (
+                          <p className="text-xs sm:text-sm text-slate-500 mt-1.5">{skill.description}</p>
+                        )}
+                        {skill.tags && skill.tags.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            {skill.tags.map((tag) => (
+                              <span
+                                key={tag}
+                                className="text-xs px-1.5 py-0.5 bg-slate-700/50 text-slate-500 rounded"
+                              >
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="self-end sm:self-center shrink-0">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => handleRestore(skill.name)}
+                        isLoading={restoringSkill === skill.name}
+                        disabled={restoringSkill !== null}
+                      >
+                        <RotateCcw className="w-4 h-4 mr-1.5" />
+                        Install
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
       )}
       </>
       )}
