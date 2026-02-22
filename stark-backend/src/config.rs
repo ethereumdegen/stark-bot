@@ -16,6 +16,8 @@ pub mod env_vars {
     pub const NOTES_REINDEX_INTERVAL_SECS: &str = "STARK_NOTES_REINDEX_INTERVAL_SECS";
     pub const SOUL_DIR: &str = "STARK_SOUL_DIR";
     pub const PUBLIC_DIR: &str = "STARK_PUBLIC_DIR";
+    /// Explicit override for the bot's own public URL (e.g. "https://mybot.example.com")
+    pub const PUBLIC_URL: &str = "STARK_PUBLIC_URL";
     // Disk quota (0 = disabled)
     pub const DISK_QUOTA_MB: &str = "STARK_DISK_QUOTA_MB";
     // QMD Memory configuration (simplified file-based memory system)
@@ -257,6 +259,22 @@ pub fn notes_dir() -> String {
 /// Get the public files directory from environment or default
 pub fn public_dir() -> String {
     resolve_backend_dir(env_vars::PUBLIC_DIR, defaults::PUBLIC_DIR)
+}
+
+/// Get the bot's own public URL (for constructing absolute URLs to /public/ files, etc.)
+///
+/// Set STARK_PUBLIC_URL to the instance's externally-reachable URL.
+/// In Flash mode, the control plane should set this during provisioning.
+/// Falls back to http://localhost:{PORT} if not set.
+pub fn self_url() -> String {
+    if let Ok(url) = env::var(env_vars::PUBLIC_URL) {
+        return url.trim_end_matches('/').to_string();
+    }
+
+    // Fallback: localhost
+    let port = env::var(env_vars::PORT)
+        .unwrap_or_else(|_| defaults::PORT.to_string());
+    format!("http://localhost:{}", port)
 }
 
 /// Get the soul directory from environment or default
@@ -820,6 +838,12 @@ pub fn initialize_workspace() -> std::io::Result<()> {
     let notes = notes_dir();
     let notes_path = Path::new(&notes);
     std::fs::create_dir_all(notes_path)?;
+
+    // Create public files directory if it doesn't exist
+    let public = public_dir();
+    let public_path = Path::new(&public);
+    std::fs::create_dir_all(public_path)?;
+    log::info!("Public files directory: {:?}", public_path);
 
     // Create soul directory if it doesn't exist
     let soul = soul_dir();

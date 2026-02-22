@@ -29,6 +29,9 @@ const SERVICE_CAPABILITIES: ServiceCapability[] = [
   { id: 'wallet', label: 'Encrypted Wallet', icon: '/icons/wallet.svg', matchNames: ['wallet', 'transfer', 'send_eth', 'send_usdc'], matchTags: ['wallet', 'transfer', 'crypto'] },
   { id: 'image_generation', label: 'Image Generation', icon: '/icons/image_generation.svg', matchNames: ['image_generation', 'generate_image'], matchTags: ['image', 'image-generation'] },
   { id: 'video_generation', label: 'Video Generation', icon: '/icons/video_generation.svg', matchNames: ['video_generation', 'generate_video'], matchTags: ['video', 'video-generation'] },
+  { id: 'excalidraw', label: 'Excalidraw', icon: '/icons/excalidraw.svg', matchNames: ['excalidraw'], matchTags: ['excalidraw', 'whiteboard', 'diagram'] },
+  { id: 'linear', label: 'Linear', icon: '/icons/linear.svg', matchNames: ['linear'], matchTags: ['linear', 'project-management', 'issues'] },
+  { id: 'turso', label: 'Turso', icon: '/icons/turso.svg', matchNames: ['turso'], matchTags: ['turso', 'database', 'libsql'] },
 ];
 
 export default function Dashboard() {

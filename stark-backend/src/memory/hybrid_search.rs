@@ -150,11 +150,11 @@ impl HybridSearchEngine {
 
         let mut stmt = conn
             .prepare(
-                "SELECT m.id, bm25(memories_fts) as rank
-                 FROM memories_fts
-                 JOIN memories m ON m.id = memories_fts.rowid
+                "SELECT m.id, fts.rank
+                 FROM memories_fts fts
+                 JOIN memories m ON m.id = fts.rowid
                  WHERE memories_fts MATCH ?1
-                 ORDER BY rank
+                 ORDER BY fts.rank
                  LIMIT 100",
             )
             .map_err(|e| format!("Failed to prepare FTS query: {}", e))?;

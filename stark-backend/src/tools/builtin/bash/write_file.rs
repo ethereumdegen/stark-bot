@@ -1,4 +1,4 @@
-use crate::config::notes_dir;
+use crate::config::{notes_dir, public_dir};
 use crate::tools::registry::Tool;
 use crate::tools::types::{
     PropertySchema, ToolContext, ToolDefinition, ToolGroup, ToolInputSchema, ToolResult,
@@ -129,12 +129,30 @@ impl Tool for WriteFileTool {
         // Get notes directory
         let notes = PathBuf::from(notes_dir());
 
-        // Resolve the path - check if it starts with "notes/" to use notes dir
+        // Get public directory
+        let public = PathBuf::from(public_dir());
+
+        // Resolve the path - check if it starts with "notes/" or "public/" to use appropriate dir
         let requested_path = Path::new(&params.path);
         let (full_path, base_dir) = if params.path.starts_with("notes/") || params.path == "notes" {
             // Strip "notes/" prefix and use notes directory
             let relative = params.path.strip_prefix("notes/").unwrap_or(&params.path);
             (notes.join(relative), notes.clone())
+        } else if params.path.starts_with("public/") || params.path == "public" {
+            // Strip "public/" prefix and use public directory — image files only
+            let relative = params.path.strip_prefix("public/").unwrap_or(&params.path);
+            let ext = Path::new(relative)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            let allowed = ["png", "svg", "jpg", "jpeg", "gif", "webp"];
+            if !allowed.contains(&ext.as_str()) {
+                return ToolResult::error(
+                    "Access denied: only image files (png, svg, jpg, jpeg, gif, webp) are allowed in the public/ directory"
+                );
+            }
+            (public.join(relative), public.clone())
         } else if requested_path.is_absolute() {
             (requested_path.to_path_buf(), workspace.clone())
         } else {
@@ -142,10 +160,10 @@ impl Tool for WriteFileTool {
         };
 
         // Canonicalize base directory for comparison
-        // For notes, create it if it doesn't exist
-        if params.path.starts_with("notes") && !base_dir.exists() {
+        // For notes or public, create it if it doesn't exist
+        if (params.path.starts_with("notes") || params.path.starts_with("public")) && !base_dir.exists() {
             if let Err(e) = tokio::fs::create_dir_all(&base_dir).await {
-                return ToolResult::error(format!("Cannot create notes directory: {}", e));
+                return ToolResult::error(format!("Cannot create directory: {}", e));
             }
         }
 

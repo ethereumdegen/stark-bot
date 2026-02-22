@@ -43,10 +43,28 @@ function parseMarkdown(text: string): string {
   // Wrap consecutive <li> in <ul>
   parsed = parsed.replace(/(<li[^>]*>.*?<\/li>\n?)+/g, '<ul class="space-y-1 my-2">$&</ul>');
 
+  // Markdown image syntax: ![alt](url)
+  parsed = parsed.replace(
+    /!\[([^\]]*)\]\(([^)]+)\)/g,
+    '<a href="$2" target="_blank" rel="noopener noreferrer"><img src="$2" alt="$1" loading="lazy" class="max-w-full rounded-lg my-2 cursor-pointer hover:opacity-90 transition-opacity" /></a>'
+  );
+
   // Auto-link URLs (after HTML escaping, before line breaks)
   parsed = parsed.replace(
     /(https?:\/\/[^\s<>"'`)\]]+)/g,
     '<a href="$1" target="_blank" rel="noopener noreferrer" class="text-cyan-400 hover:text-cyan-300 underline break-all">$1</a>'
+  );
+
+  // Auto-detect linked image URLs and render inline
+  parsed = parsed.replace(
+    /<a href="(https?:\/\/[^\s"]+\.(?:png|svg|jpe?g|gif|webp))"[^>]*>[^<]*<\/a>/gi,
+    '<a href="$1" target="_blank" rel="noopener noreferrer"><img src="$1" alt="image" loading="lazy" class="max-w-full rounded-lg my-2 cursor-pointer hover:opacity-90 transition-opacity" /></a>'
+  );
+
+  // Auto-detect bare /public/ image paths and render inline
+  parsed = parsed.replace(
+    /(?<!["=\/])\/?public\/([\w\-.]+\.(?:png|svg|jpe?g|gif|webp))/gi,
+    '<a href="/public/$1" target="_blank" rel="noopener noreferrer"><img src="/public/$1" alt="image" loading="lazy" class="max-w-full rounded-lg my-2 cursor-pointer hover:opacity-90 transition-opacity" /></a>'
   );
 
   // Line breaks

@@ -8,8 +8,8 @@ use crate::gateway::events::EventBroadcaster;
 use crate::gateway::protocol::GatewayEvent;
 use crate::models::{Channel, ToolOutputVerbosity};
 use serenity::all::{
-    Client, Context, EditMessage, EventHandler, GatewayIntents, GetMessages, Message, MessageId,
-    Ready, UserId,
+    Client, Context, CreateEmbed, CreateMessage, EditMessage, EventHandler, GatewayIntents,
+    GetMessages, Message, MessageId, Ready, UserId,
 };
 use std::sync::Arc;
 use tokio::sync::oneshot;
@@ -83,7 +83,30 @@ fn format_mode_change_for_discord(mode: &str, label: &str, reason: Option<&str>)
     }
 }
 
-/// Check if a tool terminates the chat loop and sets the final response.
+/// Extract image URLs from a response string.
+/// Handles both absolute https URLs and relative /public/ paths (resolved via self_url()).
+fn extract_image_urls(text: &str) -> Vec<String> {
+    let image_exts = [".png", ".svg", ".jpg", ".jpeg", ".gif", ".webp"];
+    let base = crate::config::self_url();
+    let mut urls = Vec::new();
+    for word in text.split_whitespace() {
+        // Strip markdown link syntax
+        let cleaned = word.trim_matches(|c: char| "()[]<>\"'".contains(c));
+        let lower = cleaned.to_lowercase();
+        if (cleaned.starts_with("http://") || cleaned.starts_with("https://"))
+            && image_exts.iter().any(|ext| lower.ends_with(ext))
+        {
+            urls.push(cleaned.to_string());
+        } else if cleaned.starts_with("/public/")
+            && image_exts.iter().any(|ext| lower.ends_with(ext))
+        {
+            // Resolve relative /public/ path to absolute URL
+            urls.push(format!("{}{}", base, cleaned));
+        }
+    }
+    urls.dedup();
+    urls
+}
 
 struct DiscordHandler {
     channel_id: i64,
@@ -546,6 +569,16 @@ impl DiscordHandler {
             for chunk in chunks {
                 if let Err(e) = msg.channel_id.say(&ctx.http, &chunk).await {
                     log::error!("Failed to send Discord message: {}", e);
+                }
+            }
+
+            // Send image embeds for any image URLs found in the response
+            let image_urls = extract_image_urls(response);
+            for url in image_urls.iter().take(4) {
+                let embed = CreateEmbed::new().image(url);
+                let builder = CreateMessage::new().embed(embed);
+                if let Err(e) = msg.channel_id.send_message(&ctx.http, builder).await {
+                    log::warn!("Discord: Failed to send image embed: {}", e);
                 }
             }
         } else if let Some(error) = result.error {

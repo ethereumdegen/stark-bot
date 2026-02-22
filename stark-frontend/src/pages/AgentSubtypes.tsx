@@ -706,7 +706,7 @@ function SubtypeForm({ form, setForm, toolGroups, onToolGroupToggle, isNew, endp
           <label className="block text-xs text-slate-500 mb-1">Preferred AI Model</label>
           <select
             value={form.preferred_ai_model || ''}
-            onChange={e => setForm({ ...form, preferred_ai_model: e.target.value || null })}
+            onChange={e => setForm({ ...form, preferred_ai_model: e.target.value })}
             className="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-stark-500"
           >
             <option value="">Global default</option>

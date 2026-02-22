@@ -229,6 +229,14 @@ export default function FileBrowser() {
             </span>
           ))}
         </div>
+
+        {/* Public directory warning */}
+        {(currentPath === 'public' || currentPath.startsWith('public/')) && (
+          <div className="flex items-center gap-2 mt-3 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30">
+            <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+            <span className="text-sm text-amber-300">Files in this directory are publicly accessible</span>
+          </div>
+        )}
       </div>
 
       {/* Content */}
@@ -317,9 +325,19 @@ export default function FileBrowser() {
                     </div>
                   </div>
                 ) : fileContent !== null ? (
-                  <pre className="p-4 text-sm text-slate-300 font-mono whitespace-pre-wrap break-words">
-                    {fileContent}
-                  </pre>
+                  selectedFile && selectedFile.startsWith('public/') && /\.(png|jpg|jpeg|gif|svg|webp)$/i.test(selectedFile) ? (
+                    <div className="p-4 flex items-center justify-center">
+                      <img
+                        src={`/${selectedFile}`}
+                        alt={selectedFile.split('/').pop() || selectedFile}
+                        className="max-w-full max-h-[70vh] rounded-lg"
+                      />
+                    </div>
+                  ) : (
+                    <pre className="p-4 text-sm text-slate-300 font-mono whitespace-pre-wrap break-words">
+                      {fileContent}
+                    </pre>
+                  )
                 ) : null}
               </div>
             </>

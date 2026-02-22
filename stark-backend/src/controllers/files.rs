@@ -4,7 +4,7 @@ use std::path::Path;
 use tokio::fs;
 use walkdir::WalkDir;
 
-use crate::config::workspace_dir;
+use crate::config::{public_dir, workspace_dir};
 use crate::AppState;
 
 /// Validate session token from request
@@ -78,23 +78,35 @@ async fn list_files(
     let workspace = workspace_dir();
     let workspace_path = Path::new(&workspace);
 
-    // Resolve the requested path
+    // Resolve the requested path — "public/" prefix routes to the public dir
     let relative_path = query.path.as_deref().unwrap_or("");
-    let full_path = if relative_path.is_empty() {
-        workspace_path.to_path_buf()
+    let (full_path, base_path) = if relative_path == "public" || relative_path.starts_with("public/") {
+        let public = public_dir();
+        let public_path = Path::new(&public).to_path_buf();
+        let sub = relative_path.strip_prefix("public/").unwrap_or("");
+        if sub.is_empty() {
+            (public_path.clone(), public_path)
+        } else {
+            (public_path.join(sub), public_path)
+        }
     } else {
-        workspace_path.join(relative_path)
+        let fp = if relative_path.is_empty() {
+            workspace_path.to_path_buf()
+        } else {
+            workspace_path.join(relative_path)
+        };
+        (fp, workspace_path.to_path_buf())
     };
 
-    // Security check: canonicalize and ensure we're within workspace
-    let canonical_workspace = match workspace_path.canonicalize() {
+    // Security check: canonicalize and ensure we're within the base directory
+    let canonical_workspace = match base_path.canonicalize() {
         Ok(p) => p,
         Err(e) => {
             return HttpResponse::InternalServerError().json(ListFilesResponse {
                 success: false,
                 path: relative_path.to_string(),
                 entries: vec![],
-                error: Some(format!("Workspace not accessible: {}", e)),
+                error: Some(format!("Directory not accessible: {}", e)),
             });
         }
     };
@@ -158,11 +170,21 @@ async fn list_files(
         };
 
         let entry_path = entry.path();
-        let rel_path = entry_path
-            .strip_prefix(&canonical_workspace)
-            .unwrap_or(&entry_path)
-            .to_string_lossy()
-            .to_string();
+        let rel_path = if relative_path == "public" || relative_path.starts_with("public/") {
+            // Files inside public/ — prefix with "public/"
+            let inner = entry_path
+                .strip_prefix(&canonical_workspace)
+                .unwrap_or(&entry_path)
+                .to_string_lossy()
+                .to_string();
+            format!("public/{}", inner)
+        } else {
+            entry_path
+                .strip_prefix(&canonical_workspace)
+                .unwrap_or(&entry_path)
+                .to_string_lossy()
+                .to_string()
+        };
 
         let modified = metadata.modified().ok().map(|t| {
             let datetime: chrono::DateTime<chrono::Utc> = t.into();
@@ -186,6 +208,21 @@ async fn list_files(
             size,
             modified,
         });
+    }
+
+    // At the workspace root, inject a virtual "public" directory entry
+    if relative_path.is_empty() {
+        let pub_dir = public_dir();
+        let pub_path = Path::new(&pub_dir);
+        if pub_path.exists() {
+            entries.push(FileEntry {
+                name: "public".to_string(),
+                path: "public".to_string(),
+                is_dir: true,
+                size: 0,
+                modified: None,
+            });
+        }
     }
 
     // Sort: directories first, then by name
@@ -236,10 +273,19 @@ async fn read_file(
 
     let workspace = workspace_dir();
     let workspace_path = Path::new(&workspace);
-    let full_path = workspace_path.join(&query.path);
+
+    // Resolve base dir — "public/" prefix routes to the public dir
+    let (full_path, base_path) = if query.path.starts_with("public/") {
+        let public = public_dir();
+        let public_path = Path::new(&public).to_path_buf();
+        let sub = query.path.strip_prefix("public/").unwrap_or("");
+        (public_path.join(sub), public_path)
+    } else {
+        (workspace_path.join(&query.path), workspace_path.to_path_buf())
+    };
 
     // Security check
-    let canonical_workspace = match workspace_path.canonicalize() {
+    let canonical_workspace = match base_path.canonicalize() {
         Ok(p) => p,
         Err(e) => {
             return HttpResponse::InternalServerError().json(ReadFileResponse {
@@ -248,7 +294,7 @@ async fn read_file(
                 content: None,
                 size: None,
                 is_binary: None,
-                error: Some(format!("Workspace not accessible: {}", e)),
+                error: Some(format!("Directory not accessible: {}", e)),
             });
         }
     };
@@ -274,7 +320,7 @@ async fn read_file(
             content: None,
             size: None,
             is_binary: None,
-            error: Some("Access denied: path outside workspace".to_string()),
+            error: Some("Access denied: path outside allowed directory".to_string()),
         });
     }
 

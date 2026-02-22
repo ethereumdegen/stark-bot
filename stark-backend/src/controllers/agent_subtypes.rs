@@ -146,7 +146,7 @@ async fn create_subtype(
         skip_task_planner: body.skip_task_planner,
         aliases: body.aliases.clone(),
         hidden: body.hidden,
-        preferred_ai_model: body.preferred_ai_model.clone(),
+        preferred_ai_model: body.preferred_ai_model.as_ref().filter(|s| !s.is_empty()).cloned(),
     };
 
     let agents_dir = crate::config::runtime_agents_dir();
@@ -193,7 +193,7 @@ struct UpdateSubtypeRequest {
     #[serde(default)]
     hidden: Option<bool>,
     #[serde(default)]
-    preferred_ai_model: Option<Option<String>>,
+    preferred_ai_model: Option<String>,
 }
 
 /// Update an existing agent subtype (reads from registry, writes to disk).
@@ -236,7 +236,11 @@ async fn update_subtype(
         skip_task_planner: body.skip_task_planner.unwrap_or(existing.skip_task_planner),
         aliases: body.aliases.clone().unwrap_or(existing.aliases),
         hidden: body.hidden.unwrap_or(existing.hidden),
-        preferred_ai_model: body.preferred_ai_model.clone().unwrap_or(existing.preferred_ai_model),
+        preferred_ai_model: match &body.preferred_ai_model {
+            Some(s) if s.is_empty() => None,           // explicit clear
+            Some(s) => Some(s.clone()),                 // set new value
+            None => existing.preferred_ai_model,        // field omitted, preserve
+        },
     };
 
     let agents_dir = crate::config::runtime_agents_dir();

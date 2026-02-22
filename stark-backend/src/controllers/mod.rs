@@ -22,6 +22,7 @@ pub mod memory;
 pub mod impulse_map;
 pub mod modules;
 pub mod payments;
+pub mod public_files;
 pub mod sessions;
 pub mod skills;
 pub mod tools;

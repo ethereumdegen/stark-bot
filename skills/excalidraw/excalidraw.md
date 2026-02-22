@@ -1,11 +1,12 @@
 ---
 name: excalidraw
 description: "Generate architecture diagrams as .excalidraw files from codebase analysis, with optional PNG/SVG export. Use when asked to create architecture diagrams, system diagrams, visualize codebase structure, or generate excalidraw files."
-version: 1.0.0
+version: 1.1.0
 author: starkbot
 metadata: '{"clawdbot":{"emoji":"📐"}}'
 tags: [diagram, architecture, excalidraw, visualization, codebase, svg, png]
-requires_tools: [glob, grep, read_file, write_file, exec]
+requires_tools: [glob, grep, read_file, write_file, exec, run_skill_script, say_to_user]
+scripts: [excalidraw.py]
 arguments:
   path:
     description: "Root path of the codebase to analyze (defaults to current workspace)"
@@ -197,15 +198,37 @@ For logical groupings:
 - Large transparent rectangle with `strokeStyle: "dashed"`
 - Standalone text label at top-left
 
-### Step 6: Validate and Write
+### Step 6: Write and Validate
 
-Run validation before writing. Save to `{{output}}/` or user-specified path.
+Write the `.excalidraw` file to `{{output}}/` or user-specified path, then validate it using the bundled script:
+
+```tool:run_skill_script
+script: excalidraw.py
+action: validate
+args: {"file": "{{output}}/diagram.excalidraw"}
+```
+
+If validation returns errors, fix them and re-validate before proceeding.
 
 **Validation checklist:** See `references/validation.md`
 
-### Step 7: Export to PNG/SVG (Optional)
+### Step 7: Export to PNG/SVG and Share
 
-If the user requests `{{export_format}}` (png, svg, or both), export using the exec tool with a Node.js script leveraging `@excalidraw/utils`.
+If the user requests `{{export_format}}` (png, svg, or both), export using the bundled script. Use `save_public: true` to make the image accessible via the web UI:
+
+```tool:run_skill_script
+script: excalidraw.py
+action: export
+args: {"file": "{{output}}/diagram.excalidraw", "format": "png", "save_public": true}
+```
+
+The script returns a `public_url` (e.g., `/public/diagram.png`). Share it with the user so the image renders inline:
+
+```tool:say_to_user
+message: "Here's the architecture diagram: /public/diagram.png"
+```
+
+Alternatively, export using the exec tool with a Node.js script leveraging `@excalidraw/utils`.
 
 **Full export procedure:** See `references/export.md`
 
@@ -314,3 +337,5 @@ Before writing file:
 | `read_file` | Read config files, entry points, READMEs |
 | `write_file` | Write the `.excalidraw` JSON file |
 | `exec` | Run export scripts for PNG/SVG conversion |
+| `run_skill_script` | Run `excalidraw.py` for validation and export |
+| `say_to_user` | Share the public URL so images render inline in chat |

@@ -24,11 +24,33 @@ pub mod env_vars {
     pub const FLASH_INSTANCE_TOKEN: &str = "FLASH_INSTANCE_TOKEN";
 }
 
-/// Response from the Flash keystore wallet endpoint
+/// Response from /api/tenantinfo (preferred) — richer instance info
+#[derive(Debug, Deserialize)]
+struct TenantInfoResponse {
+    wallet_id: String,
+    admin_address: String,
+    domain: Option<String>,
+    #[allow(dead_code)]
+    tenant_id: Option<String>,
+    #[allow(dead_code)]
+    display_name: Option<String>,
+    #[allow(dead_code)]
+    status: Option<String>,
+}
+
+/// Response from /api/keystore/wallet (legacy fallback)
 #[derive(Debug, Deserialize)]
 struct KeystoreWalletResponse {
     wallet_id: String,
     admin_address: String,
+    domain: Option<String>,
+}
+
+/// Common fields extracted from either response
+struct InitInfo {
+    wallet_id: String,
+    admin_address: String,
+    domain: Option<String>,
 }
 
 /// Request body for sign-message endpoint
@@ -92,6 +114,8 @@ pub struct FlashWalletProvider {
     http_client: reqwest::Client,
     /// Cached ECIES encryption key (derived from signing "starkbot-backup-key-v1")
     encryption_key_hex: tokio::sync::OnceCell<String>,
+    /// Instance's public domain from control plane (e.g. "starkbot-abc.starkbot.cloud")
+    domain: Option<String>,
 }
 
 impl FlashWalletProvider {
@@ -114,16 +138,88 @@ impl FlashWalletProvider {
 
         let instance_token = Arc::new(RwLock::new(instance_token));
 
-        // Fetch wallet info from control plane
-        log::info!("Fetching wallet info from Flash control plane...");
-        let url = format!("{}/api/keystore/wallet", keystore_url);
-
+        // Fetch instance info from control plane
+        // Prefer /api/tenantinfo, fall back to /api/keystore/wallet for older control planes
         let token = instance_token.read().await.clone();
+        let info = Self::fetch_init_info(&http_client, &keystore_url, &tenant_id, &token).await?;
+
+        log::info!(
+            "Flash wallet initialized: {} (wallet_id: {}, domain: {:?})",
+            info.admin_address,
+            info.wallet_id,
+            info.domain
+        );
+
+        // If control plane returned a domain, set STARK_PUBLIC_URL so self_url() picks it up
+        if let Some(ref domain) = info.domain {
+            let url = format!("https://{}", domain);
+            log::info!("Setting STARK_PUBLIC_URL from control plane: {}", url);
+            // SAFETY: called once during single-threaded init before any concurrent env reads
+            unsafe { std::env::set_var(crate::config::env_vars::PUBLIC_URL, &url); }
+        }
+
+        Ok(Self {
+            keystore_url,
+            tenant_id,
+            instance_token,
+            address: info.admin_address,
+            wallet_id: info.wallet_id,
+            http_client,
+            encryption_key_hex: tokio::sync::OnceCell::new(),
+            domain: info.domain,
+        })
+    }
+
+    /// Get the instance's public domain from the control plane (if available)
+    pub fn domain(&self) -> Option<&str> {
+        self.domain.as_deref()
+    }
+
+    /// Fetch init info from control plane.
+    /// Tries /api/tenantinfo first, falls back to /api/keystore/wallet.
+    async fn fetch_init_info(
+        http_client: &reqwest::Client,
+        keystore_url: &str,
+        tenant_id: &str,
+        token: &str,
+    ) -> Result<InitInfo, String> {
+        // Try /api/tenantinfo first
+        let tenantinfo_url = format!("{}/api/tenantinfo", keystore_url);
+        log::info!("Fetching instance info from {}", tenantinfo_url);
+
         let response = http_client
-            .get(&url)
+            .get(&tenantinfo_url)
             .timeout(std::time::Duration::from_secs(30))
-            .header("X-Tenant-ID", &tenant_id)
-            .header("X-Instance-Token", &token)
+            .header("X-Tenant-ID", tenant_id)
+            .header("X-Instance-Token", token)
+            .send()
+            .await;
+
+        if let Ok(resp) = response {
+            if resp.status().is_success() {
+                if let Ok(data) = resp.json::<TenantInfoResponse>().await {
+                    log::info!("Got tenant info from /api/tenantinfo");
+                    return Ok(InitInfo {
+                        wallet_id: data.wallet_id,
+                        admin_address: data.admin_address,
+                        domain: data.domain,
+                    });
+                }
+            }
+            log::warn!("Failed to use /api/tenantinfo, falling back to /api/keystore/wallet");
+        } else {
+            log::warn!("Failed to reach /api/tenantinfo, falling back to /api/keystore/wallet");
+        }
+
+        // Fallback: /api/keystore/wallet
+        let wallet_url = format!("{}/api/keystore/wallet", keystore_url);
+        log::info!("Fetching wallet info from {}", wallet_url);
+
+        let response = http_client
+            .get(&wallet_url)
+            .timeout(std::time::Duration::from_secs(30))
+            .header("X-Tenant-ID", tenant_id)
+            .header("X-Instance-Token", token)
             .send()
             .await
             .map_err(|e| format!("Flash keystore request failed: {}", e))?;
@@ -139,20 +235,10 @@ impl FlashWalletProvider {
             .await
             .map_err(|e| format!("Failed to parse keystore response: {}", e))?;
 
-        log::info!(
-            "Flash wallet initialized: {} (wallet_id: {})",
-            data.admin_address,
-            data.wallet_id
-        );
-
-        Ok(Self {
-            keystore_url,
-            tenant_id,
-            instance_token,
-            address: data.admin_address,
+        Ok(InitInfo {
             wallet_id: data.wallet_id,
-            http_client,
-            encryption_key_hex: tokio::sync::OnceCell::new(),
+            admin_address: data.admin_address,
+            domain: data.domain,
         })
     }
 

@@ -1379,6 +1379,7 @@ async fn main() -> std::io::Result<()> {
     if let Err(e) = config::initialize_workspace() {
         log::error!("Failed to initialize workspace: {}", e);
     }
+    log::info!("Public URL (self_url): {}", config::self_url());
 
     // Seed runtime skills directory from bundled skills
     log::info!("Seeding runtime skills from bundled");
@@ -1983,6 +1984,7 @@ async fn main() -> std::io::Result<()> {
             .configure(controllers::transcribe::config)
             // Public ext proxy — must be before the SPA catch-all
             .configure(controllers::ext::config)
+            .configure(controllers::public_files::config)
             // WebSocket Gateway route (same port as HTTP, required for single-port platforms)
             .route("/ws", web::get().to(gateway::actix_ws::ws_handler));
 
