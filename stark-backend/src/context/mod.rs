@@ -13,7 +13,7 @@ pub mod tokenizer;
 
 use crate::ai::{AiClient, Message, MessageRole};
 use crate::config::MemoryConfig;
-use crate::db::Database;
+use crate::db::{ActiveSessionCache, Database};
 use crate::models::SessionMessage;
 use crate::models::session_message::MessageRole as DbMessageRole;
 use chrono::Utc;
@@ -141,6 +141,8 @@ pub struct ContextManager {
     sliding_window_config: SlidingWindowConfig,
     /// Three-tier compaction thresholds (can be overridden from bot settings)
     compaction_config: ThreeTierCompactionConfig,
+    /// Optional in-memory session cache for fast reads of context_tokens / max_context_tokens
+    active_cache: Option<Arc<ActiveSessionCache>>,
 }
 
 impl ContextManager {
@@ -153,7 +155,14 @@ impl ContextManager {
             memory_config: MemoryConfig::from_env(),
             sliding_window_config: SlidingWindowConfig::default(),
             compaction_config: ThreeTierCompactionConfig::default(),
+            active_cache: None,
         }
+    }
+
+    /// Set the active session cache for fast session metadata reads
+    pub fn with_active_cache(mut self, cache: Arc<ActiveSessionCache>) -> Self {
+        self.active_cache = Some(cache);
+        self
     }
 
     pub fn with_compaction_config(mut self, config: ThreeTierCompactionConfig) -> Self {
