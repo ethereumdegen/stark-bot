@@ -774,10 +774,9 @@ async fn backup_to_cloud(state: web::Data<AppState>, req: HttpRequest) -> impl R
     };
 
     // Build BackupData with all user data
-    let backup = crate::backup::collect_backup_data_with_kv(
+    let backup = crate::backup::collect_backup_data(
         &state.db,
         wallet_address,
-        state.kv_store.as_deref(),
     ).await;
 
     // Check if there's anything to backup
@@ -1273,13 +1272,12 @@ async fn restore_from_cloud(state: web::Data<AppState>, req: HttpRequest) -> imp
 
     // Unified restore
     let notes_store = state.dispatcher.notes_store();
-    let restore_result = crate::backup::restore::restore_all_with_kv(
+    let restore_result = crate::backup::restore::restore_all(
         &state.db,
         &mut backup_data,
         Some(&state.skill_registry),
         Some(&state.channel_manager),
         notes_store.as_ref(),
-        state.kv_store.as_deref(),
     ).await;
 
     let restore_result = match restore_result {

@@ -29,6 +29,7 @@ impl DiscordWriteTool {
                     "react".to_string(),
                     "editMessage".to_string(),
                     "deleteMessage".to_string(),
+                    "banMember".to_string(),
                 ]),
             },
         );
@@ -89,6 +90,28 @@ impl DiscordWriteTool {
         );
 
         properties.insert(
+            "guildId".to_string(),
+            PropertySchema {
+                schema_type: "string".to_string(),
+                description: "Guild (server) ID for banMember".to_string(),
+                default: None,
+                items: None,
+                enum_values: None,
+            },
+        );
+
+        properties.insert(
+            "userId".to_string(),
+            PropertySchema {
+                schema_type: "string".to_string(),
+                description: "User ID for banMember".to_string(),
+                default: None,
+                items: None,
+                enum_values: None,
+            },
+        );
+
+        properties.insert(
             "replyTo".to_string(),
             PropertySchema {
                 schema_type: "string".to_string(),
@@ -113,7 +136,7 @@ impl DiscordWriteTool {
         DiscordWriteTool {
             definition: ToolDefinition {
                 name: "discord_write".to_string(),
-                description: "Write operations for Discord: send/edit/delete messages, add reactions. Admin only. For read operations (readMessages, search, info), use 'discord_read'. For finding server/channel IDs by name, use 'discord_lookup'.".to_string(),
+                description: "Write operations for Discord: send/edit/delete messages, add reactions, ban members. Admin only. For read operations (readMessages, search, info), use 'discord_read'. For finding server/channel IDs by name, use 'discord_lookup'.".to_string(),
                 input_schema: ToolInputSchema {
                     schema_type: "object".to_string(),
                     properties,
@@ -146,6 +169,10 @@ struct DiscordWriteParams {
     reply_to: Option<String>,
     #[serde(rename = "mediaUrl")]
     media_url: Option<String>,
+    #[serde(rename = "guildId")]
+    guild_id: Option<String>,
+    #[serde(rename = "userId")]
+    user_id: Option<String>,
 }
 
 #[async_trait]
@@ -167,8 +194,9 @@ impl Tool for DiscordWriteTool {
             "react" => self.react(&params, context).await,
             "editMessage" => self.edit_message(&params, context).await,
             "deleteMessage" => self.delete_message(&params, context).await,
+            "banMember" => self.ban_member(&params, context).await,
             other => ToolResult::error(format!(
-                "Unknown action: '{}'. Valid write actions: sendMessage, react, editMessage, deleteMessage. For read actions (readMessages, searchMessages, permissions, memberInfo, roleInfo, channelInfo, channelList), use 'discord_read'.",
+                "Unknown action: '{}'. Valid write actions: sendMessage, react, editMessage, deleteMessage, banMember. For read actions (readMessages, searchMessages, permissions, memberInfo, roleInfo, channelInfo, channelList), use 'discord_read'.",
                 other
             )),
         }
@@ -469,6 +497,55 @@ impl DiscordWriteTool {
             )).with_metadata(json!({
                 "message_id": message_id,
                 "channel_id": channel_id
+            }))
+        } else {
+            let body = response.text().await.unwrap_or_default();
+            ToolResult::error(Self::parse_discord_error(status, &body))
+        }
+    }
+
+    async fn ban_member(&self, params: &DiscordWriteParams, context: &ToolContext) -> ToolResult {
+        let guild_id = match &params.guild_id {
+            Some(id) => id,
+            None => return ToolResult::error("'guildId' is required for banMember"),
+        };
+
+        let user_id = match &params.user_id {
+            Some(id) => id,
+            None => return ToolResult::error("'userId' is required for banMember"),
+        };
+
+        let bot_token = match Self::get_bot_token(context) {
+            Ok(t) => t,
+            Err(e) => return e,
+        };
+        let client = context.http_client();
+
+        let url = format!(
+            "https://discord.com/api/v10/guilds/{}/bans/{}",
+            guild_id, user_id
+        );
+
+        let response = match client
+            .put(&url)
+            .header("Authorization", format!("Bot {}", bot_token))
+            .json(&json!({ "delete_message_seconds": 86400 }))
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return ToolResult::error(format!("Failed to ban member: {}", e)),
+        };
+
+        let status = response.status();
+
+        if status == reqwest::StatusCode::NO_CONTENT || status.is_success() {
+            ToolResult::success(format!(
+                "User {} banned from guild {}",
+                user_id, guild_id
+            )).with_metadata(json!({
+                "user_id": user_id,
+                "guild_id": guild_id
             }))
         } else {
             let body = response.text().await.unwrap_or_default();

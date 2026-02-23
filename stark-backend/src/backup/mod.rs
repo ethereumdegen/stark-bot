@@ -174,7 +174,6 @@ impl BackupData {
             + self.special_role_assignments.len()
             + self.notes.len()
             + self.modules.len()
-            + self.kv_entries.len()
     }
 }
 
@@ -584,15 +583,6 @@ impl BackupOptions {
 pub async fn collect_backup_data(
     db: &crate::db::Database,
     wallet_address: String,
-) -> BackupData {
-    collect_backup_data_with_kv(db, wallet_address, None).await
-}
-
-/// Collect backup data, optionally including Redis KV store entries.
-pub async fn collect_backup_data_with_kv(
-    db: &crate::db::Database,
-    wallet_address: String,
-    kv_store: Option<&crate::kv_store::KvStore>,
 ) -> BackupData {
     let mut backup = BackupData::new(wallet_address);
 
@@ -1004,22 +994,6 @@ pub async fn collect_backup_data_with_kv(
                     log::info!("[Backup] Collected {} note files", backup.notes.len());
                 }
             }
-        }
-    }
-
-    // Redis KV store entries
-    if let Some(kv) = kv_store {
-        match kv.dump_all().await {
-            Ok(entries) => {
-                if !entries.is_empty() {
-                    log::info!("[Backup] Collected {} KV store entries from Redis", entries.len());
-                    backup.kv_entries = entries
-                        .into_iter()
-                        .map(|(key, value)| KvEntry { key, value })
-                        .collect();
-                }
-            }
-            Err(e) => log::warn!("[Backup] Failed to dump KV store: {}", e),
         }
     }
 

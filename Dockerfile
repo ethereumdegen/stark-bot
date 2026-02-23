@@ -122,9 +122,5 @@ RUN mkdir -p /app/stark-backend/workspace /app/stark-backend/journal /app/stark-
 EXPOSE 8080
 EXPOSE 8081
 
-# Copy the entrypoint script (starts Redis, then exec's the backend)
-COPY docker-entrypoint.sh /app/docker-entrypoint.sh
-RUN chmod +x /app/docker-entrypoint.sh
-
-# Run the application (Redis started by entrypoint)
-ENTRYPOINT ["/app/docker-entrypoint.sh"]
+# Run the application
+CMD ["/app/stark-backend-bin"]

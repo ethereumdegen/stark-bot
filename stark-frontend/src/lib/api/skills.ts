@@ -85,6 +85,24 @@ export async function setSkillEnabled(name: string, enabled: boolean): Promise<v
   });
 }
 
+// Bundled Skills API
+export interface BundledSkillInfo {
+  name: string;
+  description: string;
+  version: string;
+  tags: string[];
+}
+
+export async function getBundledAvailableSkills(): Promise<BundledSkillInfo[]> {
+  return apiFetch('/skills/bundled/available');
+}
+
+export async function restoreBundledSkill(name: string): Promise<void> {
+  await apiFetch(`/skills/bundled/restore/${encodeURIComponent(name)}`, {
+    method: 'POST',
+  });
+}
+
 // Skill Graph & Embedding API
 
 export async function getSkillGraph(): Promise<SkillGraphResponse> {

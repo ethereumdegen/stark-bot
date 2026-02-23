@@ -38,6 +38,7 @@ const EMPTY_SUBTYPE: AgentSubtypeInfo = {
   enabled: true,
   max_iterations: 90,
   skip_task_planner: false,
+  hidden: false,
 };
 
 export default function AgentSubtypes() {
@@ -58,9 +59,8 @@ export default function AgentSubtypes() {
   const [goalsLoading, setGoalsLoading] = useState(false);
   const [goalsSaving, setGoalsSaving] = useState(false);
 
-  const [heartbeatContent, setHeartbeatContent] = useState<string | null>(null);
-  const [heartbeatLoading, setHeartbeatLoading] = useState(false);
-  const [heartbeatSaving, setHeartbeatSaving] = useState(false);
+  const [hooksContent, setHooksContent] = useState<Record<string, string | null>>({});
+  const [hooksSaving, setHooksSaving] = useState<Record<string, boolean>>({});
 
   const [featuredSubtypes, setFeaturedSubtypes] = useState<FeaturedAgentSubtype[]>([]);
   const [featuredLoading, setFeaturedLoading] = useState(true);
@@ -87,7 +87,7 @@ export default function AgentSubtypes() {
       setSelectedKey(firstKey);
       setEditForm({ ...subtypes[0] });
       loadGoals(firstKey);
-      loadHeartbeat(firstKey);
+      loadHooks(firstKey);
     }
   }, [subtypes]);
 
@@ -153,16 +153,26 @@ export default function AgentSubtypes() {
     }
   };
 
-  const loadHeartbeat = async (key: string) => {
-    setHeartbeatLoading(true);
-    try {
-      const result = await readIntrinsicFile(`agents/${key}/heartbeat.md`);
-      setHeartbeatContent(result.content ?? null);
-    } catch {
-      setHeartbeatContent(null);
-    } finally {
-      setHeartbeatLoading(false);
-    }
+  const HOOK_TYPES = [
+    { event: 'heartbeat', label: 'Heartbeat', description: 'Runs on each heartbeat cycle' },
+    { event: 'discord_message', label: 'Discord Message', description: 'Fires on every Discord message' },
+    { event: 'discord_member_join', label: 'Discord Member Join', description: 'Fires when a new member joins a server' },
+    { event: 'telegram_message', label: 'Telegram Message', description: 'Fires on every Telegram message' },
+  ];
+
+  const loadHooks = async (key: string) => {
+    const content: Record<string, string | null> = {};
+    await Promise.all(
+      HOOK_TYPES.map(async (ht) => {
+        try {
+          const result = await readIntrinsicFile(`agents/${key}/hooks/${ht.event}.md`);
+          content[ht.event] = result.content ?? null;
+        } catch {
+          content[ht.event] = null;
+        }
+      })
+    );
+    setHooksContent(content);
   };
 
   const handleSelectTab = (key: string) => {
@@ -172,7 +182,7 @@ export default function AgentSubtypes() {
       setSelectedKey(key);
       setEditForm({ ...subtype });
       loadGoals(key);
-      loadHeartbeat(key);
+      loadHooks(key);
     }
   };
 
@@ -321,28 +331,49 @@ export default function AgentSubtypes() {
     }
   };
 
-  const handleActivateHeartbeat = async () => {
+  const handleToggleHook = async (event: string) => {
     if (!selectedKey) return;
-    const defaultContent = '# Heartbeat\n\nDescribe what this agent should do on each heartbeat cycle.\nRespond with HEARTBEAT_OK if no action needed.';
-    try {
-      await writeIntrinsicFile(`agents/${selectedKey}/heartbeat.md`, defaultContent);
-      setHeartbeatContent(defaultContent);
-      setSuccess('Heartbeat activated');
-    } catch {
-      setError('Failed to create heartbeat file');
+    const isActive = hooksContent[event] !== null && hooksContent[event] !== undefined;
+
+    if (isActive) {
+      // Turn off: delete template file, reload registry
+      try {
+        await deleteIntrinsicFile(`agents/${selectedKey}/hooks/${event}.md`);
+        // Trigger registry reload so in-memory hooks update
+        await updateAgentSubtype(selectedKey, {});
+        setHooksContent(prev => ({ ...prev, [event]: null }));
+        setSuccess(`${event} hook disabled`);
+      } catch {
+        setError('Failed to disable hook');
+      }
+    } else {
+      // Turn on: create default template file, reload registry
+      const defaultContent = `# ${event} hook\n\nDescribe what the agent should do when this event fires.`;
+      try {
+        await writeIntrinsicFile(`agents/${selectedKey}/hooks/${event}.md`, defaultContent);
+        await updateAgentSubtype(selectedKey, {});
+        setHooksContent(prev => ({ ...prev, [event]: defaultContent }));
+        setSuccess(`${event} hook enabled`);
+      } catch {
+        setError('Failed to enable hook');
+      }
     }
   };
 
-  const handleSaveHeartbeat = async () => {
-    if (!selectedKey || heartbeatContent === null) return;
-    setHeartbeatSaving(true);
+  const handleSaveHookTemplate = async (event: string) => {
+    if (!selectedKey) return;
+    const content = hooksContent[event];
+    if (content === null || content === undefined) return;
+    setHooksSaving(prev => ({ ...prev, [event]: true }));
     try {
-      await writeIntrinsicFile(`agents/${selectedKey}/heartbeat.md`, heartbeatContent);
-      setSuccess('Heartbeat saved');
+      await writeIntrinsicFile(`agents/${selectedKey}/hooks/${event}.md`, content);
+      // Reload registry so in-memory prompt_template updates
+      await updateAgentSubtype(selectedKey, {});
+      setSuccess(`${event} template saved`);
     } catch {
-      setError('Failed to save heartbeat');
+      setError(`Failed to save ${event} template`);
     } finally {
-      setHeartbeatSaving(false);
+      setHooksSaving(prev => ({ ...prev, [event]: false }));
     }
   };
 
@@ -380,18 +411,6 @@ export default function AgentSubtypes() {
       setSuccess('Goals removed');
     } catch {
       setError('Failed to remove goals');
-    }
-  };
-
-  const handleRemoveHeartbeat = async () => {
-    if (!selectedKey) return;
-    if (!confirm('Remove heartbeat for this agent? The heartbeat.md file will be deleted.')) return;
-    try {
-      await deleteIntrinsicFile(`agents/${selectedKey}/heartbeat.md`);
-      setHeartbeatContent(null);
-      setSuccess('Heartbeat removed');
-    } catch {
-      setError('Failed to remove heartbeat');
     }
   };
 
@@ -618,40 +637,55 @@ export default function AgentSubtypes() {
                   </div>
                 )}
 
-                {/* Heartbeat Section */}
+                {/* Hooks Section */}
                 {!isCreating && selectedKey && (
                   <div className="mt-6 pt-6 border-t border-slate-700/50">
-                    <div className="flex items-center justify-between mb-2">
-                      <label className="block text-xs text-slate-500">
-                        Heartbeat Prompt
-                        <span className="text-slate-600 ml-1">— runs on each heartbeat cycle if present</span>
-                      </label>
-                      {heartbeatContent !== null && (
-                        <div className="flex items-center gap-1">
-                          <Button size="sm" variant="ghost" onClick={handleSaveHeartbeat} isLoading={heartbeatSaving}>
-                            <Save className="w-3.5 h-3.5 mr-1" /> Save
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={handleRemoveHeartbeat} className="text-red-400 hover:text-red-300 hover:bg-red-500/20">
-                            <Trash2 className="w-3.5 h-3.5 mr-1" /> Remove
-                          </Button>
-                        </div>
-                      )}
+                    <label className="block text-xs text-slate-500 mb-3">
+                      Hooks
+                      <span className="text-slate-600 ml-1">— event-driven triggers (detected from hooks/ files)</span>
+                    </label>
+                    <div className="space-y-3">
+                      {HOOK_TYPES.map(ht => {
+                        const content = hooksContent[ht.event];
+                        const isActive = content !== null && content !== undefined;
+                        const saving = hooksSaving[ht.event] || false;
+
+                        return (
+                          <div key={ht.event} className="rounded-lg border border-slate-700/50 p-3">
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => handleToggleHook(ht.event)}
+                                  className={`px-2 py-0.5 text-[10px] font-bold rounded transition-colors ${
+                                    isActive
+                                      ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
+                                      : 'bg-slate-700 text-slate-500 hover:bg-slate-600'
+                                  }`}
+                                >
+                                  {isActive ? 'ON' : 'OFF'}
+                                </button>
+                                <span className="text-sm text-white font-medium">{ht.label}</span>
+                                <span className="text-xs text-slate-500">{ht.description}</span>
+                              </div>
+                              {isActive && (
+                                <Button size="sm" variant="ghost" onClick={() => handleSaveHookTemplate(ht.event)} isLoading={saving}>
+                                  <Save className="w-3.5 h-3.5 mr-1" /> Save
+                                </Button>
+                              )}
+                            </div>
+                            {isActive && (
+                              <textarea
+                                value={content ?? ''}
+                                onChange={e => setHooksContent(prev => ({ ...prev, [ht.event]: e.target.value }))}
+                                className="w-full h-28 mt-2 bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-sm text-slate-300 font-mono resize-none focus:outline-none focus:border-stark-500"
+                                spellCheck={false}
+                                placeholder={`hooks/${ht.event}.md template...`}
+                              />
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
-                    {heartbeatLoading ? (
-                      <div className="text-xs text-slate-500">Loading...</div>
-                    ) : heartbeatContent === null ? (
-                      <Button variant="secondary" size="sm" onClick={handleActivateHeartbeat}>
-                        Activate Heartbeat
-                      </Button>
-                    ) : (
-                      <textarea
-                        value={heartbeatContent}
-                        onChange={e => setHeartbeatContent(e.target.value)}
-                        className="w-full h-36 bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-sm text-slate-300 font-mono resize-none focus:outline-none focus:border-stark-500"
-                        spellCheck={false}
-                        placeholder="Heartbeat prompt for this agent..."
-                      />
-                    )}
                   </div>
                 )}
               </CardContent>
@@ -808,7 +842,7 @@ function SubtypeForm({ form, setForm, toolGroups, onToolGroupToggle, isNew, endp
       </div>
 
       {/* Row: Sort Order + Max Iterations + Skip Task Planner */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 items-end">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 items-end">
         <div>
           <label className="block text-xs text-slate-500 mb-1">Sort Order</label>
           <input
@@ -855,6 +889,20 @@ function SubtypeForm({ form, setForm, toolGroups, onToolGroupToggle, isNew, endp
               <option key={p.id} value={p.id}>{p.display_name}</option>
             ))}
           </select>
+        </div>
+        <div>
+          <label className="block text-xs text-slate-500 mb-1">Hidden</label>
+          <button
+            type="button"
+            onClick={() => setForm({ ...form, hidden: !form.hidden })}
+            className={`px-3 py-2 text-sm rounded-lg transition-colors w-full ${
+              form.hidden
+                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
+                : 'bg-slate-900/50 text-slate-400 border border-slate-700 hover:border-slate-600'
+            }`}
+          >
+            {form.hidden ? 'Yes (hidden)' : 'No (visible)'}
+          </button>
         </div>
       </div>
 

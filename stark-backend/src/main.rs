@@ -22,6 +22,7 @@ mod integrations;
 mod middleware;
 mod models;
 mod notes;
+mod persona_hooks;
 mod scheduler;
 mod skills;
 mod tools;
@@ -33,7 +34,6 @@ mod erc8128;
 mod eip8004;
 mod hooks;
 pub mod http;
-mod kv_store;
 mod tool_validators;
 mod tx_queue;
 mod web3;
@@ -89,8 +89,6 @@ pub struct AppState {
     pub remote_embedding_generator: Option<Arc<memory::embeddings::RemoteEmbeddingGenerator>>,
     /// Bearer token for internal module-to-backend API calls (e.g. wallet signing proxy)
     pub internal_token: String,
-    /// Redis-backed key/value store for agent state tracking
-    pub kv_store: Option<Arc<kv_store::KvStore>>,
 }
 
 /// Auto-retrieve backup from keystore on fresh instance
@@ -659,32 +657,6 @@ async fn main() -> std::io::Result<()> {
     let db = Database::new(&config.database_url).expect("Failed to initialize database");
     let db = Arc::new(db);
 
-    // Initialize Redis KV store (optional — graceful degradation if Redis unavailable)
-    let kv_store: Option<Arc<kv_store::KvStore>> = match kv_store::KvStore::new() {
-        Ok(store) => {
-            let store = Arc::new(store);
-            let store_check = store.clone();
-            // Quick ping check — don't block startup if Redis isn't available
-            let reachable = tokio::time::timeout(
-                std::time::Duration::from_secs(2),
-                store_check.ping(),
-            )
-            .await
-            .unwrap_or(false);
-            if reachable {
-                log::info!("Redis KV store connected");
-                Some(store)
-            } else {
-                log::warn!("Redis not reachable — KV store disabled (agent kv_store tool unavailable)");
-                None
-            }
-        }
-        Err(e) => {
-            log::warn!("Failed to create Redis client: {} — KV store disabled", e);
-            None
-        }
-    };
-
     // Override x402 payment limit defaults with any user-configured values from DB
     match db.get_all_x402_payment_limits() {
         Ok(limits) => {
@@ -949,9 +921,6 @@ async fn main() -> std::io::Result<()> {
             store.set_disk_quota(dq.clone());
         }
     }
-    if let Some(ref kv) = kv_store {
-        dispatcher_builder = dispatcher_builder.with_kv_store(kv.clone());
-    }
     let dispatcher = Arc::new(dispatcher_builder);
 
     // Get broadcaster and channel_manager for the /ws route
@@ -1173,7 +1142,6 @@ async fn main() -> std::io::Result<()> {
     let disk_q = disk_quota.clone();
     let mod_workers = module_workers.clone();
     let hybrid_search_engine = hybrid_search_engine.clone();
-    let kv_s = kv_store.clone();
     let frontend_dist = frontend_dist.to_string();
     let dev_mode = dev_mode;
     // Internal token for module-to-backend API calls (wallet signing proxy, etc.)
@@ -1217,7 +1185,6 @@ async fn main() -> std::io::Result<()> {
                 hybrid_search: hybrid_search_engine.clone(),
                 remote_embedding_generator: Some(Arc::clone(&remote_embedding_generator)),
                 internal_token: internal_token.clone(),
-                kv_store: kv_s.clone(),
             }))
             .app_data(web::Data::new(Arc::clone(&sched)))
             // WebSocket data for /ws route
@@ -1254,7 +1221,6 @@ async fn main() -> std::io::Result<()> {
             .configure(controllers::modules::config)
             .configure(controllers::memory::config)
             .configure(controllers::system::config)
-            .configure(controllers::kv_store::config)
             .configure(controllers::well_known::config)
             .configure(controllers::x402_limits::config)
             .configure(controllers::telemetry::config)

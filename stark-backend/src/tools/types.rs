@@ -427,8 +427,6 @@ pub struct ToolContext {
     pub current_subagent_depth: Option<u32>,
     /// Hybrid search engine for combined FTS5 + vector + graph memory search
     pub hybrid_search: Option<Arc<crate::memory::HybridSearchEngine>>,
-    /// Redis-backed key/value store for agent state tracking
-    pub kv_store: Option<Arc<crate::kv_store::KvStore>>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -460,7 +458,6 @@ impl std::fmt::Debug for ToolContext {
             .field("current_subagent_id", &self.current_subagent_id)
             .field("current_subagent_depth", &self.current_subagent_depth)
             .field("hybrid_search", &self.hybrid_search.is_some())
-            .field("kv_store", &self.kv_store.is_some())
             .finish()
     }
 }
@@ -495,7 +492,6 @@ impl Default for ToolContext {
             current_subagent_id: None,
             current_subagent_depth: None,
             hybrid_search: None,
-            kv_store: None,
         }
     }
 }
@@ -716,12 +712,6 @@ impl ToolContext {
     /// Add a HybridSearchEngine to the context (for combined FTS5 + vector + graph search)
     pub fn with_hybrid_search(mut self, engine: Arc<crate::memory::HybridSearchEngine>) -> Self {
         self.hybrid_search = Some(engine);
-        self
-    }
-
-    /// Add a KvStore to the context (for agent key/value state tracking)
-    pub fn with_kv_store(mut self, store: Arc<crate::kv_store::KvStore>) -> Self {
-        self.kv_store = Some(store);
         self
     }
 

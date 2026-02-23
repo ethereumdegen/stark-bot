@@ -38,10 +38,13 @@ pub fn parse_agent_file(content: &str) -> Result<AgentSubtypeConfig, String> {
         aliases: Vec::new(),
         hidden: false,
         preferred_ai_model: None,
+        hooks: Vec::new(),
     };
 
     // Hand-rolled YAML parser (no serde_yaml crate)
     let mut current_list_key = String::new();
+    // State for skipping legacy hooks block in frontmatter (hooks are now auto-detected from files)
+    let mut in_hooks_block = false;
 
     for line in frontmatter.lines() {
         let trimmed = line.trim();
@@ -50,6 +53,15 @@ pub fn parse_agent_file(content: &str) -> Result<AgentSubtypeConfig, String> {
         }
 
         let indent = line.len() - line.trim_start().len();
+
+        // Skip legacy hooks block in frontmatter (hooks are auto-detected from hooks/ directory)
+        if in_hooks_block {
+            if indent >= 2 {
+                continue; // still inside hooks block
+            }
+            in_hooks_block = false;
+            // Fall through to normal parsing for this line
+        }
 
         // List item continuation
         if indent > 0 && trimmed.starts_with("- ") {
@@ -82,6 +94,12 @@ pub fn parse_agent_file(content: &str) -> Result<AgentSubtypeConfig, String> {
                 "preferred_ai_model" => {
                     let v = unquote_yaml(value);
                     config.preferred_ai_model = if v.is_empty() || v == "none" { None } else { Some(v) };
+                }
+                "hooks" => {
+                    // Legacy: skip hooks block in frontmatter (auto-detected from hooks/ dir)
+                    if value.is_empty() {
+                        in_hooks_block = true;
+                    }
                 }
                 "tool_groups" | "skill_tags" | "additional_tools" | "aliases" => {
                     // Inline array or block list
@@ -140,8 +158,10 @@ pub fn load_agents_from_directory(dir: &Path) -> Result<Vec<AgentSubtypeConfig>,
 
         match std::fs::read_to_string(&agent_md) {
             Ok(content) => match parse_agent_file(&content) {
-                Ok(config) => {
-                    log::info!("[AGENTS] Loaded agent '{}' from {}", config.key, agent_md.display());
+                Ok(mut config) => {
+                    // Auto-detect hooks from hooks/ directory
+                    load_hooks_from_directory(&path, &mut config);
+                    log::info!("[AGENTS] Loaded agent '{}' from {} ({} hooks)", config.key, agent_md.display(), config.hooks.len());
                     configs.push(config);
                 }
                 Err(e) => {
@@ -194,6 +214,52 @@ pub fn reload_registry_from_disk() {
     crate::ai::multi_agent::types::load_subtype_registry(configs);
 }
 
+/// Auto-detect hooks from the agent's hooks/ subdirectory.
+/// Each `.md` file becomes a hook with the filename stem as the event name.
+/// e.g. `hooks/heartbeat.md` → event "heartbeat", `hooks/discord_message.md` → event "discord_message"
+fn load_hooks_from_directory(agent_dir: &Path, config: &mut AgentSubtypeConfig) {
+    use crate::ai::multi_agent::types::PersonaHook;
+
+    let hooks_dir = agent_dir.join("hooks");
+    let entries = match std::fs::read_dir(&hooks_dir) {
+        Ok(e) => e,
+        Err(_) => return, // No hooks/ directory — no hooks
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let ext = path.extension().and_then(|e| e.to_str());
+        if ext != Some("md") {
+            continue;
+        }
+        let event = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c.trim().to_string(),
+            Err(e) => {
+                log::warn!("[AGENTS] Failed to read hook template {}: {}", path.display(), e);
+                continue;
+            }
+        };
+        if content.is_empty() {
+            continue;
+        }
+        log::info!(
+            "[AGENTS] Loaded hook '{}' for agent '{}' from {}",
+            event, config.key, path.display()
+        );
+        config.hooks.push(PersonaHook {
+            event,
+            prompt_template: content,
+        });
+    }
+}
+
 // =====================================================
 // Serialization helpers
 // =====================================================
@@ -221,6 +287,8 @@ fn serialize_agent_md(config: &AgentSubtypeConfig) -> String {
     yaml.push_str(&format!("tool_groups: {}\n", format_inline_array(&config.tool_groups)));
     yaml.push_str(&format_block_array("skill_tags", &config.skill_tags));
     yaml.push_str(&format_block_array("additional_tools", &config.additional_tools));
+
+    // Hooks are auto-detected from hooks/ directory — not serialized in frontmatter
 
     yaml.push_str("---\n\n");
     yaml.push_str(&config.prompt);
@@ -418,6 +486,7 @@ Finance prompt body here.
             aliases: vec!["tester".to_string()],
             hidden: false,
             preferred_ai_model: Some("minimax".to_string()),
+            hooks: Vec::new(),
         };
 
         let md = serialize_agent_md(&config);

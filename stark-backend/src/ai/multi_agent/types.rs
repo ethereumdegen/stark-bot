@@ -5,6 +5,21 @@ use serde::{Deserialize, Serialize};
 use crate::tools::types::ToolGroup;
 
 // =====================================================
+// Persona Hooks (event-driven agent triggers)
+// =====================================================
+
+/// A hook that triggers an agent session when a matching event occurs.
+/// Auto-detected from `hooks/*.md` files in the agent directory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonaHook {
+    /// Event identifier derived from filename (e.g. "discord_message", "heartbeat")
+    pub event: String,
+    /// Prompt template with {variable} placeholders, loaded from hooks/{event}.md
+    #[serde(default)]
+    pub prompt_template: String,
+}
+
+// =====================================================
 // Agent Subtype Config (dynamic, config-driven subtypes)
 // =====================================================
 
@@ -48,6 +63,10 @@ pub struct AgentSubtypeConfig {
     /// When set, overrides the global agent settings for this subtype's agentic loop.
     #[serde(default)]
     pub preferred_ai_model: Option<String>,
+    /// Event-driven hooks that trigger isolated sessions when matching events fire.
+    /// Declared in frontmatter, prompt templates loaded from hooks/ directory.
+    #[serde(default)]
+    pub hooks: Vec<PersonaHook>,
 }
 
 fn default_max_iterations() -> u32 {

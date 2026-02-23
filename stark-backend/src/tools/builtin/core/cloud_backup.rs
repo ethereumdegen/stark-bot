@@ -113,10 +113,9 @@ impl Tool for CloudBackupTool {
                 };
 
                 // Collect all backup data
-                let backup = crate::backup::collect_backup_data_with_kv(
+                let backup = crate::backup::collect_backup_data(
                     db,
                     wallet_address.clone(),
-                    context.kv_store.as_deref(),
                 ).await;
 
                 if backup.is_empty() {

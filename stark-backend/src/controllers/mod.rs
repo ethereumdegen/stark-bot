@@ -18,7 +18,6 @@ pub mod identity;
 pub mod internal_wallet;
 pub mod intrinsic;
 pub mod kanban;
-pub mod kv_store;
 pub mod notes;
 pub mod memory;
 pub mod impulse_map;

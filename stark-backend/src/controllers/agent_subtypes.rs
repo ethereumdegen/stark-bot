@@ -147,6 +147,7 @@ async fn create_subtype(
         aliases: body.aliases.clone(),
         hidden: body.hidden,
         preferred_ai_model: body.preferred_ai_model.as_ref().filter(|s| !s.is_empty()).cloned(),
+        hooks: Vec::new(),
     };
 
     let agents_dir = crate::config::runtime_agents_dir();
@@ -241,6 +242,7 @@ async fn update_subtype(
             Some(s) => Some(s.clone()),                 // set new value
             None => existing.preferred_ai_model,        // field omitted, preserve
         },
+        hooks: Vec::new(),
     };
 
     let agents_dir = crate::config::runtime_agents_dir();

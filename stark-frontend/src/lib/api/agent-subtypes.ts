@@ -14,7 +14,10 @@ export interface AgentSubtypeInfo {
   enabled: boolean;
   max_iterations: number;
   skip_task_planner: boolean;
+  hidden: boolean;
   aliases?: string[];
+  preferred_ai_model?: string | null;
+  hooks?: { event: string }[];
 }
 
 export async function getAgentSubtypes(): Promise<AgentSubtypeInfo[]> {

@@ -67,8 +67,6 @@ pub struct MessageDispatcher {
     tx_queue: Option<Arc<crate::tx_queue::TxQueueManager>>,
     /// Disk quota manager for enforcing disk usage limits
     disk_quota: Option<Arc<crate::disk_quota::DiskQuotaManager>>,
-    /// Redis-backed key/value store for agent state tracking
-    kv_store: Option<Arc<crate::kv_store::KvStore>>,
     /// Telemetry store for persisting execution spans
     telemetry_store: Arc<TelemetryStore>,
     /// Rollout manager for retry lifecycle
@@ -198,7 +196,6 @@ impl MessageDispatcher {
             validator_registry: None,
             tx_queue: None,
             disk_quota: None,
-            kv_store: None,
             telemetry_store,
             rollout_manager,
             resource_manager,
@@ -207,13 +204,6 @@ impl MessageDispatcher {
             #[cfg(test)]
             mock_ai_client: None,
         }
-    }
-
-    /// Set the disk quota manager for enforcing disk usage limits
-    /// Set the KV store for agent state tracking
-    pub fn with_kv_store(mut self, store: Arc<crate::kv_store::KvStore>) -> Self {
-        self.kv_store = Some(store);
-        self
     }
 
     pub fn with_disk_quota(mut self, dq: Arc<crate::disk_quota::DiskQuotaManager>) -> Self {
@@ -306,7 +296,6 @@ impl MessageDispatcher {
             validator_registry: None, // No validators without explicit setup
             tx_queue: None,         // No tx queue without explicit setup
             disk_quota: None,       // No disk quota without explicit setup
-            kv_store: None,
             telemetry_store,
             rollout_manager,
             resource_manager,
@@ -1031,11 +1020,6 @@ impl MessageDispatcher {
         if let Some(ref dq) = self.disk_quota {
             tool_context = tool_context.with_disk_quota(dq.clone());
             log::debug!("[DISPATCH] DiskQuotaManager attached to tool context");
-        }
-
-        // Add KvStore for agent key/value state tracking
-        if let Some(ref store) = self.kv_store {
-            tool_context = tool_context.with_kv_store(store.clone());
         }
 
         // Pass safe mode flag to tool context so tools can sandbox themselves

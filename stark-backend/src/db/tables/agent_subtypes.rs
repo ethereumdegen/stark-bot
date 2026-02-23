@@ -38,6 +38,7 @@ impl Database {
                     aliases: serde_json::from_str(&aliases_str).unwrap_or_default(),
                     hidden: row.get::<_, i32>(13).unwrap_or(0) != 0,
                     preferred_ai_model: row.get::<_, Option<String>>(14).unwrap_or(None),
+                    hooks: Vec::new(),
                 })
             })?
             .filter_map(|r| r.ok())
@@ -75,6 +76,7 @@ impl Database {
                     aliases: serde_json::from_str(&aliases_str).unwrap_or_default(),
                     hidden: row.get::<_, i32>(13).unwrap_or(0) != 0,
                     preferred_ai_model: row.get::<_, Option<String>>(14).unwrap_or(None),
+                    hooks: Vec::new(),
                 })
             },
         );

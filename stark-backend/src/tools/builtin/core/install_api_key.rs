@@ -339,7 +339,7 @@ mod tests {
         assert!(is_builtin_key("GITHUB_TOKEN"));
         assert!(is_builtin_key("GH_TOKEN"));
         assert!(is_builtin_key("TWITTER_API_KEY")); // alias of TWITTER_CONSUMER_KEY
-        assert!(is_builtin_key("MOLTX_API_KEY"));
+        assert!(!is_builtin_key("MOLTX_API_KEY"));
         assert!(!is_builtin_key("ALLIUM_API_KEY"));
         assert!(!is_builtin_key("MY_CUSTOM_KEY"));
     }

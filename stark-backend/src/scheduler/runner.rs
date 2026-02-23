@@ -14,9 +14,6 @@ use tokio::time::{interval, timeout, Duration as TokioDuration};
 /// Used to prevent overlapping heartbeat cycles via ExecutionTracker
 pub const HEARTBEAT_CHANNEL_ID: i64 = -999;
 
-/// Timeout for per-agent heartbeat sessions
-const AGENT_HEARTBEAT_TIMEOUT_SECS: u64 = 120;
-
 /// Scheduler configuration
 #[derive(Debug, Clone)]
 pub struct SchedulerConfig {
@@ -745,7 +742,8 @@ impl Scheduler {
         Ok(format!("Job '{}' executed successfully", job.name))
     }
 
-    /// Scan all agent folders for heartbeat.md and spawn a session for each
+    /// Scan all agent folders and fire the `heartbeat` hook for each agent that has one.
+    /// Agents without a `heartbeat` hook are simply skipped (no-op).
     async fn run_agent_heartbeats(&self) {
         let agents_dir = crate::config::runtime_agents_dir();
         let entries = match std::fs::read_dir(&agents_dir) {
@@ -763,88 +761,13 @@ impl Scheduler {
             }
 
             let key = entry.file_name().to_string_lossy().to_string();
-            let heartbeat_path = path.join("heartbeat.md");
 
-            if !heartbeat_path.is_file() {
-                continue;
-            }
+            log::debug!("[HEARTBEAT] Firing heartbeat hook for agent '{}'", key);
 
-            let heartbeat_text = match std::fs::read_to_string(&heartbeat_path) {
-                Ok(c) => c.trim().to_string(),
-                Err(e) => {
-                    log::warn!(
-                        "[HEARTBEAT] Failed to read {}: {}",
-                        heartbeat_path.display(),
-                        e
-                    );
-                    continue;
-                }
-            };
-
-            if heartbeat_text.is_empty() {
-                continue;
-            }
-
-            // Optionally prepend goals.md content if it exists
-            let goals_path = path.join("goals.md");
-            let prompt = match std::fs::read_to_string(&goals_path) {
-                Ok(g) => {
-                    let goals = g.trim();
-                    if goals.is_empty() {
-                        heartbeat_text
-                    } else {
-                        format!("## Overall Goals ##\n{}\n\n{}", goals, heartbeat_text)
-                    }
-                }
-                Err(_) => heartbeat_text,
-            };
-
-            log::info!(
-                "[HEARTBEAT] Spawning heartbeat session for agent '{}'",
-                key
-            );
-
-            // Each agent heartbeat uses a deterministic negative channel ID
-            // channel_type = agent key (enables hidden subtype auto-selection)
-            let channel_id = -(900 + hash_to_channel_offset(&key));
-            let dispatcher = Arc::clone(&self.dispatcher);
-            let key_clone = key.clone();
-
+            let hook_dispatcher = Arc::clone(&self.dispatcher);
+            let hook_key = key.clone();
             tokio::spawn(async move {
-                let now = Utc::now();
-                let normalized = NormalizedMessage {
-                    channel_id,
-                    channel_type: key_clone.clone(),
-                    chat_id: format!("heartbeat:{}:global", key_clone),
-                    chat_name: None,
-                    user_id: format!("heartbeat-{}", key_clone),
-                    user_name: format!("Heartbeat({})", key_clone),
-                    text: prompt,
-                    message_id: Some(format!(
-                        "heartbeat-{}-{}",
-                        key_clone,
-                        now.timestamp()
-                    )),
-                    session_mode: Some("isolated".to_string()),
-                    selected_network: None,
-                    force_safe_mode: false,
-                };
-                let result = timeout(
-                    TokioDuration::from_secs(AGENT_HEARTBEAT_TIMEOUT_SECS),
-                    dispatcher.dispatch_safe(normalized),
-                )
-                .await;
-                match result {
-                    Ok(r) if r.error.is_some() => {
-                        log::warn!("[HEARTBEAT:{}] Failed: {:?}", key_clone, r.error)
-                    }
-                    Err(_) => log::warn!(
-                        "[HEARTBEAT:{}] Timed out after {}s",
-                        key_clone,
-                        AGENT_HEARTBEAT_TIMEOUT_SECS
-                    ),
-                    _ => log::info!("[HEARTBEAT:{}] Completed successfully", key_clone),
-                }
+                crate::persona_hooks::fire_heartbeat_hooks(&hook_key, &hook_dispatcher).await;
             });
         }
     }
@@ -898,15 +821,5 @@ impl Scheduler {
 
         Ok("Heartbeat pulse started (running in background)".to_string())
     }
-}
-
-
-/// Deterministic hash of an agent key to a channel offset (0..99)
-fn hash_to_channel_offset(key: &str) -> i64 {
-    let mut hash: u64 = 5381;
-    for b in key.bytes() {
-        hash = hash.wrapping_mul(33).wrapping_add(b as u64);
-    }
-    (hash % 100) as i64
 }
 

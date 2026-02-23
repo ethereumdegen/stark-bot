@@ -146,6 +146,16 @@ impl EventHandler for DiscordHandler {
             return;
         }
 
+        // ===== Persona Hooks (event-driven agent triggers) =====
+        // Fire in background — non-blocking, does not affect normal message handling
+        {
+            let dispatcher_clone = Arc::clone(&self.dispatcher);
+            let msg_clone = msg.clone();
+            tokio::spawn(async move {
+                crate::persona_hooks::fire_discord_message_hooks(&msg_clone, &dispatcher_clone).await;
+            });
+        }
+
         // ===== Discord Hooks Integration =====
         // Get the cached bot user ID (set from Ready event).
         // Fall back to API call only if Ready hasn't fired yet (should be rare).
@@ -316,6 +326,42 @@ impl EventHandler for DiscordHandler {
     async fn ready(&self, _ctx: Context, ready: Ready) {
         log::info!("Discord: Bot connected as {} (id={})", ready.user.name, ready.user.id);
         let _ = self.bot_user_id.set(ready.user.id);
+    }
+
+    async fn guild_member_addition(&self, _ctx: Context, new_member: serenity::all::Member) {
+        let guild_id = new_member.guild_id.get();
+        let user = &new_member.user;
+        let user_name = user.name.clone();
+        let user_id = user.id.get();
+        let user_bot = user.bot;
+        let joined_at = new_member
+            .joined_at
+            .map(|t| t.to_string())
+            .unwrap_or_default();
+        // member_count not available from this event — use 0 as placeholder
+        let member_count = 0u64;
+        // Best-effort guild name — not available from Member directly
+        let guild_name = new_member.guild_id.to_string();
+
+        log::info!(
+            "Discord: New member joined — user={} ({}), guild={}, bot={}",
+            user_name, user_id, guild_id, user_bot
+        );
+
+        let dispatcher_clone = Arc::clone(&self.dispatcher);
+        tokio::spawn(async move {
+            crate::persona_hooks::fire_discord_member_join_hooks(
+                guild_id,
+                &guild_name,
+                user_id,
+                &user_name,
+                user_bot,
+                &joined_at,
+                member_count,
+                &dispatcher_clone,
+            )
+            .await;
+        });
     }
 }
 
@@ -609,7 +655,8 @@ pub async fn start_discord_listener(
     // Set up intents - we need message content to read messages
     let intents = GatewayIntents::GUILD_MESSAGES
         | GatewayIntents::DIRECT_MESSAGES
-        | GatewayIntents::MESSAGE_CONTENT;
+        | GatewayIntents::MESSAGE_CONTENT
+        | GatewayIntents::GUILD_MEMBERS;
 
     let handler = DiscordHandler {
         channel_id,

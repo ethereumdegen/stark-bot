@@ -10,14 +10,16 @@ import {
   createImpulseNode,
   updateImpulseNode,
   deleteImpulseNode,
-  getHeartbeatSessions,
   getHeartbeatConfig,
   updateHeartbeatConfig,
   pulseHeartbeatOnce,
   ImpulseNodeInfo,
   ImpulseConnectionInfo,
-  HeartbeatSessionInfo,
 } from '@/lib/api';
+import {
+  getImpulseHeartbeatSessions,
+  ImpulseHeartbeatSessionInfo,
+} from '@/lib/api/impulse-map';
 import { getGateway } from '@/lib/gateway-client';
 
 interface D3Node extends d3.SimulationNodeDatum {
@@ -54,7 +56,7 @@ export default function ImpulseMap() {
 
   // Sidebar state
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [heartbeatSessions, setHeartbeatSessions] = useState<HeartbeatSessionInfo[]>([]);
+  const [heartbeatSessions, setHeartbeatSessions] = useState<ImpulseHeartbeatSessionInfo[]>([]);
   const [highlightedNodeId, setHighlightedNodeId] = useState<number | null>(null);
 
   // Hover tooltip state
@@ -233,7 +235,7 @@ export default function ImpulseMap() {
   // Load heartbeat sessions
   const loadHeartbeatSessions = useCallback(async () => {
     try {
-      const sessions = await getHeartbeatSessions();
+      const sessions = await getImpulseHeartbeatSessions();
       setHeartbeatSessions(sessions);
       if (sessions.length > 0 && lastSessionIdRef.current === null) {
         lastSessionIdRef.current = sessions[0].id;
@@ -324,7 +326,7 @@ export default function ImpulseMap() {
       loadHeartbeatConfig();
       // Refresh sessions list
       try {
-        const sessions = await getHeartbeatSessions();
+        const sessions = await getImpulseHeartbeatSessions();
         if (mounted) {
           setHeartbeatSessions(sessions);
           if (sessions.length > 0) {
@@ -363,7 +365,7 @@ export default function ImpulseMap() {
       // Reload config to get updated next_beat_at
       loadHeartbeatConfig();
       try {
-        const sessions = await getHeartbeatSessions();
+        const sessions = await getImpulseHeartbeatSessions();
         if (mounted) {
           setHeartbeatSessions(sessions);
           if (sessions.length > 0) {
