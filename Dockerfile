@@ -44,6 +44,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     git \
     jq \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv (fast Python package manager for skills)
@@ -74,7 +75,10 @@ RUN curl -fsSL "https://github.com/steipete/gogcli/releases/download/v0.11.0/gog
     && chmod +x /usr/local/bin/gog
 
 # Install Deno (runtime for JS/TS modules like openagent — no npm install needed)
-RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
+RUN curl -fsSL https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip -o /tmp/deno.zip \
+    && unzip -o /tmp/deno.zip -d /usr/local/bin/ \
+    && chmod +x /usr/local/bin/deno \
+    && rm /tmp/deno.zip
 ENV DENO_DIR="/tmp/deno"
 
 # Copy the binaries

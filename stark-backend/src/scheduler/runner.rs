@@ -664,8 +664,8 @@ impl Scheduler {
         if let (Some(start), Some(end)) = (&config.active_hours_start, &config.active_hours_end) {
             let current_time = now.time();
 
-            let start_time = NaiveTime::parse_from_str(start, "%H:%M").unwrap_or(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
-            let end_time = NaiveTime::parse_from_str(end, "%H:%M").unwrap_or(NaiveTime::from_hms_opt(23, 59, 59).unwrap());
+            let start_time = NaiveTime::parse_from_str(start, "%H:%M").unwrap_or(NaiveTime::from_hms_opt(0, 0, 0).expect("00:00:00 is valid"));
+            let end_time = NaiveTime::parse_from_str(end, "%H:%M").unwrap_or(NaiveTime::from_hms_opt(23, 59, 59).expect("23:59:59 is valid"));
 
             // When start == end, the heartbeat is always active (24/7)
             if start_time == end_time {
