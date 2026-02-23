@@ -166,6 +166,9 @@ async fn reset_session(
     // Clear any tasks associated with this session
     data.execution_tracker.clear_tasks_for_session(session_id);
 
+    // Evict from active cache (session state is being reset)
+    data.active_cache.force_evict(session_id);
+
     match data.db.reset_chat_session(session_id) {
         Ok(session) => {
             let response: ChatSessionResponse = session.into();
@@ -222,6 +225,9 @@ async fn delete_all_sessions(
     if let Err(resp) = validate_session_from_request(&data, &req) {
         return resp;
     }
+
+    // Evict all from active cache before deleting
+    data.active_cache.force_evict_all();
 
     // Get all sessions and their channel_ids, then delete them
     let (deleted_count, channel_ids) = match data.db.delete_all_chat_sessions() {
@@ -312,6 +318,9 @@ async fn delete_session(
 
     // Clear any tasks associated with this session
     data.execution_tracker.clear_tasks_for_session(session_id);
+
+    // Evict from active cache before deleting
+    data.active_cache.force_evict(session_id);
 
     // Now delete the session
     match data.db.delete_chat_session(session_id) {

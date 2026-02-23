@@ -58,7 +58,7 @@ impl Database {
         // SQLite handles concurrency via WAL, so we don't need many connections
         // Each dispatch does ~20 sequential DB calls, so we need enough for concurrent dispatches
         let pool = Pool::builder()
-            .max_size(16)
+            .max_size(32)
             .build(manager)
             .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
 

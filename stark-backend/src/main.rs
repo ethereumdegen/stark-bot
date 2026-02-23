@@ -45,7 +45,7 @@ mod telemetry;
 use channels::{ChannelManager, MessageDispatcher, SafeModeChannelRateLimiter};
 use tx_queue::TxQueueManager;
 use config::Config;
-use db::Database;
+use db::{ActiveSessionCache, Database};
 use execution::ExecutionTracker;
 use gateway::{events::EventBroadcaster, Gateway};
 use hooks::HookManager;
@@ -89,6 +89,8 @@ pub struct AppState {
     pub remote_embedding_generator: Option<Arc<memory::embeddings::RemoteEmbeddingGenerator>>,
     /// Bearer token for internal module-to-backend API calls (e.g. wallet signing proxy)
     pub internal_token: String,
+    /// In-memory cache for active session metadata (shared with dispatcher for admin invalidation)
+    pub active_cache: Arc<ActiveSessionCache>,
 }
 
 /// Auto-retrieve backup from keystore on fresh instance
@@ -710,19 +712,21 @@ async fn main() -> std::io::Result<()> {
         start_module_services(&db);
     }
 
-    // Auto-install discord_tipping module if not already installed.
+    // Auto-install built-in modules if not already installed.
     // Covers both fresh installs and migrations from the old hardcoded table.
-    if !db.is_module_installed("discord_tipping").unwrap_or(true) {
-        if let Some(module) = module_registry.get("discord_tipping") {
-            match db.install_module(
-                "discord_tipping",
-                module.description(),
-                module.version(),
-                module.has_tools(),
-                module.has_dashboard(),
-            ) {
-                Ok(_) => log::info!("[MODULE] Auto-installed discord_tipping module (enabled by default)"),
-                Err(e) => log::warn!("[MODULE] Failed to auto-install discord_tipping: {}", e),
+    for auto_module in &["discord_tipping", "kv_store"] {
+        if !db.is_module_installed(auto_module).unwrap_or(true) {
+            if let Some(module) = module_registry.get(auto_module) {
+                match db.install_module(
+                    auto_module,
+                    module.description(),
+                    module.version(),
+                    module.has_tools(),
+                    module.has_dashboard(),
+                ) {
+                    Ok(_) => log::info!("[MODULE] Auto-installed {} module (enabled by default)", auto_module),
+                    Err(e) => log::warn!("[MODULE] Failed to auto-install {}: {}", auto_module, e),
+                }
             }
         }
     }
@@ -1128,6 +1132,10 @@ async fn main() -> std::io::Result<()> {
     log::info!("Initializing safe mode channel rate limiter");
     let safe_mode_rate_limiter = SafeModeChannelRateLimiter::new(db.clone());
 
+    // Clones needed for shutdown handler (before HttpServer moves db)
+    let shutdown_db = db.clone();
+    let shutdown_cache = dispatcher.active_cache().clone();
+
     let tool_reg = tool_registry.clone();
     let skill_reg = skill_registry.clone();
     let disp = dispatcher.clone();
@@ -1185,6 +1193,7 @@ async fn main() -> std::io::Result<()> {
                 hybrid_search: hybrid_search_engine.clone(),
                 remote_embedding_generator: Some(Arc::clone(&remote_embedding_generator)),
                 internal_token: internal_token.clone(),
+                active_cache: disp.active_cache().clone(),
             }))
             .app_data(web::Data::new(Arc::clone(&sched)))
             // WebSocket data for /ws route
@@ -1259,6 +1268,10 @@ async fn main() -> std::io::Result<()> {
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
         log::info!("Received Ctrl+C, shutting down...");
+
+        // Flush active session cache to SQLite before shutdown
+        log::info!("Flushing active session cache...");
+        shutdown_cache.flush_all_dirty(&shutdown_db);
 
         // Stop all running channels with timeout (Discord, Telegram, Slack, etc.)
         log::info!("Stopping all channels...");

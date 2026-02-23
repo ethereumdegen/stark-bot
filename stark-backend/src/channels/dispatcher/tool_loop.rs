@@ -422,7 +422,7 @@ impl MessageDispatcher {
                         );
                     }
                     // Save context before returning error
-                    let _ = self.db.save_agent_context(session_id, orchestrator.context());
+                    self.active_cache.save_agent_context(session_id, orchestrator.context());
                     return Err(error_str);
                 }
             };
@@ -952,7 +952,7 @@ impl MessageDispatcher {
                         );
                     }
                     // Save context before returning error
-                    let _ = self.db.save_agent_context(session_id, orchestrator.context());
+                    self.active_cache.save_agent_context(session_id, orchestrator.context());
                     return Err(e);
                 }
             };

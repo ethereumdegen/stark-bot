@@ -1,91 +1,35 @@
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["flask", "redis", "starkbot-sdk"]
+# dependencies = ["flask", "starkbot-sdk"]
 # [tool.uv.sources]
 # starkbot-sdk = { path = "../starkbot_sdk" }
 # ///
 """
-KV Store module — Redis-backed key/value store for agent state tracking.
+KV Store module — in-memory key/value store for agent state tracking.
 
-Starts a redis-server subprocess (memory-only, no persistence) and exposes
-RPC endpoints for get/set/delete/increment/list operations.
+Uses a thread-safe Python dict (no external dependencies). Data persists
+across the process lifetime and survives via backup/restore endpoints.
 """
 
-import json
+import fnmatch
 import os
 import re
 import signal
-import subprocess
 import sys
-import time
+import threading
 
-import redis
-from flask import Flask, Response, jsonify, request
+from flask import Response, request
 from starkbot_sdk import create_app, error, success
 
 # ---------------------------------------------------------------------------
-# Redis subprocess management
+# In-memory store (thread-safe)
 # ---------------------------------------------------------------------------
 
-_redis_process = None
-_redis_port = 6399  # internal port for the sidecar, not the module HTTP port
-
-
-def _find_free_port() -> int:
-    """Ask the OS for a free TCP port."""
-    import socket
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def start_redis() -> redis.Redis:
-    """Start redis-server as a child process and return a connected client."""
-    global _redis_process, _redis_port
-
-    _redis_port = _find_free_port()
-
-    _redis_process = subprocess.Popen(
-        [
-            "redis-server",
-            "--port", str(_redis_port),
-            "--save", "",          # no RDB snapshots
-            "--appendonly", "no",  # no AOF persistence
-            "--loglevel", "warning",
-            "--bind", "127.0.0.1",
-            "--daemonize", "no",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-    )
-
-    # Wait for Redis to be ready (up to 5 seconds)
-    client = redis.Redis(host="127.0.0.1", port=_redis_port, decode_responses=True)
-    for _ in range(50):
-        try:
-            if client.ping():
-                print(f"[kv_store] Redis started on port {_redis_port}", flush=True)
-                return client
-        except redis.ConnectionError:
-            time.sleep(0.1)
-
-    raise RuntimeError("Redis did not become ready within 5 seconds")
-
-
-def stop_redis():
-    """Gracefully stop the redis-server subprocess."""
-    global _redis_process
-    if _redis_process and _redis_process.poll() is None:
-        _redis_process.terminate()
-        try:
-            _redis_process.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            _redis_process.kill()
-        print("[kv_store] Redis stopped", flush=True)
-
+_store: dict[str, str] = {}
+_lock = threading.Lock()
 
 # ---------------------------------------------------------------------------
-# Key validation (mirrors the original Rust logic)
+# Key validation
 # ---------------------------------------------------------------------------
 
 _KEY_RE = re.compile(r"^[A-Za-z0-9_]+$")
@@ -107,8 +51,6 @@ def validate_key(key: str) -> str:
 # Flask app
 # ---------------------------------------------------------------------------
 
-rds: redis.Redis  # set in main()
-
 app = create_app("kv_store")
 
 
@@ -126,7 +68,8 @@ def rpc_kv():
             key = validate_key(raw_key)
         except ValueError as e:
             return error(str(e))
-        val = rds.get(key)
+        with _lock:
+            val = _store.get(key)
         if val is None:
             return success({"key": key, "value": None, "message": "Key not found"})
         return success({"key": key, "value": val})
@@ -142,7 +85,8 @@ def rpc_kv():
             key = validate_key(raw_key)
         except ValueError as e:
             return error(str(e))
-        rds.set(key, str(value))
+        with _lock:
+            _store[key] = str(value)
         return success({"key": key, "value": str(value), "message": "Value set successfully"})
 
     elif action == "delete":
@@ -153,7 +97,9 @@ def rpc_kv():
             key = validate_key(raw_key)
         except ValueError as e:
             return error(str(e))
-        existed = rds.delete(key) > 0
+        with _lock:
+            existed = key in _store
+            _store.pop(key, None)
         return success({"key": key, "deleted": existed})
 
     elif action == "increment":
@@ -165,19 +111,21 @@ def rpc_kv():
         except ValueError as e:
             return error(str(e))
         amount = int(data.get("amount", 1))
-        new_val = rds.incrby(key, amount)
+        with _lock:
+            current = int(_store.get(key, "0"))
+            new_val = current + amount
+            _store[key] = str(new_val)
         return success({"key": key, "new_value": new_val, "incremented_by": amount})
 
     elif action == "list":
         prefix = (data.get("prefix") or data.get("key") or "").upper()
         pattern = f"{prefix}*" if prefix else "*"
-        keys = list(rds.scan_iter(match=pattern, count=500))
-        entries = []
-        if keys:
-            values = rds.mget(keys)
-            for k, v in zip(keys, values):
-                if v is not None:
-                    entries.append({"key": k, "value": v})
+        with _lock:
+            entries = [
+                {"key": k, "value": v}
+                for k, v in _store.items()
+                if fnmatch.fnmatch(k, pattern)
+            ]
         return success({"prefix": prefix, "count": len(entries), "entries": entries})
 
     else:
@@ -191,19 +139,14 @@ def rpc_kv():
 @app.route("/rpc/backup/export", methods=["POST"])
 def backup_export():
     """Dump all keys for backup."""
-    keys = list(rds.scan_iter(match="*", count=1000))
-    entries = []
-    if keys:
-        values = rds.mget(keys)
-        for k, v in zip(keys, values):
-            if v is not None:
-                entries.append({"key": k, "value": v})
+    with _lock:
+        entries = [{"key": k, "value": v} for k, v in _store.items()]
     return success(entries)
 
 
 @app.route("/rpc/backup/restore", methods=["POST"])
 def backup_restore():
-    """FLUSHDB + pipeline SET from payload."""
+    """Clear store + bulk SET from payload."""
     data = request.get_json(silent=True)
     if data is None:
         return error("Invalid JSON payload")
@@ -211,15 +154,13 @@ def backup_restore():
     # Accept both {"data": [...]} envelope and raw [...]
     entries = data if isinstance(data, list) else data.get("data", [])
 
-    rds.flushdb()
-    if entries:
-        pipe = rds.pipeline()
+    with _lock:
+        _store.clear()
         for entry in entries:
             k = entry.get("key", "")
             v = entry.get("value", "")
             if k:
-                pipe.set(k, v)
-        pipe.execute()
+                _store[k] = v
 
     return success({"restored": len(entries)})
 
@@ -256,7 +197,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <tbody id="tbody"><tr><td colspan="2" class="empty">Loading...</td></tr></tbody>
 </table>
 <script>
-fetch("/rpc/kv",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"list"})})
+fetch("rpc/kv",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"list"})})
   .then(r=>r.json()).then(d=>{
     const entries=(d.data||{}).entries||[];
     document.getElementById("count").textContent=entries.length+" entries";
@@ -281,14 +222,6 @@ def dashboard():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Start Redis sidecar
-    rds = start_redis()
-
-    # Ensure Redis is stopped on exit
-    import atexit
-    atexit.register(stop_redis)
-    signal.signal(signal.SIGTERM, lambda *_: (stop_redis(), sys.exit(0)))
-
     port = int(os.environ.get("MODULE_PORT", os.environ.get("KV_STORE_PORT", "9103")))
     print(f"[kv_store] Service starting on port {port}", flush=True)
     app.run(host="127.0.0.1", port=port)

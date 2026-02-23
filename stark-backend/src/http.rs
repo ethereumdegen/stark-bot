@@ -11,7 +11,7 @@ use std::time::Duration;
 /// Callers that need a different timeout should override per-request via `.timeout()`.
 static SHARED_CLIENT: Lazy<Client> = Lazy::new(|| {
     Client::builder()
-        .pool_max_idle_per_host(5)
+        .pool_max_idle_per_host(50)
         .pool_idle_timeout(Duration::from_secs(90))
         .timeout(Duration::from_secs(120))
         .build()
@@ -28,7 +28,7 @@ pub fn shared_client() -> &'static Client {
 pub fn build_proxy_client(proxy_url: &str) -> Result<Client, reqwest::Error> {
     Client::builder()
         .proxy(reqwest::Proxy::all(proxy_url)?)
-        .pool_max_idle_per_host(5)
+        .pool_max_idle_per_host(50)
         .pool_idle_timeout(Duration::from_secs(90))
         .timeout(Duration::from_secs(120))
         .build()

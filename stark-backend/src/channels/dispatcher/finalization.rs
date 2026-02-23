@@ -103,9 +103,7 @@ impl MessageDispatcher {
         } else if orchestrator.task_queue_is_empty() || orchestrator.all_tasks_complete() {
             // Queue is empty or all tasks completed - end the session
             log::info!("[ORCHESTRATED_LOOP] All tasks completed, stopping loop");
-            if let Err(e) = self.db.update_session_completion_status(session_id, CompletionStatus::Complete) {
-                log::error!("[ORCHESTRATED_LOOP] Failed to update session completion status: {}", e);
-            }
+            self.active_cache.update_completion_status(session_id, CompletionStatus::Complete);
             self.broadcast_session_complete(channel_id, session_id);
             TaskAdvanceResult::AllTasksComplete
         } else {
@@ -149,23 +147,17 @@ impl MessageDispatcher {
             }
         }
 
-        // Save orchestrator context for next turn
-        if let Err(e) = self.db.save_agent_context(session_id, orchestrator.context()) {
-            log::warn!("[MULTI_AGENT] Failed to save context for session {}: {}", session_id, e);
-        }
+        // Save orchestrator context for next turn (in-memory cache; flushed on evict)
+        self.active_cache.save_agent_context(session_id, orchestrator.context());
 
         // Update completion status
         if was_cancelled {
             log::info!("[ORCHESTRATED_LOOP] Marking session {} as Cancelled", session_id);
-            if let Err(e) = self.db.update_session_completion_status(session_id, CompletionStatus::Cancelled) {
-                log::error!("[ORCHESTRATED_LOOP] Failed to update session completion status: {}", e);
-            }
+            self.active_cache.update_completion_status(session_id, CompletionStatus::Cancelled);
             self.broadcast_session_complete(original_message.channel_id, session_id);
         } else if orchestrator_complete && !waiting_for_user_response {
             log::info!("[ORCHESTRATED_LOOP] Marking session {} as Complete", session_id);
-            if let Err(e) = self.db.update_session_completion_status(session_id, CompletionStatus::Complete) {
-                log::error!("[ORCHESTRATED_LOOP] Failed to update session completion status: {}", e);
-            }
+            self.active_cache.update_completion_status(session_id, CompletionStatus::Complete);
             self.broadcast_session_complete(original_message.channel_id, session_id);
             if memory_suppressed {
                 log::info!("[ORCHESTRATED_LOOP] Skipping session memory — memory-excluded tool was called");
@@ -226,9 +218,7 @@ impl MessageDispatcher {
                     tool_call_log.join("\n")
                 );
                 orchestrator.context_mut().waiting_for_user_context = Some(context_summary);
-                if let Err(e) = self.db.save_agent_context(session_id, orchestrator.context()) {
-                    log::warn!("[MULTI_AGENT] Failed to save context with user_context: {}", e);
-                }
+                self.active_cache.save_agent_context(session_id, orchestrator.context());
             }
             Ok((user_question_content.to_string(), false, None))
         } else if !last_say_to_user_content.is_empty() {
@@ -240,7 +230,7 @@ impl MessageDispatcher {
             Ok((final_summary.to_string(), false, None))
         } else if tool_call_log.is_empty() {
             // Mark session as Failed — hit max iterations with no work done
-            let _ = self.db.update_session_completion_status(session_id, CompletionStatus::Failed);
+            self.active_cache.update_completion_status(session_id, CompletionStatus::Failed);
             self.broadcast_session_complete(original_message.channel_id, session_id);
             Err(format!(
                 "Tool loop hit max iterations ({}) without completion",
@@ -248,7 +238,7 @@ impl MessageDispatcher {
             ))
         } else {
             // Max iterations with work done — mark as Failed (didn't complete normally)
-            let _ = self.db.update_session_completion_status(session_id, CompletionStatus::Failed);
+            self.active_cache.update_completion_status(session_id, CompletionStatus::Failed);
             self.broadcast_session_complete(original_message.channel_id, session_id);
             let summary = format!(
                 "[Session hit max iterations. Work completed before limit:]\n{}",

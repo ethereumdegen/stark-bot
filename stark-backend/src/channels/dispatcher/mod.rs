@@ -9,7 +9,7 @@ use crate::channels::types::{DispatchResult, NormalizedMessage};
 use crate::config::{MemoryConfig, NotesConfig};
 use crate::notes::NoteStore;
 use crate::context::{self, estimate_tokens, ContextManager};
-use crate::db::Database;
+use crate::db::{ActiveSessionCache, Database};
 use crate::execution::{ExecutionTracker, SessionLaneManager};
 use crate::gateway::events::EventBroadcaster;
 use crate::gateway::protocol::GatewayEvent;
@@ -77,6 +77,8 @@ pub struct MessageDispatcher {
     watchdog_config: WatchdogConfig,
     /// Session lane manager for serializing requests per channel/session
     session_lanes: Arc<SessionLaneManager>,
+    /// In-memory cache for active session metadata + agent context (reduces SQLite writes)
+    active_cache: Arc<ActiveSessionCache>,
     /// Mock AI client for integration tests (bypasses real AI API)
     #[cfg(test)]
     mock_ai_client: Option<crate::ai::MockAiClient>,
@@ -178,6 +180,10 @@ impl MessageDispatcher {
 
         let session_writer = crate::channels::session_writer::SessionMessageWriter::new(db.clone());
 
+        // In-memory session cache — reduces SQLite writes on the hot path
+        let active_cache = Arc::new(ActiveSessionCache::new(256));
+        active_cache.start_background_flusher(db.clone(), Duration::from_secs(30));
+
         Self {
             db,
             broadcaster,
@@ -201,6 +207,7 @@ impl MessageDispatcher {
             resource_manager,
             watchdog_config: WatchdogConfig::default(),
             session_lanes: SessionLaneManager::new(),
+            active_cache,
             #[cfg(test)]
             mock_ai_client: None,
         }
@@ -278,6 +285,9 @@ impl MessageDispatcher {
 
         let session_writer = crate::channels::session_writer::SessionMessageWriter::new(db.clone());
 
+        let active_cache = Arc::new(ActiveSessionCache::new(256));
+        active_cache.start_background_flusher(db.clone(), Duration::from_secs(30));
+
         Self {
             db: db.clone(),
             broadcaster,
@@ -301,6 +311,7 @@ impl MessageDispatcher {
             resource_manager,
             watchdog_config: WatchdogConfig::default(),
             session_lanes: SessionLaneManager::new(),
+            active_cache,
             #[cfg(test)]
             mock_ai_client: None,
         }
@@ -324,6 +335,11 @@ impl MessageDispatcher {
     /// Get the ResourceManager
     pub fn resource_manager(&self) -> &Arc<ResourceManager> {
         &self.resource_manager
+    }
+
+    /// Get the ActiveSessionCache
+    pub fn active_cache(&self) -> &Arc<ActiveSessionCache> {
+        &self.active_cache
     }
 
     /// Panic-safe dispatch wrapper.
@@ -584,24 +600,29 @@ impl MessageDispatcher {
         rollout.session_id = session.id;
         span_collector.set_session(session.id);
 
+        // Load session into in-memory cache for fast access during this dispatch
+        self.active_cache.load_session(session.clone());
+
+        // Pre-load agent context into cache (avoids DB read later in tool loop)
+        if let Ok(Some(ctx)) = self.db.get_agent_context(session.id) {
+            self.active_cache.load_agent_context(session.id, ctx);
+        }
+
         // Reset session state when a new message comes in on a previously-completed session
         // This allows the session to be reused for new requests
-        if let Ok(Some(status)) = self.db.get_session_completion_status(session.id) {
+        let cached_status = self.active_cache.get_completion_status(session.id);
+        if let Some(status) = cached_status {
             if status.should_stop() {
                 log::info!(
                     "[DISPATCH] Resetting session {} from {:?} to Active for new request",
                     session.id, status
                 );
-                if let Err(e) = self.db.update_session_completion_status(session.id, CompletionStatus::Active) {
-                    log::error!("[DISPATCH] Failed to reset session completion status: {}", e);
-                }
+                self.active_cache.update_completion_status(session.id, CompletionStatus::Active);
                 // Also reset total_iterations in AgentContext if it exists
-                if let Ok(Some(mut context)) = self.db.get_agent_context(session.id) {
+                if let Some(mut context) = self.active_cache.get_agent_context(session.id) {
                     context.total_iterations = 0;
                     context.mode_iterations = 0;
-                    if let Err(e) = self.db.save_agent_context(session.id, &context) {
-                        log::error!("[DISPATCH] Failed to reset agent context iterations: {}", e);
-                    }
+                    self.active_cache.save_agent_context(session.id, &context);
                 }
             }
         }
@@ -644,7 +665,8 @@ impl MessageDispatcher {
                     &format!("[Error] {}", error), None, None, None, None,
                 );
                 // Mark session as Failed so it doesn't stay stuck as Active
-                let _ = self.db.update_session_completion_status(session.id, CompletionStatus::Failed);
+                self.active_cache.update_completion_status(session.id, CompletionStatus::Failed);
+                self.active_cache.flush_and_evict(session.id, &self.db);
                 self.broadcast_session_complete(message.channel_id, session.id);
                 self.execution_tracker.complete_execution(message.channel_id);
                 self.rollout_manager.fail_attempt(&mut rollout, &error, &span_collector);
@@ -684,7 +706,8 @@ impl MessageDispatcher {
                         &format!("[Error] {}", error), None, None, None, None,
                     );
                     // Mark session as Failed so it doesn't stay stuck as Active
-                    let _ = self.db.update_session_completion_status(session.id, CompletionStatus::Failed);
+                    self.active_cache.update_completion_status(session.id, CompletionStatus::Failed);
+                    self.active_cache.flush_and_evict(session.id, &self.db);
                     self.broadcast_session_complete(message.channel_id, session.id);
                     self.broadcaster.broadcast(GatewayEvent::agent_error(message.channel_id, &error));
                     self.execution_tracker.complete_execution(message.channel_id);
@@ -708,7 +731,8 @@ impl MessageDispatcher {
                     &format!("[Error] {}", error), None, None, None, None,
                 );
                 // Mark session as Failed so it doesn't stay stuck as Active
-                let _ = self.db.update_session_completion_status(session.id, CompletionStatus::Failed);
+                self.active_cache.update_completion_status(session.id, CompletionStatus::Failed);
+                self.active_cache.flush_and_evict(session.id, &self.db);
                 self.broadcast_session_complete(message.channel_id, session.id);
                 self.broadcaster.broadcast(GatewayEvent::agent_error(
                     message.channel_id,
@@ -1328,20 +1352,22 @@ impl MessageDispatcher {
                 // mark it Complete. This catches early-return paths in the tool loop
                 // that bypass finalize_tool_loop (e.g., AI responds with text after a
                 // tool error without calling task_fully_completed).
-                match self.db.get_session_completion_status(session.id) {
-                    Ok(Some(status)) if !status.should_stop() => {
+                if let Some(status) = self.active_cache.get_completion_status(session.id) {
+                    if !status.should_stop() {
                         log::info!(
                             "[DISPATCH] Session {} still Active after successful response, marking Complete",
                             session.id
                         );
-                        let _ = self.db.update_session_completion_status(
+                        self.active_cache.update_completion_status(
                             session.id,
                             CompletionStatus::Complete,
                         );
                         self.broadcast_session_complete(message.channel_id, session.id);
                     }
-                    _ => {} // Already finalized (Complete/Failed/Cancelled) or DB error
                 }
+
+                // Flush cached state to SQLite and evict (dispatch complete)
+                self.active_cache.flush_and_evict(session.id, &self.db);
 
                 DispatchResult::success_with_message_id(response, message_id)
             }
@@ -1387,9 +1413,8 @@ impl MessageDispatcher {
                 }
 
                 // Mark session as Failed so it doesn't stay stuck as Active with spinner
-                if let Err(status_err) = self.db.update_session_completion_status(session.id, CompletionStatus::Failed) {
-                    log::error!("[DISPATCH] Failed to mark session {} as Failed: {}", session.id, status_err);
-                }
+                self.active_cache.update_completion_status(session.id, CompletionStatus::Failed);
+                self.active_cache.flush_and_evict(session.id, &self.db);
                 self.broadcast_session_complete(message.channel_id, session.id);
 
                 // Broadcast error to frontend
@@ -1431,9 +1456,15 @@ impl MessageDispatcher {
         is_safe_mode: bool,
         watchdog: &Arc<Watchdog>,
     ) -> Result<(String, bool, Option<String>), String> {
-        // Load existing agent context or create new one
-        let mut orchestrator = match self.db.get_agent_context(session_id) {
-            Ok(Some(context)) => {
+        // Load existing agent context or create new one (prefer cache, fallback to DB)
+        let cached_ctx = self.active_cache.get_agent_context(session_id);
+        let db_ctx = if cached_ctx.is_some() {
+            cached_ctx
+        } else {
+            self.db.get_agent_context(session_id).ok().flatten()
+        };
+        let mut orchestrator = match db_ctx {
+            Some(context) => {
                 log::info!(
                     "[MULTI_AGENT] Resuming session {} (iteration {})",
                     session_id,
@@ -1466,17 +1497,10 @@ impl MessageDispatcher {
                 }
                 orch
             }
-            Ok(None) => {
+            None => {
                 log::info!(
                     "[MULTI_AGENT] Starting new orchestrator for session {}",
                     session_id
-                );
-                Orchestrator::new(original_message.text.clone())
-            }
-            Err(e) => {
-                log::warn!(
-                    "[MULTI_AGENT] Failed to load context for session {}: {}, starting fresh",
-                    session_id, e
                 );
                 Orchestrator::new(original_message.text.clone())
             }
