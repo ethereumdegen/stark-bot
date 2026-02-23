@@ -6,13 +6,16 @@
 //!
 //! Supported events (matched by filename in hooks/ directory):
 //! - `discord_message`     — Discord gateway message
+//! - `discord_mention`     — Bot is @mentioned or replied-to in Discord
 //! - `discord_member_join` — New member joins a Discord guild
 //! - `telegram_message`    — Telegram message
+//! - `telegram_mention`    — Bot is @mentioned or replied-to in Telegram
 //! - `heartbeat`           — Fired each heartbeat tick for every agent with the hook
 
 use crate::ai::multi_agent::types::{all_subtype_configs_unfiltered, AgentSubtypeConfig, PersonaHook};
 use crate::channels::dispatcher::MessageDispatcher;
 use crate::channels::types::NormalizedMessage;
+use crate::config::runtime_agents_dir;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -139,11 +142,61 @@ pub async fn fire_discord_message_hooks(
         vars.insert("authorBot", author_bot.clone());
         vars.insert("messageId", message_id.clone());
         vars.insert("content", content.clone());
+        vars.insert("goals", read_agent_goals(&config.key));
 
         let prompt = render_template(&hook.prompt_template, &vars);
         spawn_hook_session(
             &config,
             "discord_message",
+            prompt,
+            format!("hook:{}:{}", config.key, channel_id_str),
+            message_id.clone(),
+            dispatcher,
+        );
+    }
+}
+
+// =====================================================
+// discord_mention
+// =====================================================
+
+/// Template variables for `discord_mention`:
+/// `{guildId}`, `{channelId}`, `{channelName}`, `{authorId}`, `{authorName}`,
+/// `{authorBot}`, `{messageId}`, `{content}`
+pub async fn fire_discord_mention_hooks(
+    msg: &serenity::all::Message,
+    dispatcher: &Arc<MessageDispatcher>,
+) {
+    let hooks = get_hooks_for_event("discord_mention");
+    if hooks.is_empty() {
+        return;
+    }
+
+    let guild_id = msg.guild_id.map(|g| g.to_string()).unwrap_or_default();
+    let channel_id_str = msg.channel_id.to_string();
+    let author_id = msg.author.id.to_string();
+    let author_name = msg.author.name.clone();
+    let author_bot = msg.author.bot.to_string();
+    let message_id = msg.id.to_string();
+    let content = msg.content.clone();
+    let channel_name = channel_id_str.clone();
+
+    for (config, hook) in hooks {
+        let mut vars: HashMap<&str, String> = HashMap::new();
+        vars.insert("guildId", guild_id.clone());
+        vars.insert("channelId", channel_id_str.clone());
+        vars.insert("channelName", channel_name.clone());
+        vars.insert("authorId", author_id.clone());
+        vars.insert("authorName", author_name.clone());
+        vars.insert("authorBot", author_bot.clone());
+        vars.insert("messageId", message_id.clone());
+        vars.insert("content", content.clone());
+        vars.insert("goals", read_agent_goals(&config.key));
+
+        let prompt = render_template(&hook.prompt_template, &vars);
+        spawn_hook_session(
+            &config,
+            "discord_mention",
             prompt,
             format!("hook:{}:{}", config.key, channel_id_str),
             message_id.clone(),
@@ -183,6 +236,7 @@ pub async fn fire_discord_member_join_hooks(
         vars.insert("userBot", user_bot.to_string());
         vars.insert("joinedAt", joined_at.to_string());
         vars.insert("memberCount", member_count.to_string());
+        vars.insert("goals", read_agent_goals(&config.key));
 
         let prompt = render_template(&hook.prompt_template, &vars);
         spawn_hook_session(
@@ -229,11 +283,59 @@ pub async fn fire_telegram_message_hooks(
         vars.insert("userBot", user_bot.to_string());
         vars.insert("messageId", message_id.to_string());
         vars.insert("content", content.to_string());
+        vars.insert("goals", read_agent_goals(&config.key));
 
         let prompt = render_template(&hook.prompt_template, &vars);
         spawn_hook_session(
             &config,
             "telegram_message",
+            prompt,
+            format!("hook:{}:tg:{}", config.key, chat_id),
+            format!("tg-{}", message_id),
+            dispatcher,
+        );
+    }
+}
+
+// =====================================================
+// telegram_mention
+// =====================================================
+
+/// Template variables for `telegram_mention`:
+/// `{chatId}`, `{chatName}`, `{chatType}`, `{userId}`, `{userName}`,
+/// `{userBot}`, `{messageId}`, `{content}`
+pub async fn fire_telegram_mention_hooks(
+    chat_id: i64,
+    chat_name: &str,
+    chat_type: &str,
+    user_id: &str,
+    user_name: &str,
+    user_bot: bool,
+    message_id: &str,
+    content: &str,
+    dispatcher: &Arc<MessageDispatcher>,
+) {
+    let hooks = get_hooks_for_event("telegram_mention");
+    if hooks.is_empty() {
+        return;
+    }
+
+    for (config, hook) in hooks {
+        let mut vars: HashMap<&str, String> = HashMap::new();
+        vars.insert("chatId", chat_id.to_string());
+        vars.insert("chatName", chat_name.to_string());
+        vars.insert("chatType", chat_type.to_string());
+        vars.insert("userId", user_id.to_string());
+        vars.insert("userName", user_name.to_string());
+        vars.insert("userBot", user_bot.to_string());
+        vars.insert("messageId", message_id.to_string());
+        vars.insert("content", content.to_string());
+        vars.insert("goals", read_agent_goals(&config.key));
+
+        let prompt = render_template(&hook.prompt_template, &vars);
+        spawn_hook_session(
+            &config,
+            "telegram_mention",
             prompt,
             format!("hook:{}:tg:{}", config.key, chat_id),
             format!("tg-{}", message_id),
@@ -272,6 +374,7 @@ pub async fn fire_heartbeat_hooks(
         let mut vars: HashMap<&str, String> = HashMap::new();
         vars.insert("agentKey", agent_key.to_string());
         vars.insert("timestamp", timestamp.clone());
+        vars.insert("goals", read_agent_goals(&config.key));
 
         let prompt = render_template(&hook.prompt_template, &vars);
         spawn_hook_session(
@@ -288,6 +391,12 @@ pub async fn fire_heartbeat_hooks(
 // =====================================================
 // Helpers
 // =====================================================
+
+/// Read the goals.md file for an agent, returning its content or empty string.
+fn read_agent_goals(agent_key: &str) -> String {
+    let path = runtime_agents_dir().join(agent_key).join("goals.md");
+    std::fs::read_to_string(&path).unwrap_or_default()
+}
 
 /// Deterministic hash of an agent key to a channel offset (0..99).
 /// Same algorithm as heartbeat but used for hook channel IDs.

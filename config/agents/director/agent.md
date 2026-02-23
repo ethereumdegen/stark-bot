@@ -1,6 +1,6 @@
 ---
 key: director
-version: "1.0.0"
+version: "1.2.0"
 label: Director
 emoji: "\U0001F3AC"
 description: "Orchestrate tasks by spawning and coordinating sub-agents"

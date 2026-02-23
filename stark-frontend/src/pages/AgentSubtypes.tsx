@@ -606,7 +606,7 @@ export default function AgentSubtypes() {
                     <div className="flex items-center justify-between mb-2">
                       <label className="block text-xs text-slate-500">
                         Goals
-                        <span className="text-slate-600 ml-1">— strategic context prepended to each heartbeat prompt</span>
+                        <span className="text-slate-600 ml-1">— inline into hook prompts with {'{goals}'}</span>
                       </label>
                       {goalsContent !== null && (
                         <div className="flex items-center gap-1">

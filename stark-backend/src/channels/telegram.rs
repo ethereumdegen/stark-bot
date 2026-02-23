@@ -392,6 +392,42 @@ pub async fn start_telegram_listener(
                         return Ok(());
                     }
 
+                    // Fire telegram_mention persona hooks in background
+                    {
+                        let hook_dispatcher = Arc::clone(&dispatcher);
+                        let hook_chat_id = msg.chat.id.0;
+                        let hook_chat_name = msg.chat.title().unwrap_or("DM").to_string();
+                        let hook_chat_type = match msg.chat.kind {
+                            teloxide::types::ChatKind::Public(ref p) => match p.kind {
+                                teloxide::types::PublicChatKind::Group(_) => "group",
+                                teloxide::types::PublicChatKind::Supergroup(_) => "supergroup",
+                                teloxide::types::PublicChatKind::Channel(_) => "channel",
+                            },
+                            teloxide::types::ChatKind::Private(_) => "private",
+                        };
+                        let hook_user_id = msg.from().map(|u| u.id.to_string()).unwrap_or_default();
+                        let hook_user_name = msg.from()
+                            .map(|u| u.username.clone().unwrap_or_else(|| u.first_name.clone()))
+                            .unwrap_or_default();
+                        let hook_user_bot = msg.from().map(|u| u.is_bot).unwrap_or(false);
+                        let hook_msg_id = msg.id.to_string();
+                        let hook_content = text.to_string();
+                        tokio::spawn(async move {
+                            crate::persona_hooks::fire_telegram_mention_hooks(
+                                hook_chat_id,
+                                &hook_chat_name,
+                                hook_chat_type,
+                                &hook_user_id,
+                                &hook_user_name,
+                                hook_user_bot,
+                                &hook_msg_id,
+                                &hook_content,
+                                &hook_dispatcher,
+                            )
+                            .await;
+                        });
+                    }
+
                     // Strip bot @mention from text
                     let clean_text = strip_bot_mention(text, &bot_username);
                     let clean_text = if clean_text.is_empty() {

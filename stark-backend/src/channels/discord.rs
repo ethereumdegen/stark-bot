@@ -193,6 +193,14 @@ impl EventHandler for DiscordHandler {
 
                 // If module says forward to agent, use the forwarded text
                 if let Some(forward) = result.forward_to_agent {
+                    // Fire discord_mention persona hooks in background
+                    {
+                        let dispatcher_clone = Arc::clone(&self.dispatcher);
+                        let msg_clone = msg.clone();
+                        tokio::spawn(async move {
+                            crate::persona_hooks::fire_discord_mention_hooks(&msg_clone, &dispatcher_clone).await;
+                        });
+                    }
                     let user_name = forward.user_name;
                     let user_id = forward.user_id.clone();
 
