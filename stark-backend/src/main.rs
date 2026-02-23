@@ -1918,8 +1918,9 @@ async fn main() -> std::io::Result<()> {
     let dev_mode = dev_mode;
     // Internal token for module-to-backend API calls (wallet signing proxy, etc.)
     let internal_token = std::env::var("STARKBOT_INTERNAL_TOKEN").unwrap_or_else(|_| {
-        use rand::Rng;
-        let token = hex::encode(rand::thread_rng().gen::<[u8; 32]>());
+        let mut buf = [0u8; 32];
+        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut buf);
+        let token = hex::encode(buf);
         // SAFETY: Called during single-threaded startup.
         unsafe { std::env::set_var("STARKBOT_INTERNAL_TOKEN", &token); }
         token

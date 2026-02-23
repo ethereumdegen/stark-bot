@@ -73,6 +73,10 @@ RUN curl -fsSL "https://github.com/steipete/gogcli/releases/download/v0.11.0/gog
     | tar xz -C /usr/local/bin/ \
     && chmod +x /usr/local/bin/gog
 
+# Install Deno (runtime for JS/TS modules like openagent — no npm install needed)
+RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
+ENV DENO_DIR="/tmp/deno"
+
 # Copy the binaries
 COPY --from=backend-builder /app/target/release/stark-backend /app/stark-backend-bin
 
@@ -98,6 +102,12 @@ COPY modules /app/modules
 # so first-run startup is instant instead of waiting for downloads
 RUN for svc in /app/modules/*/service.py; do \
         [ -f "$svc" ] && (cd "$(dirname "$svc")" && uv run --quiet python -c "print('ok')" 2>/dev/null) || true; \
+    done
+
+# Pre-warm Deno cache: download npm dependencies for JS module services
+# so first-run startup doesn't block on network downloads
+RUN for svc in /app/modules/*/service.js; do \
+        [ -f "$svc" ] && (cd "$(dirname "$svc")" && deno cache "$svc" 2>/dev/null) || true; \
     done
 
 # Create directories for workspace, journal, soul, and memory (under stark-backend)

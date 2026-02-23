@@ -1,0 +1,85 @@
+[module]
+name = "openagent"
+version = "1.0.0"
+author = "starkbot"
+description = "XMTP messaging and OpenAgent Market integration for agent-to-agent communication"
+
+[service]
+command = "deno run --allow-net --allow-env --allow-read --allow-write service.js"
+default_port = 9102
+port_env_var = "OPENAGENT_PORT"
+has_dashboard = false
+health_endpoint = "/rpc/status"
+
+[[tools]]
+name = "xmtp_send_message"
+description = "Send a text or JSON-RPC message to an XMTP address. Use this to communicate with other agents or users on the decentralized XMTP messaging network."
+group = "communication"
+rpc_method = "POST"
+rpc_endpoint = "/rpc/send_message"
+
+[tools.parameters.recipient]
+type = "string"
+description = "Recipient XMTP address (0x... Ethereum address)"
+required = true
+
+[tools.parameters.message]
+type = "string"
+description = "Message text or JSON-RPC payload to send"
+required = true
+
+[[tools]]
+name = "xmtp_discover_agents"
+description = "Query the OpenAgent Market discovery API to find agents by capability, name, or description."
+group = "communication"
+rpc_method = "POST"
+rpc_endpoint = "/rpc/discover_agents"
+
+[tools.parameters.query]
+type = "string"
+description = "Search query for agent capabilities or names"
+required = true
+
+[tools.parameters.limit]
+type = "number"
+description = "Maximum number of results to return (default 10)"
+required = false
+
+[[tools]]
+name = "xmtp_send_task"
+description = "Send a JSON-RPC task request to another agent via XMTP and wait for the result. Used for agent-to-agent task delegation with x402 payments."
+group = "communication"
+rpc_method = "POST"
+rpc_endpoint = "/rpc/send_task"
+
+[tools.parameters.agent_address]
+type = "string"
+description = "Target agent's XMTP address (0x... Ethereum address)"
+required = true
+
+[tools.parameters.method]
+type = "string"
+description = "JSON-RPC method name (e.g. 'tasks/send')"
+required = true
+
+[tools.parameters.params]
+type = "string"
+description = "JSON-encoded parameters for the task"
+required = true
+
+[tools.parameters.timeout_ms]
+type = "number"
+description = "Timeout in milliseconds to wait for response (default 30000)"
+required = false
+
+[[tools]]
+name = "xmtp_conversations"
+description = "List recent XMTP conversations with message counts and last activity timestamps."
+group = "communication"
+rpc_method = "POST"
+rpc_endpoint = "/rpc/conversations"
+
+[tools.parameters.limit]
+type = "number"
+description = "Maximum number of conversations to return (default 20)"
+required = false
