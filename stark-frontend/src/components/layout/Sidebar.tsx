@@ -1,39 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  Home,
-  MessageSquare,
-  Monitor,
-  Settings,
-  Bot,
-  Wrench,
-  Zap,
-  Clock,
-  Calendar,
-  Brain,
-  Users,
-  FolderOpen,
-  Bug,
-  LogOut,
-  Key,
-  DollarSign,
-  Shield,
-  Sparkles,
-  BookOpen,
-  Wallet,
-  Network,
-  Heart,
-  Cloud,
-  Columns,
-  Package,
-  HardDrive,
-  Shapes,
-  ShieldCheck,
-} from 'lucide-react';
+import { LogOut } from 'lucide-react';
 import HeartbeatIcon from '@/components/HeartbeatIcon';
 import NavItem from './NavItem';
 import { useAuth } from '@/hooks/useAuth';
 import { getHeartbeatConfig } from '@/lib/api';
+import navigation from '@/config/navigation.json';
+import iconMap from '@/config/iconMap';
 
 export default function Sidebar() {
   const { logout } = useAuth();
@@ -90,57 +63,24 @@ export default function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-        {/* Main Section */}
-        <div className="space-y-1">
-          <NavItem to="/dashboard" icon={Home} label="Dashboard" />
-          <NavItem to="/agent-chat" icon={MessageSquare} label="Agent Chat" />
-          <NavItem to="/workstream" icon={Columns} label="Workstream" />
-          <NavItem to="/heartbeat" icon={Heart} label="Heartbeat" />
-          <NavItem to="/impulse-map" icon={Network} label="Impulse Map" />
-        </div>
-
-        {/* Configuration Section */}
-        <div className="pt-4 mt-4 border-t border-slate-700 space-y-1">
-          <p className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-            Configuration
-          </p>
-          <NavItem to="/agent-settings" icon={Settings} label="Agent Settings" />
-          <NavItem to="/bot-settings" icon={Bot} label="Bot Settings" />
-          <NavItem to="/agent-subtypes" icon={Shapes} label="Agent Subtypes" />
-          <NavItem to="/channels" icon={Monitor} label="Channels" />
-          <NavItem to="/scheduling" icon={Clock} label="Scheduling" />
-          <NavItem to="/api-keys" icon={Key} label="API Keys" />
-          <NavItem to="/cloud-backup" icon={Cloud} label="Cloud Backup" />
-        </div>
-
-        {/* Data Section */}
-        <div className="pt-4 mt-4 border-t border-slate-700 space-y-1">
-          <p className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-            Data
-          </p>
-          <NavItem to="/sessions" icon={Calendar} label="Chat Sessions" />
-          <NavItem to="/memories" icon={Brain} label="Memories" />
-          <NavItem to="/identities" icon={Users} label="Identities" />
-          <NavItem to="/files" icon={FolderOpen} label="Workspace Files" />
-          <NavItem to="/crypto-transactions" icon={Wallet} label="Crypto Transactions" />
-          <NavItem to="/system-files" icon={Sparkles} label="System Files" />
-          <NavItem to="/notes" icon={BookOpen} label="Notes" />
-        </div>
-
-        {/* Developer Section */}
-        <div className="pt-4 mt-4 border-t border-slate-700 space-y-1">
-          <p className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-            Developer
-          </p>
-          <NavItem to="/special-roles" icon={ShieldCheck} label="Special Roles" />
-          <NavItem to="/tools" icon={Wrench} label="Tools" />
-          <NavItem to="/skills" icon={Zap} label="Skills" />
-          <NavItem to="/modules" icon={Package} label="Modules" />
-          <NavItem to="/system" icon={HardDrive} label="System" />
-          <NavItem to="/debug" icon={Bug} label="Debug" />
-          <NavItem to="/payments" icon={DollarSign} label="Payments" />
-          <NavItem to="/eip8004" icon={Shield} label="EIP-8004" />
-        </div>
+        {navigation.sections.map((section, idx) => (
+          <div
+            key={section.label ?? '__main'}
+            className={idx > 0 ? 'pt-4 mt-4 border-t border-slate-700 space-y-1' : 'space-y-1'}
+          >
+            {section.label && (
+              <p className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                {section.label}
+              </p>
+            )}
+            {section.items.map((item) => {
+              const Icon = iconMap[item.icon];
+              return Icon ? (
+                <NavItem key={item.to} to={item.to} icon={Icon} label={item.label} />
+              ) : null;
+            })}
+          </div>
+        ))}
       </nav>
 
       {/* Footer */}

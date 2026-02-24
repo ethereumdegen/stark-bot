@@ -1,0 +1,52 @@
+{
+  "sections": [
+    {
+      "label": null,
+      "items": [
+        { "to": "/dashboard", "icon": "Home", "label": "Dashboard" },
+        { "to": "/agent-chat", "icon": "MessageSquare", "label": "Agent Chat" },
+        { "to": "/workstream", "icon": "Columns", "label": "Workstream" },
+        { "to": "/heartbeat", "icon": "Heart", "label": "Heartbeat" },
+        { "to": "/impulse-map", "icon": "Network", "label": "Impulse Map" }
+      ]
+    },
+    {
+      "label": "Configuration",
+      "items": [
+        { "to": "/agent-settings", "icon": "Settings", "label": "Agent Settings" },
+        { "to": "/bot-settings", "icon": "Bot", "label": "Bot Settings" },
+        { "to": "/agent-subtypes", "icon": "Shapes", "label": "Agent Subtypes" },
+        { "to": "/channels", "icon": "Monitor", "label": "Channels" },
+        { "to": "/scheduling", "icon": "Clock", "label": "Scheduling" },
+        { "to": "/api-keys", "icon": "Key", "label": "API Keys" },
+        { "to": "/cloud-backup", "icon": "Cloud", "label": "Cloud Backup" }
+      ]
+    },
+    {
+      "label": "Data",
+      "items": [
+        { "to": "/sessions", "icon": "Calendar", "label": "Chat Sessions" },
+        { "to": "/memories", "icon": "Brain", "label": "Memories" },
+        { "to": "/identities", "icon": "Users", "label": "Identities" },
+        { "to": "/files", "icon": "FolderOpen", "label": "Workspace Files" },
+        { "to": "/crypto-transactions", "icon": "Wallet", "label": "Crypto Transactions" },
+        { "to": "/system-files", "icon": "Sparkles", "label": "System Files" },
+        { "to": "/notes", "icon": "BookOpen", "label": "Notes" }
+      ]
+    },
+    {
+      "label": "Developer",
+      "items": [
+        { "to": "/special-roles", "icon": "ShieldCheck", "label": "Special Roles" },
+        { "to": "/tools", "icon": "Wrench", "label": "Tools" },
+        { "to": "/skills", "icon": "Zap", "label": "Skills" },
+        { "to": "/modules", "icon": "Package", "label": "Modules" },
+        { "to": "/logs", "icon": "ScrollText", "label": "Live Logs" },
+        { "to": "/system", "icon": "HardDrive", "label": "System" },
+        { "to": "/debug", "icon": "Bug", "label": "Debug" },
+        { "to": "/payments", "icon": "DollarSign", "label": "Payments" },
+        { "to": "/eip8004", "icon": "Shield", "label": "EIP-8004" }
+      ]
+    }
+  ]
+}
