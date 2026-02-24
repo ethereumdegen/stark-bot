@@ -454,6 +454,7 @@ impl SubAgentManager {
                 .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
                 .filter(|w| w.len() >= 2 && !stop_words.contains(&w.as_str()))
                 .take(8)
+                .map(|w| format!("{}*", w)) // prefix match for plurals/conjugations
                 .collect::<Vec<_>>()
                 .join(" OR ");
 

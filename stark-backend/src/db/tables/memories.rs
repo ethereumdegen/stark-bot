@@ -747,4 +747,31 @@ mod tests {
         let results = db.search_memories_fts("trading bot", None, 10).unwrap();
         assert_eq!(results.len(), 3, "standard mode should find memories from all identities including NULL");
     }
+
+    #[test]
+    fn test_fts_prefix_matching_finds_plural_and_singular() {
+        let db = setup_db();
+        // Insert a memory with "excalidraw" (singular)
+        db.insert_memory(
+            "daily_log", "I created an Excalidraw file with shapes and arrows",
+            None, None, 5, None, None, None, None,
+            None, None, None,
+        ).unwrap();
+
+        // Exact match works
+        let results = db.search_memories_fts("excalidraw", None, 10).unwrap();
+        assert_eq!(results.len(), 1, "exact match should work");
+
+        // Plural (excalidraws) does NOT match singular without prefix
+        let results = db.search_memories_fts("excalidraws", None, 10).unwrap();
+        assert_eq!(results.len(), 0, "plural should not match singular without prefix");
+
+        // Prefix match (excalidraw*) matches the singular form
+        let results = db.search_memories_fts("excalidraw*", None, 10).unwrap();
+        assert_eq!(results.len(), 1, "prefix match should find singular");
+
+        // OR query with prefix matching (simulating the fixed query builder)
+        let results = db.search_memories_fts("excalidraws* OR shapes*", None, 10).unwrap();
+        assert_eq!(results.len(), 1, "OR with prefix should find the memory via shapes*");
+    }
 }

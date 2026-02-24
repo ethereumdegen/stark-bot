@@ -719,7 +719,11 @@ impl ContextManager {
             return None;
         }
 
-        let query = query_terms.join(" ");
+        // Use prefix matching (word*) and OR for broader recall
+        let query = query_terms.iter()
+            .map(|w| format!("{}*", w))
+            .collect::<Vec<_>>()
+            .join(" OR ");
         log::debug!("[MEMORY_RETRIEVAL] Searching with query: {}", &query);
 
         let limit = self.memory_config.cross_session_memory_limit;
