@@ -446,6 +446,39 @@ impl SubAgentManager {
             }
         };
 
+        // Search for memories relevant to this task and inject into system prompt
+        let relevant_memories_hint = {
+            let stop_words = stop_words::get(stop_words::LANGUAGE::English);
+            let fts_query: String = context.task
+                .split_whitespace()
+                .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
+                .filter(|w| w.len() >= 2 && !stop_words.contains(&w.as_str()))
+                .take(8)
+                .collect::<Vec<_>>()
+                .join(" OR ");
+
+            if fts_query.is_empty() {
+                String::new()
+            } else {
+                let mem_identity = context.identity_id.as_deref();
+                match db.search_memories_fts(&fts_query, mem_identity, 10) {
+                    Ok(results) if !results.is_empty() => {
+                        let mut hint = String::from("\n\n## Relevant Memories\n");
+                        for (i, (mem, _rank)) in results.iter().enumerate() {
+                            let snippet: String = mem.content.chars().take(200).collect();
+                            hint.push_str(&format!(
+                                "[{}] (#{}, {}) {}\n",
+                                i + 1, mem.id, mem.memory_type,
+                                snippet.replace('\n', " ")
+                            ));
+                        }
+                        hint
+                    }
+                    _ => String::new(),
+                }
+            }
+        };
+
         let system_prompt = format!(
             "You are a sub-agent working on a specific task. \
              Complete the following task to the best of your ability. \
@@ -453,9 +486,10 @@ impl SubAgentManager {
              IMPORTANT: Work efficiently. Aim to accomplish your goal in roughly 20-30 tool calls. \
              Do not research too deeply or go down rabbit holes. Stay focused on the specific task \
              and deliver a clear, useful result without exhaustive exploration.\n\n\
-             When you have completed the task, provide a clear summary of what was accomplished.{}{}",
+             When you have completed the task, provide a clear summary of what was accomplished.{}{}{}",
             subtype_prompt.unwrap_or_default(),
-            relevant_skills_hint
+            relevant_skills_hint,
+            relevant_memories_hint
         );
 
         // Build messages
@@ -978,6 +1012,7 @@ impl SubAgentManager {
                     parent_subagent_id: row.get(15)?,
                     depth: row.get::<_, i64>(16).unwrap_or(0) as u32,
                     agent_subtype: None,
+                    identity_id: None,
                     mode: mode_str.parse::<crate::ai::multi_agent::types::SubAgentMode>().unwrap_or_default(),
                     parent_context_snapshot: row.get(18).ok(),
                     checkpoints: checkpoints_json
@@ -1040,6 +1075,7 @@ impl SubAgentManager {
                     parent_subagent_id: row.get(15)?,
                     depth: row.get::<_, i64>(16).unwrap_or(0) as u32,
                     agent_subtype: None,
+                    identity_id: None,
                     mode: mode_str.parse::<crate::ai::multi_agent::types::SubAgentMode>().unwrap_or_default(),
                     parent_context_snapshot: row.get(18).ok(),
                     checkpoints: checkpoints_json

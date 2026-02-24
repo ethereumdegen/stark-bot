@@ -71,6 +71,7 @@ pub enum EventType {
     // Task planner events
     TaskQueueUpdate,    // Full task queue update (on define_tasks, session load)
     TaskStatusChange,   // Individual task status change
+    SessionCreated,     // New session created (for web channel gateway pattern)
     SessionComplete,    // Session marked complete (all tasks done)
     // Cron execution events (for web channel)
     CronExecutionStartedOnChannel,  // Cron job started on web channel (main mode)
@@ -142,6 +143,7 @@ impl EventType {
             Self::ProcessCompleted => "process.completed",
             Self::TaskQueueUpdate => "task.queue_update",
             Self::TaskStatusChange => "task.status_change",
+            Self::SessionCreated => "session.created",
             Self::SessionComplete => "session.complete",
             Self::CronExecutionStartedOnChannel => "cron.execution_started_on_channel",
             Self::CronExecutionStoppedOnChannel => "cron.execution_stopped_on_channel",
@@ -208,6 +210,7 @@ impl EventType {
             "process.completed" => Some(EventType::ProcessCompleted),
             "task.queue_update" => Some(EventType::TaskQueueUpdate),
             "task.status_change" => Some(EventType::TaskStatusChange),
+            "session.created" => Some(EventType::SessionCreated),
             "session.complete" => Some(EventType::SessionComplete),
             "cron.execution_started_on_channel" => Some(EventType::CronExecutionStartedOnChannel),
             "cron.execution_stopped_on_channel" => Some(EventType::CronExecutionStoppedOnChannel),
@@ -1212,6 +1215,18 @@ impl GatewayEvent {
                 "task_id": task_id,
                 "status": status,
                 "description": description,
+                "timestamp": chrono::Utc::now().to_rfc3339()
+            }),
+        )
+    }
+
+    /// New session created for web channel (gateway pattern)
+    pub fn session_created(channel_id: i64, session_id: i64) -> Self {
+        Self::new(
+            EventType::SessionCreated,
+            serde_json::json!({
+                "channel_id": channel_id,
+                "session_id": session_id,
                 "timestamp": chrono::Utc::now().to_rfc3339()
             }),
         )

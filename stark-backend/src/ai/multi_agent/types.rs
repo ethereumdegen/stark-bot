@@ -919,6 +919,9 @@ pub struct SubAgentContext {
     /// Agent subtype key (e.g. "superouter", "finance") — determines which tools/skills are available
     #[serde(default)]
     pub agent_subtype: Option<String>,
+    /// Identity ID for memory retrieval in subagent context
+    #[serde(default)]
+    pub identity_id: Option<String>,
     /// Sub-agent execution mode (Standard/Branch/SilentBranch)
     #[serde(default)]
     pub mode: SubAgentMode,
@@ -960,6 +963,7 @@ impl SubAgentContext {
             parent_subagent_id: None,
             depth: 0,
             agent_subtype: None,
+            identity_id: None,
             mode: SubAgentMode::Standard,
             parent_context_snapshot: None,
             checkpoints: Vec::new(),
@@ -993,6 +997,12 @@ impl SubAgentContext {
     /// Set agent subtype (determines which tools/skills are available)
     pub fn with_agent_subtype(mut self, subtype: Option<String>) -> Self {
         self.agent_subtype = subtype;
+        self
+    }
+
+    /// Set identity ID for memory retrieval
+    pub fn with_identity_id(mut self, identity_id: Option<String>) -> Self {
+        self.identity_id = identity_id;
         self
     }
 

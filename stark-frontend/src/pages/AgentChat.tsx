@@ -694,6 +694,21 @@ export default function AgentChat() {
     };
   }, [on, off, sessionId, dbSessionId]);
 
+  // Listen for session_created events (web gateway pattern: fresh session per message)
+  useEffect(() => {
+    const handleSessionCreated = (data: unknown) => {
+      if (!isWebChannelEvent(data)) return;
+      const event = data as { channel_id: number; session_id: number };
+      console.log('[Session] New session created:', event.session_id);
+      setDbSessionId(event.session_id);
+    };
+
+    on('session.created', handleSessionCreated);
+    return () => {
+      off('session.created', handleSessionCreated);
+    };
+  }, [on, off]);
+
   // Listen for execution lifecycle events to track loading state
   useEffect(() => {
     const handleExecutionStarted = (data: unknown) => {

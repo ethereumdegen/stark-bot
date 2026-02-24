@@ -212,18 +212,11 @@ impl MessageDispatcher {
             tools.retain(|t| t.name != "define_tasks");
         }
 
-        // When a subtype is already active, patch set_agent_subtype description
-        // so the LLM doesn't re-call it every turn
+        // When a subtype is already active, remove set_agent_subtype entirely
+        // to prevent the LLM from re-calling it in an infinite loop.
+        // The subtype resets to director on each new user message anyway.
         if orchestrator.current_subtype().is_some() {
-            if let Some(tool) = tools.iter_mut().find(|t| t.name == "set_agent_subtype") {
-                tool.description = format!(
-                    "Switch toolbox (currently: {} {}). Only call this if the user's request \
-                     requires a DIFFERENT toolbox than what's already active. \
-                     Do NOT call this if you're already in the right mode.",
-                    agent_types::subtype_emoji(subtype_key),
-                    agent_types::subtype_label(subtype_key),
-                );
-            }
+            tools.retain(|t| t.name != "set_agent_subtype");
         }
 
         tools

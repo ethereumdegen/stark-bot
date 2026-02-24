@@ -508,11 +508,13 @@ impl MessageDispatcher {
         // to prevent context from growing too large. Previous conversation context is
         // preserved by including the last 10 messages in the system prompt.
         let channel_type_lower = message.channel_type.to_lowercase();
-        let is_gateway_channel = channel_type_lower == "discord" || channel_type_lower == "telegram";
+        let is_gateway_channel = channel_type_lower == "discord"
+            || channel_type_lower == "telegram"
+            || channel_type_lower == "web";
 
         // Collect previous session messages for gateway channels (max 10)
         let previous_gateway_messages: Vec<crate::models::SessionMessage> = if is_gateway_channel {
-            const MAX_PREVIOUS_MESSAGES: i32 = 10;
+            const MAX_PREVIOUS_MESSAGES: i32 = 6;
 
             // Get the current active session (if any) and its messages
             if let Ok(Some(prev_session)) = self.db.get_latest_session_for_channel(
@@ -554,6 +556,13 @@ impl MessageDispatcher {
                         "[DISPATCH] Created fresh {} session {} (previous context: {} messages)",
                         message.channel_type, s.id, previous_gateway_messages.len()
                     );
+                    // For web channel, notify frontend of new session_id so it can filter events correctly
+                    if channel_type_lower == "web" {
+                        self.broadcaster.broadcast(GatewayEvent::session_created(
+                            message.channel_id,
+                            s.id,
+                        ));
+                    }
                     s
                 }
                 Err(e) => {

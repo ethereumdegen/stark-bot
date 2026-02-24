@@ -224,7 +224,8 @@ impl SpawnSubagentsTool {
         .with_context(merged_context)
         .with_thinking(spec.thinking.clone())
         .with_read_only(read_only)
-        .with_agent_subtype(spec.agent_subtype.clone());
+        .with_agent_subtype(spec.agent_subtype.clone())
+        .with_identity_id(context.identity_id.clone());
 
         // Propagate parent identity for depth tracking
         if let (Some(parent_id), Some(parent_depth)) =
