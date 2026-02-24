@@ -1,0 +1,110 @@
+[module]
+name = "wallet_monitor"
+version = "2.2.0"
+author = "starkbot"
+description = "Monitor ETH wallets for activity and whale trades (Mainnet + Base)"
+
+[service]
+command = "uv run service.py"
+default_port = 9100
+port_env_var = "WALLET_MONITOR_PORT"
+has_dashboard = true
+health_endpoint = "/rpc/status"
+backup_endpoint = "/rpc/backup/export"
+restore_endpoint = "/rpc/backup/restore"
+dashboard_endpoint = "/"
+
+[service.env_vars]
+ALCHEMY_API_KEY = { required = true, description = "Alchemy API key for on-chain data" }
+
+[[tools]]
+name = "wallet_watchlist"
+description = "Manage the wallet watchlist for monitoring on-chain activity. Add, remove, list, or update watched wallets on Ethereum Mainnet and Base."
+group = "finance"
+rpc_method = "POST"
+rpc_endpoint = "/rpc/tools/watchlist"
+
+[tools.parameters.action]
+type = "string"
+description = "Action: 'add', 'remove', 'list', 'update'"
+required = true
+enum = ["add", "remove", "list", "update"]
+
+[tools.parameters.address]
+type = "string"
+description = "Ethereum address (0x + 40 hex chars). Required for 'add'."
+
+[tools.parameters.label]
+type = "string"
+description = "Human-readable label for the wallet"
+
+[tools.parameters.chain]
+type = "string"
+description = "Chain to monitor: 'mainnet' or 'base'. Default: 'mainnet'"
+enum = ["mainnet", "base"]
+default = "mainnet"
+
+[tools.parameters.threshold_usd]
+type = "number"
+description = "Large trade threshold in USD. Default: 1000"
+default = 1000.0
+
+[tools.parameters.id]
+type = "integer"
+description = "Watchlist entry ID. Required for 'remove' and 'update'."
+
+[tools.parameters.notes]
+type = "string"
+description = "Notes about this wallet"
+
+[tools.parameters.monitor_enabled]
+type = "boolean"
+description = "Enable/disable monitoring for this wallet"
+
+[[tools]]
+name = "wallet_activity"
+description = "Query logged wallet activity from monitored wallets. View recent transactions, large trades, search by filters, or get stats."
+group = "finance"
+rpc_method = "POST"
+rpc_endpoint = "/rpc/tools/activity"
+
+[tools.parameters.action]
+type = "string"
+description = "Action: 'recent', 'large_trades', 'search', 'stats'"
+required = true
+enum = ["recent", "large_trades", "search", "stats"]
+
+[tools.parameters.address]
+type = "string"
+description = "Filter by wallet address"
+
+[tools.parameters.activity_type]
+type = "string"
+description = "Filter by type: 'eth_transfer', 'erc20_transfer', 'swap', 'internal'"
+
+[tools.parameters.chain]
+type = "string"
+description = "Filter by chain: 'mainnet' or 'base'"
+
+[tools.parameters.large_only]
+type = "boolean"
+description = "Only show large trades"
+default = false
+
+[tools.parameters.limit]
+type = "integer"
+description = "Max results to return (default 25, max 200)"
+default = 25
+
+[[tools]]
+name = "wallet_monitor_control"
+description = "Control the wallet monitor background worker. Check status or trigger an immediate poll."
+group = "finance"
+rpc_method = "POST"
+rpc_endpoint = "/rpc/tools/control"
+
+[tools.parameters.action]
+type = "string"
+description = "Action: 'status' to check worker health, 'trigger' to force an immediate poll"
+required = true
+enum = ["status", "trigger"]

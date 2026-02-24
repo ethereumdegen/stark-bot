@@ -4,21 +4,16 @@ export const API_BASE = '/api';
 export interface ConfigStatus {
   login_configured: boolean;
   burner_wallet_configured: boolean;
+  wallet_configured: boolean;
   guest_dashboard_enabled: boolean;
-  wallet_address: string;
-  wallet_mode: string;
+  wallet_address: string | null;
+  wallet_mode: string | null;
 }
 
 export async function getConfigStatus(): Promise<ConfigStatus> {
   const response = await fetch(`${API_BASE}/health/config`);
   if (!response.ok) throw new Error('Failed to fetch config status');
-  const text = await response.text();
-  if (!text) throw new Error('Empty response from config endpoint');
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error('Invalid response from config endpoint');
-  }
+  return response.json();
 }
 
 export async function apiFetch<T>(
