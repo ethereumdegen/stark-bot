@@ -120,7 +120,7 @@ struct ModuleInfo {
 
 #[derive(Deserialize)]
 struct ModuleActionRequest {
-    action: String, // "install", "uninstall", "enable", "disable"
+    action: String, // "install", "uninstall", "enable", "disable", "restart"
 }
 
 /// Activate a module at runtime: register its tools.
@@ -235,6 +235,9 @@ async fn module_action(
                     // Hot-activate: register tools immediately
                     activate_module(&data, &name).await;
 
+                    // Start the module's service process
+                    start_module_service(&name, module.default_port(), &data.db);
+
                     HttpResponse::Ok().json(serde_json::json!({
                         "status": "installed",
                         "message": format!("Module '{}' installed and activated.", name),
@@ -250,7 +253,7 @@ async fn module_action(
         "uninstall" => {
             deactivate_module(&data, &name).await;
 
-            // Delete module skill
+            // Delete module skill and kill the service process
             {
                 let registry = crate::modules::ModuleRegistry::new();
                 if let Some(module) = registry.get(&name) {
@@ -259,6 +262,7 @@ async fn module_action(
                             let _ = data.skill_registry.delete_skill(&metadata.name);
                         }
                     }
+                    kill_service_on_port(module.default_port());
                 }
             }
 
@@ -286,44 +290,31 @@ async fn module_action(
             };
 
             // Auto-install if not already installed
-            let already_installed = data.db.is_module_installed(&name).unwrap_or(false);
-            if !already_installed {
-                if let Err(e) = data.db.install_module(
-                    &name,
-                    module.description(),
-                    module.version(),
-                    module.has_tools(),
-                    module.has_dashboard(),
-                ) {
-                    return HttpResponse::InternalServerError().json(serde_json::json!({
-                        "error": format!("Install failed: {}", e)
-                    }));
-                }
+            if !data.db.is_module_installed(&name).unwrap_or(false) {
+                let _ = data.db.install_module(
+                    &name, module.description(), module.version(),
+                    module.has_tools(), module.has_dashboard(),
+                );
             }
 
             // Ensure the module's skill is created and enabled
             if let Some(skill_md) = module.skill_content() {
-                // Create if it doesn't exist yet (idempotent — create_skill skips duplicates)
                 let _ = data.skill_registry.create_skill_from_markdown(skill_md);
-                // Always mark it enabled in case it was previously disabled
                 if let Ok((metadata, _)) = crate::skills::zip_parser::parse_skill_md(skill_md) {
                     data.skill_registry.set_enabled(&metadata.name, true);
                 }
             }
 
             match data.db.set_module_enabled(&name, true) {
-                Ok(true) => {
+                Ok(true) | Ok(false) => {
+                    // Activate tools + start service regardless of previous state
                     activate_module(&data, &name).await;
-                    // Start the module's service process if not already running
                     start_module_service(&name, module.default_port(), &data.db);
                     HttpResponse::Ok().json(serde_json::json!({
                         "status": "enabled",
-                        "message": format!("Module '{}' enabled.", name)
+                        "message": format!("Module '{}' enabled — tools activated, service started.", name)
                     }))
                 }
-                Ok(false) => HttpResponse::NotFound().json(serde_json::json!({
-                    "error": format!("Module '{}' not found", name)
-                })),
                 Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({
                     "error": format!("Enable failed: {}", e)
                 })),
@@ -331,6 +322,7 @@ async fn module_action(
         }
 
         "disable" => {
+            // Deactivate tools
             deactivate_module(&data, &name).await;
 
             // Disable module skill and kill the service process
@@ -342,7 +334,6 @@ async fn module_action(
                             data.skill_registry.set_enabled(&metadata.name, false);
                         }
                     }
-                    // Kill the module's service process
                     kill_service_on_port(module.default_port());
                 }
             }
@@ -350,7 +341,7 @@ async fn module_action(
             match data.db.set_module_enabled(&name, false) {
                 Ok(true) => HttpResponse::Ok().json(serde_json::json!({
                     "status": "disabled",
-                    "message": format!("Module '{}' deactivated, disabled, and service stopped.", name)
+                    "message": format!("Module '{}' disabled — tools deactivated, service stopped.", name)
                 })),
                 Ok(false) => HttpResponse::NotFound().json(serde_json::json!({
                     "error": format!("Module '{}' is not installed", name)
@@ -365,8 +356,19 @@ async fn module_action(
             let registry = crate::modules::ModuleRegistry::new();
             match registry.get(&name) {
                 Some(module) => {
-                    let port = module.default_port();
+                    // Use the actual runtime port (from env var) rather than the
+                    // default_port, since start_module_services() assigns dynamic ports.
+                    let service_url = module.service_url();
+                    let port = service_url
+                        .rsplit(':')
+                        .next()
+                        .and_then(|s| s.parse::<u16>().ok())
+                        .unwrap_or(module.default_port());
                     kill_service_on_port(port);
+                    // Also kill on default port in case the service was started there
+                    if port != module.default_port() {
+                        kill_service_on_port(module.default_port());
+                    }
                     // Brief pause to let the port free up
                     std::thread::sleep(std::time::Duration::from_millis(500));
                     start_module_service(&name, port, &data.db);

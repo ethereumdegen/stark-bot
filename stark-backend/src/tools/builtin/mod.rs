@@ -49,7 +49,7 @@ pub use cryptocurrency::{
     VerifyTxBroadcastTool, Web3PresetFunctionCallTool, X402AgentInvokeTool, X402FetchTool,
     X402PostTool, X402RpcTool,
 };
-pub use social_media::{DiscordLookupTool, DiscordReadTool, DiscordWriteTool, FigmaTool, GithubUserTool, TelegramReadTool, TwitterPostTool};
+pub use social_media::{DiscordLookupTool, DiscordReadTool, DiscordWriteTool, FigmaTool, GithubUserTool, TelegramReadTool, TelegramWriteTool, TwitterPostTool};
 
 // Re-exports from individual tools
 pub use local_rpc::LocalRpcTool;

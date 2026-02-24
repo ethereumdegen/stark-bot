@@ -835,6 +835,40 @@ pub fn seed_modules() -> std::io::Result<()> {
         }
     }
 
+    // Second pass: copy shared library directories (e.g. starkbot_sdk) that modules
+    // depend on but which don't have a module.toml themselves.
+    let entries2 = std::fs::read_dir(&bundled)?;
+    for entry in entries2 {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy().to_string();
+
+        let file_type = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(_) => continue,
+        };
+        if !file_type.is_dir() || file_type.is_symlink() || name_str.starts_with('_') || name_str.starts_with('.') {
+            continue;
+        }
+
+        // Skip actual modules (already handled above)
+        if entry.path().join("module.toml").exists() {
+            continue;
+        }
+
+        let runtime_lib = runtime.join(&name);
+        if !runtime_lib.exists() {
+            log::info!("Seeding shared library '{}' from bundled modules", name_str);
+            if let Err(e) = copy_dir_recursive(&entry.path(), &runtime_lib) {
+                log::error!("Failed to seed shared library '{}': {}", name_str, e);
+                let _ = std::fs::remove_dir_all(&runtime_lib);
+            }
+        }
+    }
+
     log::info!("Module seeding complete (runtime dir: {:?})", runtime);
     Ok(())
 }

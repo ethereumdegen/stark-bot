@@ -8,6 +8,7 @@ mod discord_write;
 mod figma;
 mod github_user;
 mod telegram_read;
+mod telegram_write;
 mod twitter_post;
 pub mod twitter_oauth;
 
@@ -21,4 +22,5 @@ pub use twitter_oauth::{
     XSubscriptionTier, TWITTER_MAX_CHARS, TWITTER_PREMIUM_MAX_CHARS,
 };
 pub use telegram_read::TelegramReadTool;
+pub use telegram_write::TelegramWriteTool;
 pub use twitter_post::TwitterPostTool;

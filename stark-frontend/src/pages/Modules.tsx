@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import {
   Package,
   Check,
-  Trash2,
   Play,
   Pause,
   Wrench,
@@ -382,18 +381,6 @@ export default function Modules() {
                           Enable
                         </Button>
                       )}
-                      {module.installed && (
-                        <Button
-                          size="sm"
-                          variant="danger"
-                          disabled={actionLoading !== null}
-                          isLoading={actionLoading === `${module.name}-uninstall`}
-                          onClick={() => performAction(module.name, 'uninstall')}
-                        >
-                          <Trash2 className="w-4 h-4 mr-1" />
-                          Uninstall
-                        </Button>
-                      )}
                     </div>
                   </div>
                 </CardContent>
@@ -411,7 +398,7 @@ export default function Modules() {
           built-in UI. Use <strong className="text-slate-300">Reload Modules</strong> to
           re-sync all module tools. You can also manage modules via AI chat:
           <code className="text-stark-400 bg-slate-700 px-1.5 py-0.5 rounded mx-1">
-            manage_modules(action="enable", name="wallet_monitor")
+            manage_modules(action="list")
           </code>
         </p>
       </div>

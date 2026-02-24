@@ -712,21 +712,21 @@ async fn main() -> std::io::Result<()> {
         start_module_services(&db);
     }
 
-    // Auto-install built-in modules if not already installed.
-    // Covers both fresh installs and migrations from the old hardcoded table.
-    for auto_module in &["discord_tipping", "kv_store"] {
-        if !db.is_module_installed(auto_module).unwrap_or(true) {
-            if let Some(module) = module_registry.get(auto_module) {
-                match db.install_module(
-                    auto_module,
-                    module.description(),
-                    module.version(),
-                    module.has_tools(),
-                    module.has_dashboard(),
-                ) {
-                    Ok(_) => log::info!("[MODULE] Auto-installed {} module (enabled by default)", auto_module),
-                    Err(e) => log::warn!("[MODULE] Failed to auto-install {}: {}", auto_module, e),
-                }
+    // Auto-install all bundled modules that aren't already in the DB.
+    // Bundled modules are always on — this just ensures the DB row exists
+    // so the frontend and dashboard work correctly.
+    for module in module_registry.available_modules() {
+        let name = module.name();
+        if !db.is_module_installed(name).unwrap_or(true) {
+            match db.install_module(
+                name,
+                module.description(),
+                module.version(),
+                module.has_tools(),
+                module.has_dashboard(),
+            ) {
+                Ok(_) => log::info!("[MODULE] Auto-installed {} (enabled by default)", name),
+                Err(e) => log::warn!("[MODULE] Failed to auto-install {}: {}", name, e),
             }
         }
     }

@@ -195,11 +195,32 @@ impl ContextManager {
         self
     }
 
+    /// Get a session, preferring the in-memory cache over SQLite.
+    fn get_session_cached(&self, session_id: i64) -> Option<crate::models::ChatSession> {
+        if let Some(ref cache) = self.active_cache {
+            if let Some(session) = cache.get_session(session_id) {
+                return Some(session);
+            }
+        }
+        self.db.get_chat_session(session_id).ok().flatten()
+    }
+
+    /// Update context tokens, writing to cache if available, otherwise to DB.
+    fn set_context_tokens(&self, session_id: i64, tokens: i32) {
+        if let Some(ref cache) = self.active_cache {
+            if cache.contains(session_id) {
+                cache.update_context_tokens(session_id, tokens);
+                return;
+            }
+        }
+        let _ = self.db.update_session_context_tokens(session_id, tokens);
+    }
+
     /// Sync session's max_context_tokens with agent settings
     /// This ensures compaction triggers at the right threshold for the configured endpoint
     pub fn sync_max_context_tokens(&self, session_id: i64, agent_max_tokens: i32) {
         // Only update if different from current value
-        if let Ok(Some(session)) = self.db.get_chat_session(session_id) {
+        if let Some(session) = self.get_session_cached(session_id) {
             if session.max_context_tokens != agent_max_tokens {
                 log::info!(
                     "[CONTEXT] Syncing session {} max_context_tokens: {} -> {}",
@@ -214,18 +235,16 @@ impl ContextManager {
 
     /// Check if compaction is needed for a session (original all-at-once threshold)
     pub fn needs_compaction(&self, session_id: i64) -> bool {
-        if let Ok(session) = self.db.get_chat_session(session_id) {
-            if let Some(session) = session {
-                let threshold = session.max_context_tokens - self.reserve_tokens;
-                return session.context_tokens > threshold;
-            }
+        if let Some(session) = self.get_session_cached(session_id) {
+            let threshold = session.max_context_tokens - self.reserve_tokens;
+            return session.context_tokens > threshold;
         }
         false
     }
 
     /// Get available context budget (after reserving tokens)
     pub fn get_context_budget(&self, session_id: i64) -> i32 {
-        if let Ok(Some(session)) = self.db.get_chat_session(session_id) {
+        if let Some(session) = self.get_session_cached(session_id) {
             return session.max_context_tokens - self.reserve_tokens - session.context_tokens;
         }
         self.max_context_tokens - self.reserve_tokens
@@ -248,7 +267,7 @@ impl ContextManager {
     /// Check if incremental (sliding window) compaction should occur
     /// Triggers earlier than full compaction to do smaller, less disruptive compactions
     pub fn needs_incremental_compaction(&self, session_id: i64) -> bool {
-        if let Ok(Some(session)) = self.db.get_chat_session(session_id) {
+        if let Some(session) = self.get_session_cached(session_id) {
             // Trigger at (max - reserve - buffer) instead of (max - reserve)
             // e.g., at 85k instead of 80k for 100k context with 20k reserve and 15k buffer
             let threshold = session.max_context_tokens
@@ -315,8 +334,7 @@ impl ContextManager {
         // Recalculate and update context tokens
         let remaining = self.db.get_session_messages(session_id).unwrap_or_default();
         let new_token_count = estimate_messages_tokens(&remaining) + estimate_tokens(&chained_summary);
-        self.db.update_session_context_tokens(session_id, new_token_count)
-            .map_err(|e| format!("Failed to update context tokens: {}", e))?;
+        self.set_context_tokens(session_id, new_token_count);
 
         Ok(message_count)
     }
@@ -653,17 +671,16 @@ impl ContextManager {
         // Recalculate and update context tokens
         let remaining = self.db.get_session_messages(session_id).unwrap_or_default();
         let new_token_count = estimate_messages_tokens(&remaining) + estimate_tokens(&summary);
-        self.db.update_session_context_tokens(session_id, new_token_count)
-            .map_err(|e| format!("Failed to update context tokens: {}", e))?;
+        self.set_context_tokens(session_id, new_token_count);
 
         Ok(message_count)
     }
 
     /// Update context tokens after adding a message
     pub fn update_context_tokens(&self, session_id: i64, message_tokens: i32) {
-        if let Ok(Some(session)) = self.db.get_chat_session(session_id) {
+        if let Some(session) = self.get_session_cached(session_id) {
             let new_total = session.context_tokens + message_tokens;
-            let _ = self.db.update_session_context_tokens(session_id, new_total);
+            self.set_context_tokens(session_id, new_total);
         }
     }
 
@@ -774,7 +791,7 @@ impl ContextManager {
     pub fn check_compaction_level(&self, session_id: i64) -> CompactionLevel {
         let config = &self.compaction_config;
 
-        let session = self.db.get_chat_session(session_id).ok().flatten();
+        let session = self.get_session_cached(session_id);
         let max_tokens = session.as_ref()
             .map(|s| s.max_context_tokens)
             .unwrap_or(self.max_context_tokens);
@@ -823,7 +840,7 @@ impl ContextManager {
         let remaining = self.db.get_session_messages(session_id)
             .map_err(|e| format!("Failed to get remaining messages: {}", e))?;
         let new_token_count = estimate_messages_tokens(&remaining);
-        let _ = self.db.update_session_context_tokens(session_id, new_token_count);
+        self.set_context_tokens(session_id, new_token_count);
 
         log::info!(
             "[COMPACTION] Emergency: dropped {} of {} messages for session {} (tokens now {})",

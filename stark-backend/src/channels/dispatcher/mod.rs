@@ -156,9 +156,14 @@ impl MessageDispatcher {
         }
         log::info!("[DISPATCHER] SubAgentManager initialized");
 
-        // Create context manager
+        // In-memory session cache — reduces SQLite writes on the hot path
+        let active_cache = Arc::new(ActiveSessionCache::new(256));
+        active_cache.start_background_flusher(db.clone(), Duration::from_secs(30));
+
+        // Create context manager with active cache for fast session reads
         let mut context_manager = ContextManager::new(db.clone())
-            .with_memory_config(memory_config.clone());
+            .with_memory_config(memory_config.clone())
+            .with_active_cache(active_cache.clone());
 
         // Apply compaction thresholds from bot settings (if available)
         if let Ok(bot_settings) = db.get_bot_settings() {
@@ -179,10 +184,6 @@ impl MessageDispatcher {
         resource_manager.seed_defaults();
 
         let session_writer = crate::channels::session_writer::SessionMessageWriter::new(db.clone());
-
-        // In-memory session cache — reduces SQLite writes on the hot path
-        let active_cache = Arc::new(ActiveSessionCache::new(256));
-        active_cache.start_background_flusher(db.clone(), Duration::from_secs(30));
 
         Self {
             db,
@@ -275,18 +276,19 @@ impl MessageDispatcher {
             .ok()
             .map(Arc::new);
 
-        // Create context manager
+        let active_cache = Arc::new(ActiveSessionCache::new(256));
+        active_cache.start_background_flusher(db.clone(), Duration::from_secs(30));
+
+        // Create context manager with active cache
         let context_manager = ContextManager::new(db.clone())
-            .with_memory_config(memory_config.clone());
+            .with_memory_config(memory_config.clone())
+            .with_active_cache(active_cache.clone());
 
         let telemetry_store = Arc::new(TelemetryStore::new(db.clone()));
         let rollout_manager = Arc::new(RolloutManager::new(db.clone()));
         let resource_manager = Arc::new(ResourceManager::new(db.clone()));
 
         let session_writer = crate::channels::session_writer::SessionMessageWriter::new(db.clone());
-
-        let active_cache = Arc::new(ActiveSessionCache::new(256));
-        active_cache.start_background_flusher(db.clone(), Duration::from_secs(30));
 
         Self {
             db: db.clone(),

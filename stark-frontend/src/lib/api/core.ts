@@ -12,7 +12,13 @@ export interface ConfigStatus {
 export async function getConfigStatus(): Promise<ConfigStatus> {
   const response = await fetch(`${API_BASE}/health/config`);
   if (!response.ok) throw new Error('Failed to fetch config status');
-  return response.json();
+  const text = await response.text();
+  if (!text) throw new Error('Empty response from config endpoint');
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error('Invalid response from config endpoint');
+  }
 }
 
 export async function apiFetch<T>(

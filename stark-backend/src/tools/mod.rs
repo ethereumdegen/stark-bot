@@ -130,6 +130,7 @@ fn register_all_tools(registry: &mut ToolRegistry) {
     registry.register(Arc::new(builtin::DiscordLookupTool::new()));
     registry.register(Arc::new(builtin::TwitterPostTool::new()));
     registry.register(Arc::new(builtin::TelegramReadTool::new()));
+    registry.register(Arc::new(builtin::TelegramWriteTool::new()));
 
     // Design tools
     registry.register(Arc::new(builtin::FigmaTool::new()));
