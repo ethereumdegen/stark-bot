@@ -45,7 +45,6 @@ RUN apt-get update && apt-get install -y \
     git \
     jq \
     unzip \
-    redis-server \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv (fast Python package manager for skills)

@@ -92,7 +92,7 @@ pub struct BackupData {
     /// Installed modules (folder files + install/enable state)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modules: Vec<ModuleBackupEntry>,
-    /// Redis key/value store entries
+    /// Key/value store entries
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub kv_entries: Vec<KvEntry>,
 }
@@ -527,7 +527,7 @@ pub struct ModuleFileEntry {
     pub content: String,
 }
 
-/// Redis key/value entry in backup
+/// Key/value entry in backup
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct KvEntry {

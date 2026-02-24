@@ -102,7 +102,7 @@ export default function System() {
       setKvEntries(entries);
     } catch (e) {
       if (String(e).includes('503') || String(e).includes('not available')) {
-        setKvError('Redis not connected');
+        setKvError('KV store not available');
       } else {
         setKvError(String(e));
       }
