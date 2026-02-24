@@ -406,7 +406,23 @@ pub async fn start_twitter_listener(
             }
             _ = poll_interval.tick() => {
                 // Poll for new mentions
-                match poll_mentions(&client, &config, since_id.as_deref()).await {
+                let poll_result = poll_mentions(&client, &config, since_id.as_deref()).await;
+
+                // If since_id is stale (older than ~7 days), Twitter rejects it.
+                // Retry without since_id and clear the stale value.
+                let poll_result = if let Err(ref e) = poll_result {
+                    if since_id.is_some() && e.contains("since_id") {
+                        log::warn!("Twitter: since_id is stale, dropping it and retrying");
+                        since_id = None;
+                        poll_mentions(&client, &config, None).await
+                    } else {
+                        poll_result
+                    }
+                } else {
+                    poll_result
+                };
+
+                match poll_result {
                     Ok(poll_result) => {
                         // Log rate limit status if getting low
                         if let Some(remaining) = poll_result.rate_limit.remaining {
