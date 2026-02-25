@@ -20,14 +20,20 @@ pub struct DynamicModule {
     module_dir: PathBuf,
     /// Cached skill content (loaded once from disk)
     skill_content: Option<String>,
+    /// Resolved path to skill directory (if `skill_dir` is configured)
+    skill_dir_path: Option<PathBuf>,
+    /// Resolved path to agent directory (if `agent` is configured)
+    agent_dir_path: Option<PathBuf>,
 }
 
 impl DynamicModule {
     /// Create a DynamicModule from a parsed manifest and its containing directory.
     pub fn new(manifest: ModuleManifest, module_dir: PathBuf) -> Self {
-        // Pre-load skill content if configured
+        // Pre-load skill content if configured (legacy content_file path)
         let skill_content = manifest.skill.as_ref().and_then(|skill_cfg| {
-            let skill_path = module_dir.join(&skill_cfg.content_file);
+            skill_cfg.content_file.as_ref()
+        }).and_then(|content_file| {
+            let skill_path = module_dir.join(content_file);
             std::fs::read_to_string(&skill_path)
                 .map_err(|e| {
                     log::warn!(
@@ -40,10 +46,23 @@ impl DynamicModule {
                 .ok()
         });
 
+        // Resolve skill_dir path if configured
+        let skill_dir_path = manifest.skill.as_ref()
+            .and_then(|skill_cfg| skill_cfg.skill_dir.as_ref())
+            .map(|dir| module_dir.join(dir))
+            .filter(|p| p.is_dir());
+
+        // Resolve agent_dir path if configured
+        let agent_dir_path = manifest.agent.as_ref()
+            .map(|agent_cfg| module_dir.join(&agent_cfg.dir))
+            .filter(|p| p.join("agent.md").exists());
+
         DynamicModule {
             manifest,
             module_dir,
             skill_content,
+            skill_dir_path,
+            agent_dir_path,
         }
     }
 
@@ -244,6 +263,14 @@ impl super::Module for DynamicModule {
 
     fn skill_content(&self) -> Option<&str> {
         self.skill_content.as_deref()
+    }
+
+    fn skill_dir(&self) -> Option<&PathBuf> {
+        self.skill_dir_path.as_ref()
+    }
+
+    fn agent_dir(&self) -> Option<&PathBuf> {
+        self.agent_dir_path.as_ref()
     }
 
     async fn dashboard_data(&self, _db: &Database) -> Option<Value> {

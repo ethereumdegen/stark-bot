@@ -12,9 +12,11 @@ import {
   Zap,
   Download,
   Star,
+  FileText,
 } from 'lucide-react';
 import Card, { CardContent } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
+import Modal from '@/components/ui/Modal';
 import { apiFetch } from '@/lib/api';
 
 interface ModuleInfo {
@@ -56,6 +58,40 @@ export default function Modules() {
   const [featuredModules, setFeaturedModules] = useState<FeaturedModule[]>([]);
   const [featuredLoading, setFeaturedLoading] = useState(true);
   const [fetchingRemote, setFetchingRemote] = useState<string | null>(null);
+  const [logsModule, setLogsModule] = useState<string | null>(null);
+  const [logLines, setLogLines] = useState<string[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+
+  const openLogs = async (name: string) => {
+    setLogsModule(name);
+    setLogsLoading(true);
+    setLogLines([]);
+    try {
+      const data = await apiFetch<{ module: string; lines: string[] }>(
+        `/modules/${encodeURIComponent(name)}/logs`
+      );
+      setLogLines(data.lines || []);
+    } catch {
+      setLogLines(['(Failed to fetch logs)']);
+    } finally {
+      setLogsLoading(false);
+    }
+  };
+
+  const refreshLogs = async () => {
+    if (!logsModule) return;
+    setLogsLoading(true);
+    try {
+      const data = await apiFetch<{ module: string; lines: string[] }>(
+        `/modules/${encodeURIComponent(logsModule)}/logs`
+      );
+      setLogLines(data.lines || []);
+    } catch {
+      setLogLines(['(Failed to fetch logs)']);
+    } finally {
+      setLogsLoading(false);
+    }
+  };
 
   useEffect(() => {
     loadModules();
@@ -346,6 +382,14 @@ export default function Modules() {
                           </span>
                         )
                       )}
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => openLogs(module.name)}
+                      >
+                        <FileText className="w-4 h-4 mr-1" />
+                        Logs
+                      </Button>
                       {module.enabled ? (
                         <>
                           <Button
@@ -480,6 +524,32 @@ export default function Modules() {
           Find more modules on StarkHub
         </a>
       </div>
+
+      {/* Logs Modal */}
+      <Modal
+        isOpen={logsModule !== null}
+        onClose={() => setLogsModule(null)}
+        title={logsModule ? `${formatModuleName(logsModule)} — Service Logs` : ''}
+        size="xl"
+      >
+        <div className="flex justify-end mb-3">
+          <Button size="sm" variant="secondary" onClick={refreshLogs} disabled={logsLoading}>
+            <RefreshCw className={`w-4 h-4 mr-1 ${logsLoading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+        </div>
+        <div className="bg-slate-900 rounded-lg border border-slate-700 p-4 max-h-[60vh] overflow-auto">
+          {logsLoading && logLines.length === 0 ? (
+            <p className="text-slate-500 text-sm">Loading...</p>
+          ) : logLines.length === 0 ? (
+            <p className="text-slate-500 text-sm">No log output captured yet.</p>
+          ) : (
+            <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap break-words">
+              {logLines.join('\n')}
+            </pre>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 }

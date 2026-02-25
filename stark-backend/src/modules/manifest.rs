@@ -17,6 +17,8 @@ pub struct ModuleManifest {
     #[serde(default)]
     pub skill: Option<SkillConfig>,
     #[serde(default)]
+    pub agent: Option<AgentConfig>,
+    #[serde(default)]
     pub platforms: Option<PlatformConfig>,
     #[serde(default)]
     pub tools: Vec<ToolManifest>,
@@ -86,7 +88,21 @@ pub struct EnvVarSpec {
 #[derive(Debug, Clone, Deserialize)]
 pub struct SkillConfig {
     /// Relative path to the skill markdown file (e.g. "skill.md").
-    pub content_file: String,
+    /// Optional when `skill_dir` is used instead.
+    #[serde(default)]
+    pub content_file: Option<String>,
+    /// Relative path to a full skill folder (e.g. "skill").
+    /// The folder should contain a `.md` file + optional scripts, ABIs, presets.
+    #[serde(default)]
+    pub skill_dir: Option<String>,
+}
+
+/// Agent configuration — points to an agent folder inside the module.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentConfig {
+    /// Relative path to the agent directory (e.g. "agent").
+    /// Must contain `agent.md` and optionally `hooks/`.
+    pub dir: String,
 }
 
 /// Supported platforms list.
@@ -378,5 +394,82 @@ required = false
         assert_eq!(tool.parameters.len(), 2);
         assert_eq!(tool.required_parameters(), vec!["action".to_string()]);
         assert_eq!(tool.tool_group(), crate::tools::types::ToolGroup::Finance);
+    }
+
+    #[test]
+    fn test_parse_skill_dir_config() {
+        let toml = r#"
+[module]
+name = "perps_trader"
+version = "1.0.0"
+description = "Perps trading module"
+
+[service]
+default_port = 9105
+
+[skill]
+skill_dir = "skill"
+"#;
+        let manifest = ModuleManifest::from_str(toml).unwrap();
+        let skill = manifest.skill.unwrap();
+        assert_eq!(skill.skill_dir.as_deref(), Some("skill"));
+        assert!(skill.content_file.is_none());
+    }
+
+    #[test]
+    fn test_parse_agent_config() {
+        let toml = r#"
+[module]
+name = "perps_trader"
+version = "1.0.0"
+description = "Perps trading module"
+
+[service]
+default_port = 9105
+
+[skill]
+skill_dir = "skill"
+
+[agent]
+dir = "agent"
+"#;
+        let manifest = ModuleManifest::from_str(toml).unwrap();
+        let agent = manifest.agent.unwrap();
+        assert_eq!(agent.dir, "agent");
+    }
+
+    #[test]
+    fn test_parse_legacy_content_file_still_works() {
+        let toml = r#"
+[module]
+name = "wallet_monitor"
+version = "1.0.0"
+description = "Monitor ETH wallets"
+
+[service]
+default_port = 9100
+
+[skill]
+content_file = "skill.md"
+"#;
+        let manifest = ModuleManifest::from_str(toml).unwrap();
+        let skill = manifest.skill.unwrap();
+        assert_eq!(skill.content_file.as_deref(), Some("skill.md"));
+        assert!(skill.skill_dir.is_none());
+    }
+
+    #[test]
+    fn test_parse_no_agent_section() {
+        let toml = r#"
+[module]
+name = "basic"
+version = "1.0.0"
+description = "Basic module"
+
+[service]
+default_port = 9200
+"#;
+        let manifest = ModuleManifest::from_str(toml).unwrap();
+        assert!(manifest.agent.is_none());
     }
 }

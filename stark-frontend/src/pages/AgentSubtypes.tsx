@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Bot, Plus, Trash2, RotateCcw, Save, X, Download, Upload, Star, ExternalLink } from 'lucide-react';
+import { Bot, Plus, Trash2, RotateCcw, Save, X, Download, Upload, Star, ExternalLink, EyeOff, ChevronLeft } from 'lucide-react';
 import Card, { CardContent } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import {
@@ -17,13 +17,15 @@ import {
   writeIntrinsicFile,
   getAiEndpointPresets,
   deleteIntrinsicFile,
+  listIntrinsicDir,
   AgentSubtypeInfo,
   FeaturedAgentSubtype,
   ToolGroupInfo,
   AiEndpointPreset,
 } from '@/lib/api';
 
-const MAX_SUBTYPES = 10;
+const MAX_ACTIVE_SUBTYPES = 10;
+const MAX_TOTAL_SUBTYPES = 100;
 
 const EMPTY_SUBTYPE: AgentSubtypeInfo = {
   key: '',
@@ -52,6 +54,8 @@ export default function AgentSubtypes() {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<AgentSubtypeInfo | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [hiddenTabActive, setHiddenTabActive] = useState(false);
+  const [hiddenSelectedKey, setHiddenSelectedKey] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
 
@@ -61,6 +65,7 @@ export default function AgentSubtypes() {
 
   const [hooksContent, setHooksContent] = useState<Record<string, string | null>>({});
   const [hooksSaving, setHooksSaving] = useState<Record<string, boolean>>({});
+  const [addingHook, setAddingHook] = useState(false);
 
   const [featuredSubtypes, setFeaturedSubtypes] = useState<FeaturedAgentSubtype[]>([]);
   const [featuredLoading, setFeaturedLoading] = useState(true);
@@ -80,14 +85,20 @@ export default function AgentSubtypes() {
     }
   }, [success]);
 
-  // When subtypes load or change, select the first one if nothing is selected
+  // When subtypes load or change, select the first visible one if nothing is selected
   useEffect(() => {
     if (!isCreating && subtypes.length > 0 && (!selectedKey || !subtypes.find(s => s.key === selectedKey))) {
-      const firstKey = subtypes[0].key;
-      setSelectedKey(firstKey);
-      setEditForm({ ...subtypes[0] });
-      loadGoals(firstKey);
-      loadHooks(firstKey);
+      const activeSubtypes = subtypes.filter(s => !s.hidden);
+      if (activeSubtypes.length > 0) {
+        const firstKey = activeSubtypes[0].key;
+        setSelectedKey(firstKey);
+        setEditForm({ ...activeSubtypes[0] });
+        loadGoals(firstKey);
+        loadHooks(firstKey);
+      } else {
+        setSelectedKey(null);
+        setEditForm(null);
+      }
     }
   }, [subtypes]);
 
@@ -156,12 +167,20 @@ export default function AgentSubtypes() {
   const HOOK_TYPES = [
     { event: 'heartbeat', label: 'Heartbeat', description: 'Runs on each heartbeat cycle' },
     { event: 'discord_message', label: 'Discord Message', description: 'Fires on every Discord message' },
+    { event: 'discord_mention', label: 'Discord Mention', description: 'Fires when the bot is @mentioned in Discord' },
     { event: 'discord_member_join', label: 'Discord Member Join', description: 'Fires when a new member joins a server' },
     { event: 'telegram_message', label: 'Telegram Message', description: 'Fires on every Telegram message' },
+    { event: 'telegram_mention', label: 'Telegram Mention', description: 'Fires when the bot is @mentioned in Telegram' },
+    { event: 'twitter_mentioned', label: 'Twitter Mention', description: 'Fires when the bot is @mentioned on Twitter' },
   ];
+
+  const [customHookTypes, setCustomHookTypes] = useState<{ event: string; label: string; description: string }[]>([]);
 
   const loadHooks = async (key: string) => {
     const content: Record<string, string | null> = {};
+    const knownEvents = new Set(HOOK_TYPES.map(ht => ht.event));
+
+    // Load known hook types
     await Promise.all(
       HOOK_TYPES.map(async (ht) => {
         try {
@@ -172,11 +191,40 @@ export default function AgentSubtypes() {
         }
       })
     );
+
+    // Discover custom hooks from filesystem
+    const discovered: { event: string; label: string; description: string }[] = [];
+    try {
+      const files = await listIntrinsicDir(`agents/${key}/hooks`);
+      for (const f of files) {
+        if (!f.name.endsWith('.md')) continue;
+        const event = f.name.replace(/\.md$/, '');
+        if (knownEvents.has(event)) continue;
+        // Read content for this custom hook
+        try {
+          const result = await readIntrinsicFile(`agents/${key}/hooks/${f.name}`);
+          content[event] = result.content ?? null;
+        } catch {
+          content[event] = null;
+        }
+        if (content[event] !== null) {
+          const label = event.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+          discovered.push({ event, label, description: 'Custom hook' });
+        }
+      }
+    } catch {
+      // hooks dir may not exist
+    }
+
+    setCustomHookTypes(discovered);
     setHooksContent(content);
   };
 
   const handleSelectTab = (key: string) => {
     if (isCreating) setIsCreating(false);
+    setHiddenTabActive(false);
+    setHiddenSelectedKey(null);
+    setAddingHook(false);
     const subtype = subtypes.find(s => s.key === key);
     if (subtype) {
       setSelectedKey(key);
@@ -241,10 +289,24 @@ export default function AgentSubtypes() {
       await deleteAgentSubtype(key);
       const remaining = subtypes.filter(s => s.key !== key);
       setSubtypes(remaining);
-      if (selectedKey === key) {
-        if (remaining.length > 0) {
-          setSelectedKey(remaining[0].key);
-          setEditForm({ ...remaining[0] });
+      if (hiddenSelectedKey === key) {
+        setHiddenSelectedKey(null);
+        setSelectedKey(null);
+        setEditForm(null);
+        // If no hidden agents remain, exit hidden tab
+        if (!remaining.some(s => s.hidden)) {
+          setHiddenTabActive(false);
+          const firstActive = remaining.find(s => !s.hidden);
+          if (firstActive) {
+            setSelectedKey(firstActive.key);
+            setEditForm({ ...firstActive });
+          }
+        }
+      } else if (selectedKey === key) {
+        const activeRemaining = remaining.filter(s => !s.hidden);
+        if (activeRemaining.length > 0) {
+          setSelectedKey(activeRemaining[0].key);
+          setEditForm({ ...activeRemaining[0] });
         } else {
           setSelectedKey(null);
           setEditForm(null);
@@ -449,7 +511,7 @@ export default function AgentSubtypes() {
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-white mb-1 sm:mb-2">Agent Subtypes</h1>
           <p className="text-sm sm:text-base text-slate-400">
-            Configure agent modes ({subtypes.length}/{MAX_SUBTYPES})
+            Configure agent modes ({subtypes.filter(s => !s.hidden).length}/{MAX_ACTIVE_SUBTYPES} active, {subtypes.length} total)
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -468,7 +530,7 @@ export default function AgentSubtypes() {
           </Button>
           <Button
             onClick={handleStartCreate}
-            disabled={subtypes.length >= MAX_SUBTYPES || isCreating}
+            disabled={subtypes.length >= MAX_TOTAL_SUBTYPES || isCreating}
             className="w-auto"
           >
             <Plus className="w-4 h-4 mr-2" />
@@ -496,8 +558,8 @@ export default function AgentSubtypes() {
         <>
           {/* Tabs */}
           <div className="flex items-center gap-1 border-b border-slate-700/50 mb-0 overflow-x-auto pb-px">
-            {subtypes.map(subtype => {
-              const isActive = !isCreating && selectedKey === subtype.key;
+            {subtypes.filter(s => !s.hidden).map(subtype => {
+              const isActive = !isCreating && !hiddenTabActive && selectedKey === subtype.key;
               return (
                 <button
                   key={subtype.key}
@@ -524,10 +586,288 @@ export default function AgentSubtypes() {
                 <span>New Subtype</span>
               </button>
             )}
+            {subtypes.filter(s => s.hidden).length > 0 && (
+              <>
+                <div className="ml-auto" />
+                <button
+                  onClick={() => {
+                    setHiddenTabActive(true);
+                    setHiddenSelectedKey(null);
+                    setSelectedKey(null);
+                    setIsCreating(false);
+                  }}
+                  className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors border-b-2 -mb-px ${
+                    hiddenTabActive
+                      ? 'border-slate-500 text-slate-300'
+                      : 'border-transparent text-slate-500 hover:text-slate-400 hover:border-slate-600'
+                  }`}
+                >
+                  <EyeOff className="w-3.5 h-3.5" />
+                  <span>Background Agents</span>
+                  <span className="text-[10px] px-1.5 py-0.5 bg-slate-700 text-slate-500 rounded">
+                    {subtypes.filter(s => s.hidden).length}
+                  </span>
+                </button>
+              </>
+            )}
           </div>
 
           {/* Content area */}
-          {editForm && (
+          {hiddenTabActive && (
+            <Card className="rounded-t-none border-t-0">
+              <CardContent>
+                {hiddenSelectedKey === null ? (
+                  /* Hidden agents index table */
+                  <div>
+                    <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                      <EyeOff className="w-5 h-5 text-slate-500" />
+                      Background Agents
+                    </h2>
+                    <table className="w-full">
+                      <thead>
+                        <tr className="text-xs text-slate-500 border-b border-slate-700/50">
+                          <th className="text-left py-2 px-3">Emoji</th>
+                          <th className="text-left py-2 px-3">Label</th>
+                          <th className="text-left py-2 px-3">Key</th>
+                          <th className="text-left py-2 px-3">Status</th>
+                          <th className="text-left py-2 px-3">Description</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {subtypes.filter(s => s.hidden).map(subtype => (
+                          <tr
+                            key={subtype.key}
+                            onClick={() => {
+                              setHiddenSelectedKey(subtype.key);
+                              setSelectedKey(subtype.key);
+                              setEditForm({ ...subtype });
+                              loadGoals(subtype.key);
+                              loadHooks(subtype.key);
+                            }}
+                            className="border-b border-slate-700/30 hover:bg-slate-800/50 cursor-pointer transition-colors"
+                          >
+                            <td className="py-3 px-3 text-lg">{subtype.emoji}</td>
+                            <td className="py-3 px-3 text-sm text-white font-medium">{subtype.label}</td>
+                            <td className="py-3 px-3 text-xs font-mono text-slate-500">{subtype.key}</td>
+                            <td className="py-3 px-3">
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                                subtype.enabled
+                                  ? 'bg-green-500/20 text-green-400'
+                                  : 'bg-slate-700 text-slate-500'
+                              }`}>
+                                {subtype.enabled ? 'on' : 'off'}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-sm text-slate-400 truncate max-w-xs">{subtype.description}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  /* Hidden agent edit form */
+                  <div>
+                    <button
+                      onClick={() => { setHiddenSelectedKey(null); setEditForm(null); }}
+                      className="flex items-center gap-1 text-sm text-slate-400 hover:text-white transition-colors mb-4"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                      Back to hidden agents
+                    </button>
+                    {editForm && (
+                      <>
+                        {/* Action bar */}
+                        <div className="flex items-center justify-between mb-6">
+                          <div className="flex items-center gap-3">
+                            <span className="text-2xl">{editForm.emoji}</span>
+                            <div>
+                              <h2 className="text-lg font-semibold text-white">{editForm.label}</h2>
+                              <span className="text-xs font-mono text-slate-500">{editForm.key}</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={handleToggleEnabled}
+                              className={`px-2.5 py-1 text-xs rounded cursor-pointer transition-colors ${
+                                editForm.enabled
+                                  ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
+                                  : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                              }`}
+                            >
+                              {editForm.enabled ? 'Enabled' : 'Disabled'}
+                            </button>
+                            <Button variant="ghost" size="sm" onClick={handleExport}>
+                              <Download className="w-4 h-4 mr-1" />
+                              Export
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleDelete(editForm.key)}
+                              className="text-red-400 hover:text-red-300 hover:bg-red-500/20"
+                            >
+                              <Trash2 className="w-4 h-4 mr-1" />
+                              Delete
+                            </Button>
+                            <Button size="sm" onClick={handleSave} isLoading={isSaving}>
+                              <Save className="w-4 h-4 mr-1" />
+                              Save
+                            </Button>
+                          </div>
+                        </div>
+
+                        <SubtypeForm
+                          form={editForm}
+                          setForm={setEditForm}
+                          toolGroups={toolGroups}
+                          onToolGroupToggle={handleToolGroupToggle}
+                          isNew={false}
+                          endpointPresets={endpointPresets}
+                        />
+
+                        {/* Goals Section */}
+                        <div className="mt-6 pt-6 border-t border-slate-700/50">
+                          <div className="flex items-center justify-between mb-2">
+                            <label className="block text-xs text-slate-500">
+                              Goals
+                              <span className="text-slate-600 ml-1">— inline into hook prompts with {'{goals}'}</span>
+                            </label>
+                            {goalsContent !== null && (
+                              <div className="flex items-center gap-1">
+                                <Button size="sm" variant="ghost" onClick={handleSaveGoals} isLoading={goalsSaving}>
+                                  <Save className="w-3.5 h-3.5 mr-1" /> Save
+                                </Button>
+                                <Button size="sm" variant="ghost" onClick={handleRemoveGoals} className="text-red-400 hover:text-red-300 hover:bg-red-500/20">
+                                  <Trash2 className="w-3.5 h-3.5 mr-1" /> Remove
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                          {goalsLoading ? (
+                            <div className="text-xs text-slate-500">Loading...</div>
+                          ) : goalsContent === null ? (
+                            <Button variant="secondary" size="sm" onClick={handleActivateGoals}>
+                              Activate Goals
+                            </Button>
+                          ) : (
+                            <textarea
+                              value={goalsContent}
+                              onChange={e => setGoalsContent(e.target.value)}
+                              className="w-full h-36 bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-sm text-slate-300 font-mono resize-none focus:outline-none focus:border-stark-500"
+                              spellCheck={false}
+                              placeholder="Overall strategic goals for this agent..."
+                            />
+                          )}
+                        </div>
+
+                        {/* Hooks Section */}
+                        <div className="mt-6 pt-6 border-t border-slate-700/50">
+                          <div className="flex items-center justify-between mb-3">
+                            <label className="block text-xs text-slate-500">
+                              Hooks
+                              <span className="text-slate-600 ml-1">— event-driven triggers</span>
+                            </label>
+                            {(() => {
+                              const inactiveHooks = HOOK_TYPES.filter(ht => hooksContent[ht.event] === null || hooksContent[ht.event] === undefined);
+                              return inactiveHooks.length > 0 && (
+                                <div className="relative">
+                                  <Button size="sm" variant="ghost" onClick={() => setAddingHook(!addingHook)}>
+                                    <Plus className="w-3.5 h-3.5 mr-1" /> Add Hook
+                                  </Button>
+                                  {addingHook && (
+                                    <div className="absolute right-0 top-full mt-1 z-50 bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-1 min-w-[240px]">
+                                      {inactiveHooks.map(ht => (
+                                        <button
+                                          key={ht.event}
+                                          onClick={() => { handleToggleHook(ht.event); setAddingHook(false); }}
+                                          className="w-full text-left px-3 py-2 hover:bg-slate-700/50 transition-colors"
+                                        >
+                                          <div className="text-sm text-white font-medium">{ht.label}</div>
+                                          <div className="text-xs text-slate-500">{ht.description}</div>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </div>
+                          <div className="space-y-3">
+                            {HOOK_TYPES.filter(ht => hooksContent[ht.event] !== null && hooksContent[ht.event] !== undefined).map(ht => {
+                              const content = hooksContent[ht.event]!;
+                              const saving = hooksSaving[ht.event] || false;
+                              return (
+                                <div key={ht.event} className="rounded-lg border border-slate-700/50 p-3">
+                                  <div className="flex items-center justify-between mb-1">
+                                    <div className="flex items-center gap-2">
+                                      <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-green-500/20 text-green-400">ON</span>
+                                      <span className="text-sm text-white font-medium">{ht.label}</span>
+                                      <span className="text-xs text-slate-500">{ht.description}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <Button size="sm" variant="ghost" onClick={() => handleSaveHookTemplate(ht.event)} isLoading={saving}>
+                                        <Save className="w-3.5 h-3.5 mr-1" /> Save
+                                      </Button>
+                                      <Button size="sm" variant="ghost" onClick={() => handleToggleHook(ht.event)}>
+                                        <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                                      </Button>
+                                    </div>
+                                  </div>
+                                  <textarea
+                                    value={content}
+                                    onChange={e => setHooksContent(prev => ({ ...prev, [ht.event]: e.target.value }))}
+                                    className="w-full h-28 mt-2 bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-sm text-slate-300 font-mono resize-none focus:outline-none focus:border-stark-500"
+                                    spellCheck={false}
+                                    placeholder={`hooks/${ht.event}.md template...`}
+                                  />
+                                </div>
+                              );
+                            })}
+                            {HOOK_TYPES.every(ht => hooksContent[ht.event] === null || hooksContent[ht.event] === undefined) && (
+                              <div className="text-xs text-slate-600 italic">No hooks active. Click "Add Hook" to enable one.</div>
+                            )}
+                            {/* Intrinsic Hooks (custom, read-only) */}
+                            {customHookTypes.length > 0 && (
+                              <div className="mt-4 pt-4 border-t border-slate-700/30">
+                                <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-2">Intrinsic Hooks</div>
+                                {customHookTypes.map(ht => {
+                                  const content = hooksContent[ht.event];
+                                  if (content === null || content === undefined) return null;
+                                  const saving = hooksSaving[ht.event] || false;
+                                  return (
+                                    <div key={ht.event} className="rounded-lg border border-slate-700/50 p-3 mb-3">
+                                      <div className="flex items-center justify-between mb-1">
+                                        <div className="flex items-center gap-2">
+                                          <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-purple-500/20 text-purple-400">PULSE</span>
+                                          <span className="text-sm text-white font-medium">{ht.label}</span>
+                                          <code className="text-[10px] text-slate-600 bg-slate-800 px-1.5 py-0.5 rounded">{ht.event}</code>
+                                        </div>
+                                        <Button size="sm" variant="ghost" onClick={() => handleSaveHookTemplate(ht.event)} isLoading={saving}>
+                                          <Save className="w-3.5 h-3.5 mr-1" /> Save
+                                        </Button>
+                                      </div>
+                                      <textarea
+                                        value={content}
+                                        onChange={e => setHooksContent(prev => ({ ...prev, [ht.event]: e.target.value }))}
+                                        className="w-full h-28 mt-2 bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-sm text-slate-300 font-mono resize-none focus:outline-none focus:border-stark-500"
+                                        spellCheck={false}
+                                        placeholder={`hooks/${ht.event}.md template...`}
+                                      />
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+          {!hiddenTabActive && editForm && (
             <Card className="rounded-t-none border-t-0">
               <CardContent>
                 {/* Action bar */}
@@ -640,51 +980,102 @@ export default function AgentSubtypes() {
                 {/* Hooks Section */}
                 {!isCreating && selectedKey && (
                   <div className="mt-6 pt-6 border-t border-slate-700/50">
-                    <label className="block text-xs text-slate-500 mb-3">
-                      Hooks
-                      <span className="text-slate-600 ml-1">— event-driven triggers (detected from hooks/ files)</span>
-                    </label>
+                    <div className="flex items-center justify-between mb-3">
+                      <label className="block text-xs text-slate-500">
+                        Hooks
+                        <span className="text-slate-600 ml-1">— event-driven triggers</span>
+                      </label>
+                      {(() => {
+                        const inactiveHooks = HOOK_TYPES.filter(ht => hooksContent[ht.event] === null || hooksContent[ht.event] === undefined);
+                        return inactiveHooks.length > 0 && (
+                          <div className="relative">
+                            <Button size="sm" variant="ghost" onClick={() => setAddingHook(!addingHook)}>
+                              <Plus className="w-3.5 h-3.5 mr-1" /> Add Hook
+                            </Button>
+                            {addingHook && (
+                              <div className="absolute right-0 top-full mt-1 z-50 bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-1 min-w-[240px]">
+                                {inactiveHooks.map(ht => (
+                                  <button
+                                    key={ht.event}
+                                    onClick={() => { handleToggleHook(ht.event); setAddingHook(false); }}
+                                    className="w-full text-left px-3 py-2 hover:bg-slate-700/50 transition-colors"
+                                  >
+                                    <div className="text-sm text-white font-medium">{ht.label}</div>
+                                    <div className="text-xs text-slate-500">{ht.description}</div>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
                     <div className="space-y-3">
-                      {HOOK_TYPES.map(ht => {
-                        const content = hooksContent[ht.event];
-                        const isActive = content !== null && content !== undefined;
+                      {HOOK_TYPES.filter(ht => hooksContent[ht.event] !== null && hooksContent[ht.event] !== undefined).map(ht => {
+                        const content = hooksContent[ht.event]!;
                         const saving = hooksSaving[ht.event] || false;
-
                         return (
                           <div key={ht.event} className="rounded-lg border border-slate-700/50 p-3">
                             <div className="flex items-center justify-between mb-1">
                               <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => handleToggleHook(ht.event)}
-                                  className={`px-2 py-0.5 text-[10px] font-bold rounded transition-colors ${
-                                    isActive
-                                      ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
-                                      : 'bg-slate-700 text-slate-500 hover:bg-slate-600'
-                                  }`}
-                                >
-                                  {isActive ? 'ON' : 'OFF'}
-                                </button>
+                                <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-green-500/20 text-green-400">ON</span>
                                 <span className="text-sm text-white font-medium">{ht.label}</span>
                                 <span className="text-xs text-slate-500">{ht.description}</span>
                               </div>
-                              {isActive && (
+                              <div className="flex items-center gap-1">
                                 <Button size="sm" variant="ghost" onClick={() => handleSaveHookTemplate(ht.event)} isLoading={saving}>
                                   <Save className="w-3.5 h-3.5 mr-1" /> Save
                                 </Button>
-                              )}
+                                <Button size="sm" variant="ghost" onClick={() => handleToggleHook(ht.event)}>
+                                  <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                                </Button>
+                              </div>
                             </div>
-                            {isActive && (
-                              <textarea
-                                value={content ?? ''}
-                                onChange={e => setHooksContent(prev => ({ ...prev, [ht.event]: e.target.value }))}
-                                className="w-full h-28 mt-2 bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-sm text-slate-300 font-mono resize-none focus:outline-none focus:border-stark-500"
-                                spellCheck={false}
-                                placeholder={`hooks/${ht.event}.md template...`}
-                              />
-                            )}
+                            <textarea
+                              value={content}
+                              onChange={e => setHooksContent(prev => ({ ...prev, [ht.event]: e.target.value }))}
+                              className="w-full h-28 mt-2 bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-sm text-slate-300 font-mono resize-none focus:outline-none focus:border-stark-500"
+                              spellCheck={false}
+                              placeholder={`hooks/${ht.event}.md template...`}
+                            />
                           </div>
                         );
                       })}
+                      {HOOK_TYPES.every(ht => hooksContent[ht.event] === null || hooksContent[ht.event] === undefined) && (
+                        <div className="text-xs text-slate-600 italic">No hooks active. Click "Add Hook" to enable one.</div>
+                      )}
+                      {/* Intrinsic Hooks (custom, read-only) */}
+                      {customHookTypes.length > 0 && (
+                        <div className="mt-4 pt-4 border-t border-slate-700/30">
+                          <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-2">Intrinsic Hooks</div>
+                          {customHookTypes.map(ht => {
+                            const content = hooksContent[ht.event];
+                            if (content === null || content === undefined) return null;
+                            const saving = hooksSaving[ht.event] || false;
+                            return (
+                              <div key={ht.event} className="rounded-lg border border-slate-700/50 p-3 mb-3">
+                                <div className="flex items-center justify-between mb-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-purple-500/20 text-purple-400">PULSE</span>
+                                    <span className="text-sm text-white font-medium">{ht.label}</span>
+                                    <code className="text-[10px] text-slate-600 bg-slate-800 px-1.5 py-0.5 rounded">{ht.event}</code>
+                                  </div>
+                                  <Button size="sm" variant="ghost" onClick={() => handleSaveHookTemplate(ht.event)} isLoading={saving}>
+                                    <Save className="w-3.5 h-3.5 mr-1" /> Save
+                                  </Button>
+                                </div>
+                                <textarea
+                                  value={content}
+                                  onChange={e => setHooksContent(prev => ({ ...prev, [ht.event]: e.target.value }))}
+                                  className="w-full h-28 mt-2 bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-sm text-slate-300 font-mono resize-none focus:outline-none focus:border-stark-500"
+                                  spellCheck={false}
+                                  placeholder={`hooks/${ht.event}.md template...`}
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

@@ -1,0 +1,38 @@
+[module]
+name = "whale_tracker"
+version = "1.0.0"
+author = "starkbot"
+description = "Whale wallet tracker — monitors large wallets on Ethereum + Base, classifies movements, tracks accuracy, and fires scored alerts"
+
+[service]
+command = "uv run service.py"
+default_port = 9106
+port_env_var = "WHALE_TRACKER_PORT"
+has_dashboard = true
+health_endpoint = "/rpc/status"
+backup_endpoint = "/rpc/backup/export"
+restore_endpoint = "/rpc/backup/restore"
+dashboard_endpoint = "/"
+
+[service.env_vars]
+ALCHEMY_API_KEY = { required = true, description = "Alchemy API key for Ethereum + Base RPC" }
+
+[skill]
+skill_dir = "skill"
+
+[agent]
+dir = "agent"
+
+[[tools]]
+name = "whales"
+description = "Manage whale watchlist and query whale activity, signals, and accuracy stats"
+group = "finance"
+rpc_method = "POST"
+rpc_endpoint = "/rpc/tools/whales"
+
+[[tools]]
+name = "whale_signals"
+description = "Query whale movement signals with scoring and historical accuracy context"
+group = "finance"
+rpc_method = "POST"
+rpc_endpoint = "/rpc/tools/signals"

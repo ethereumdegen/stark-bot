@@ -1,13 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import { HardDrive, Trash2, FileText, FolderOpen, File, Folder, ChevronRight, ArrowLeft, Database, Plus, Pencil, Check, X } from 'lucide-react';
+import { HardDrive, Trash2, FileText, FolderOpen, File, Folder, ChevronRight, ArrowLeft } from 'lucide-react';
 import Card, { CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import { useApi } from '@/hooks/useApi';
 import { apiFetch, listFilesWithSizes, deleteWorkspaceFile } from '@/lib/api';
-import { listKvEntries, upsertKvEntry, deleteKvEntry } from '@/lib/api/kv';
 import type { FileEntry } from '@/lib/api';
-import type { KvEntry } from '@/lib/api/kv';
 
 interface SystemInfo {
   disk: {
@@ -68,16 +66,6 @@ export default function System() {
   const [wsLoading, setWsLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  // KV Store state
-  const [kvEntries, setKvEntries] = useState<KvEntry[]>([]);
-  const [kvLoading, setKvLoading] = useState(false);
-  const [kvError, setKvError] = useState<string | null>(null);
-  const [kvEditKey, setKvEditKey] = useState<string | null>(null);
-  const [kvEditValue, setKvEditValue] = useState('');
-  const [kvNewKey, setKvNewKey] = useState('');
-  const [kvNewValue, setKvNewValue] = useState('');
-  const [kvAdding, setKvAdding] = useState(false);
-  const [kvSortAsc, setKvSortAsc] = useState(true);
 
   const fetchWorkspaceEntries = useCallback(async (path?: string) => {
     setWsLoading(true);
@@ -94,27 +82,9 @@ export default function System() {
     }
   }, []);
 
-  const fetchKvEntries = useCallback(async () => {
-    setKvLoading(true);
-    setKvError(null);
-    try {
-      const entries = await listKvEntries();
-      setKvEntries(entries);
-    } catch (e) {
-      if (String(e).includes('503') || String(e).includes('not available')) {
-        setKvError('KV store not available');
-      } else {
-        setKvError(String(e));
-      }
-    } finally {
-      setKvLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
     fetchWorkspaceEntries();
-    fetchKvEntries();
-  }, [fetchWorkspaceEntries, fetchKvEntries]);
+  }, [fetchWorkspaceEntries]);
 
   const handleCleanupMemories = async () => {
     setCleaning(true);
@@ -173,43 +143,6 @@ export default function System() {
       setDeleteTarget(null);
     }
   };
-
-  const handleKvSave = async (key: string, value: string) => {
-    try {
-      await upsertKvEntry(key, value);
-      setKvEditKey(null);
-      fetchKvEntries();
-    } catch (e) {
-      setKvError(String(e));
-    }
-  };
-
-  const handleKvDelete = async (key: string) => {
-    try {
-      await deleteKvEntry(key);
-      fetchKvEntries();
-    } catch (e) {
-      setKvError(String(e));
-    }
-  };
-
-  const handleKvAdd = async () => {
-    const normalizedKey = kvNewKey.trim().toUpperCase();
-    if (!normalizedKey || !kvNewValue) return;
-    try {
-      await upsertKvEntry(normalizedKey, kvNewValue);
-      setKvNewKey('');
-      setKvNewValue('');
-      setKvAdding(false);
-      fetchKvEntries();
-    } catch (e) {
-      setKvError(String(e));
-    }
-  };
-
-  const sortedKvEntries = [...kvEntries].sort((a, b) =>
-    kvSortAsc ? a.key.localeCompare(b.key) : b.key.localeCompare(a.key)
-  );
 
   const navigateToDir = (path: string) => {
     fetchWorkspaceEntries(path);
@@ -406,168 +339,6 @@ export default function System() {
                   </Button>
                 </div>
               </div>
-            </CardContent>
-          </Card>
-
-          {/* Key/Value Store */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Database className="w-5 h-5 text-emerald-400" />
-                Key/Value Store
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {kvError && (
-                <div className="text-red-400 text-sm mb-3 p-2 rounded bg-red-500/10 border border-red-500/20">
-                  {kvError}
-                </div>
-              )}
-              {kvLoading ? (
-                <div className="text-slate-400 text-sm py-4">Loading...</div>
-              ) : (
-                <>
-                  {/* Table header */}
-                  <div className="flex items-center gap-3 px-3 py-2 border-b border-slate-700 text-xs text-slate-500 uppercase tracking-wider">
-                    <button
-                      onClick={() => setKvSortAsc(!kvSortAsc)}
-                      className="flex-1 text-left hover:text-white transition-colors cursor-pointer"
-                    >
-                      Key {kvSortAsc ? '\u2191' : '\u2193'}
-                    </button>
-                    <span className="flex-1 text-left">Value</span>
-                    <span className="w-16" />
-                  </div>
-
-                  {/* Entries */}
-                  {sortedKvEntries.length === 0 ? (
-                    <div className="text-slate-500 text-sm py-4 text-center">No entries</div>
-                  ) : (
-                    <div className="space-y-0 max-h-80 overflow-y-auto">
-                      {sortedKvEntries.map((entry) => (
-                        <div
-                          key={entry.key}
-                          className="flex items-center gap-3 px-3 py-2 hover:bg-slate-700/50 group"
-                        >
-                          <span className="flex-1 text-sm text-slate-200 font-mono truncate">
-                            {entry.key}
-                          </span>
-                          {kvEditKey === entry.key ? (
-                            <div className="flex-1 flex items-center gap-1">
-                              <input
-                                type="text"
-                                value={kvEditValue}
-                                onChange={(e) => setKvEditValue(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') handleKvSave(entry.key, kvEditValue);
-                                  if (e.key === 'Escape') setKvEditKey(null);
-                                }}
-                                className="flex-1 bg-slate-700 text-white rounded px-2 py-1 text-sm border border-slate-600 focus:outline-none focus:ring-1 focus:ring-stark-500"
-                                autoFocus
-                              />
-                              <button
-                                onClick={() => handleKvSave(entry.key, kvEditValue)}
-                                className="text-green-400 hover:text-green-300 p-1"
-                              >
-                                <Check className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => setKvEditKey(null)}
-                                className="text-slate-400 hover:text-white p-1"
-                              >
-                                <X className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          ) : (
-                            <span
-                              className="flex-1 text-sm text-slate-400 truncate cursor-pointer hover:text-white transition-colors"
-                              onClick={() => {
-                                setKvEditKey(entry.key);
-                                setKvEditValue(entry.value);
-                              }}
-                              title="Click to edit"
-                            >
-                              {entry.value}
-                            </span>
-                          )}
-                          <div className="w-16 flex items-center justify-end gap-1">
-                            {kvEditKey !== entry.key && (
-                              <>
-                                <button
-                                  onClick={() => {
-                                    setKvEditKey(entry.key);
-                                    setKvEditValue(entry.value);
-                                  }}
-                                  className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-blue-400 transition-all p-1"
-                                  title="Edit"
-                                >
-                                  <Pencil className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  onClick={() => handleKvDelete(entry.key)}
-                                  className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 transition-all p-1"
-                                  title="Delete"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Add new entry */}
-                  <div className="mt-3 pt-3 border-t border-slate-700">
-                    {kvAdding ? (
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          placeholder="KEY_NAME"
-                          value={kvNewKey}
-                          onChange={(e) => setKvNewKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''))}
-                          className="flex-1 bg-slate-700 text-white rounded px-2 py-1.5 text-sm border border-slate-600 focus:outline-none focus:ring-1 focus:ring-stark-500 font-mono"
-                          autoFocus
-                        />
-                        <input
-                          type="text"
-                          placeholder="value"
-                          value={kvNewValue}
-                          onChange={(e) => setKvNewValue(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleKvAdd();
-                            if (e.key === 'Escape') setKvAdding(false);
-                          }}
-                          className="flex-1 bg-slate-700 text-white rounded px-2 py-1.5 text-sm border border-slate-600 focus:outline-none focus:ring-1 focus:ring-stark-500"
-                        />
-                        <button
-                          onClick={handleKvAdd}
-                          disabled={!kvNewKey.trim() || !kvNewValue}
-                          className="text-green-400 hover:text-green-300 disabled:text-slate-600 p-1.5"
-                        >
-                          <Check className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => { setKvAdding(false); setKvNewKey(''); setKvNewValue(''); }}
-                          className="text-slate-400 hover:text-white p-1.5"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ) : (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setKvAdding(true)}
-                      >
-                        <Plus className="w-3.5 h-3.5 mr-1" />
-                        Add Entry
-                      </Button>
-                    )}
-                  </div>
-                </>
-              )}
             </CardContent>
           </Card>
 

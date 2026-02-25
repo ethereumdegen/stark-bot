@@ -1,13 +1,13 @@
 [module]
-name = "auto_trader"
+name = "perps_trader"
 version = "1.0.0"
 author = "starkbot"
-description = "Autonomous DeFi trader — scans DexScreener, makes trade decisions, executes swaps on Base"
+description = "Autonomous perpetual futures trader on Avantis (Base) — leveraged LONG/SHORT positions from Bankr signals"
 
 [service]
 command = "uv run service.py"
-default_port = 9104
-port_env_var = "AUTO_TRADER_PORT"
+default_port = 9105
+port_env_var = "PERPS_TRADER_PORT"
 has_dashboard = true
 health_endpoint = "/rpc/status"
 backup_endpoint = "/rpc/backup/export"
@@ -16,7 +16,9 @@ dashboard_endpoint = "/"
 
 [service.env_vars]
 ALCHEMY_API_KEY = { required = true, description = "Alchemy API key for Base RPC" }
-ZEROX_API_KEY = { required = false, description = "0x Swap API key for quote/swap on Base" }
 
 [skill]
-content_file = "skill.md"
+skill_dir = "skill"
+
+[agent]
+dir = "agent"

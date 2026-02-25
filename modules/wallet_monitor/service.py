@@ -759,11 +759,14 @@ def dashboard():
     watchlist_rows = ""
     for w in wl:
         label = w.get("label") or "-"
-        status = "Active" if w["monitor_enabled"] else "Paused"
+        status_cls = "active" if w["monitor_enabled"] else "paused"
+        status_label = "Active" if w["monitor_enabled"] else "Paused"
         last_block = f"#{w['last_checked_block']}" if w.get("last_checked_block") else "-"
-        watchlist_rows += f'<tr><td>{w["id"]}</td><td>{label}</td><td class="mono">{w["address"]}</td><td>{w["chain"]}</td><td>${w["large_trade_threshold_usd"]:.0f}</td><td>{status}</td><td>{last_block}</td></tr>\n'
+        toggle_icon = "&#9646;&#9646;" if w["monitor_enabled"] else "&#9654;"
+        toggle_title = "Pause monitoring" if w["monitor_enabled"] else "Resume monitoring"
+        watchlist_rows += f'''<tr data-id="{w["id"]}"><td>{w["id"]}</td><td>{label}</td><td class="mono">{w["address"]}</td><td>{w["chain"]}</td><td>${w["large_trade_threshold_usd"]:.0f}</td><td><span class="status-badge {status_cls}">{status_label}</span></td><td>{last_block}</td><td class="actions"><button class="btn-icon btn-toggle" onclick="toggleWallet({w["id"]}, {0 if w["monitor_enabled"] else 1})" title="{toggle_title}">{toggle_icon}</button><button class="btn-icon btn-remove" onclick="removeWallet({w["id"]}, '{w["address"][:10]}...')" title="Remove wallet">&#10005;</button></td></tr>\n'''
     if not watchlist_rows:
-        watchlist_rows = '<tr><td colspan="7">No wallets on watchlist.</td></tr>'
+        watchlist_rows = '<tr><td colspan="8" style="text-align:center;color:#8b949e;padding:20px;">No wallets on watchlist. Add one below.</td></tr>'
 
     activity_rows = ""
     for a in recent:
@@ -801,6 +804,29 @@ def dashboard():
   .mono {{ font-family: 'SF Mono', 'Consolas', monospace; font-size: 0.85em; }}
   h2 {{ color: #c9d1d9; margin-bottom: 12px; font-size: 1.1em; }}
   .section {{ margin-bottom: 28px; }}
+  .actions {{ white-space: nowrap; }}
+  .btn-icon {{ background: none; border: 1px solid #30363d; color: #8b949e; border-radius: 6px; padding: 4px 8px; cursor: pointer; font-size: 0.8em; margin-left: 4px; transition: all 0.15s; }}
+  .btn-icon:hover {{ border-color: #58a6ff; color: #58a6ff; }}
+  .btn-remove:hover {{ border-color: #f85149; color: #f85149; }}
+  .status-badge {{ padding: 2px 8px; border-radius: 12px; font-size: 0.8em; font-weight: 500; }}
+  .status-badge.active {{ background: #0d2818; color: #3fb950; }}
+  .status-badge.paused {{ background: #2d1b00; color: #d29922; }}
+  .add-form {{ background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px 20px; margin-bottom: 24px; }}
+  .add-form .form-row {{ display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }}
+  .add-form .field {{ display: flex; flex-direction: column; gap: 4px; }}
+  .add-form label {{ font-size: 0.8em; color: #8b949e; text-transform: uppercase; }}
+  .add-form input, .add-form select {{ background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 8px 12px; color: #e0e0e0; font-size: 0.9em; outline: none; }}
+  .add-form input:focus, .add-form select:focus {{ border-color: #58a6ff; }}
+  .add-form input.addr {{ width: 380px; font-family: 'SF Mono', 'Consolas', monospace; font-size: 0.85em; }}
+  .add-form input.lbl {{ width: 140px; }}
+  .add-form input.thr {{ width: 100px; }}
+  .btn-add {{ background: #238636; border: 1px solid #2ea043; color: #fff; border-radius: 6px; padding: 8px 20px; cursor: pointer; font-size: 0.9em; font-weight: 500; transition: background 0.15s; }}
+  .btn-add:hover {{ background: #2ea043; }}
+  .btn-add:disabled {{ opacity: 0.5; cursor: not-allowed; }}
+  .toast {{ position: fixed; bottom: 24px; right: 24px; padding: 12px 20px; border-radius: 8px; font-size: 0.9em; color: #fff; z-index: 999; opacity: 0; transition: opacity 0.3s; pointer-events: none; }}
+  .toast.show {{ opacity: 1; }}
+  .toast.ok {{ background: #238636; }}
+  .toast.err {{ background: #da3633; }}
 </style>
 </head>
 <body>
@@ -825,10 +851,36 @@ def dashboard():
 
   <div class="section">
     <h2>Watchlist</h2>
-    <table>
-      <thead><tr><th>ID</th><th>Label</th><th>Address</th><th>Chain</th><th>Threshold</th><th>Status</th><th>Last Block</th></tr></thead>
+    <table id="watchlist-table">
+      <thead><tr><th>ID</th><th>Label</th><th>Address</th><th>Chain</th><th>Threshold</th><th>Status</th><th>Last Block</th><th></th></tr></thead>
       <tbody>{watchlist_rows}</tbody>
     </table>
+
+    <div class="add-form">
+      <h2 style="margin-bottom:12px;">Add Wallet</h2>
+      <div class="form-row">
+        <div class="field">
+          <label for="addr">Address</label>
+          <input type="text" id="addr" class="addr" placeholder="0x..." spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="lbl">Label</label>
+          <input type="text" id="lbl" class="lbl" placeholder="optional">
+        </div>
+        <div class="field">
+          <label for="chain">Chain</label>
+          <select id="chain"><option value="mainnet">Mainnet</option><option value="base">Base</option></select>
+        </div>
+        <div class="field">
+          <label for="thr">Threshold $</label>
+          <input type="number" id="thr" class="thr" value="1000" min="0">
+        </div>
+        <div class="field">
+          <label>&nbsp;</label>
+          <button class="btn-add" id="btn-add" onclick="addWallet()">Add</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div class="section">
@@ -839,7 +891,81 @@ def dashboard():
     </table>
   </div>
 
-  <script>setTimeout(() => location.reload(), 30000);</script>
+  <div id="toast" class="toast"></div>
+  <script>
+  function toast(msg, ok) {{
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'toast show ' + (ok ? 'ok' : 'err');
+    setTimeout(() => t.className = 'toast', 3000);
+  }}
+
+  async function rpc(body) {{
+    const r = await fetch('/rpc/tools/watchlist', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify(body)
+    }});
+    return r.json();
+  }}
+
+  async function addWallet() {{
+    const addr = document.getElementById('addr').value.trim();
+    const label = document.getElementById('lbl').value.trim() || null;
+    const chain = document.getElementById('chain').value;
+    const thr = parseFloat(document.getElementById('thr').value) || 1000;
+    if (!addr) {{ toast('Address is required', false); return; }}
+    const btn = document.getElementById('btn-add');
+    btn.disabled = true;
+    try {{
+      const res = await rpc({{action: 'add', address: addr, label: label, chain: chain, threshold_usd: thr}});
+      if (res.ok) {{
+        toast('Wallet added', true);
+        document.getElementById('addr').value = '';
+        document.getElementById('lbl').value = '';
+        setTimeout(() => location.reload(), 500);
+      }} else {{
+        toast(res.error || 'Failed to add wallet', false);
+      }}
+    }} catch(e) {{ toast('Network error', false); }}
+    btn.disabled = false;
+  }}
+
+  async function removeWallet(id, preview) {{
+    if (!confirm('Remove wallet ' + preview + '?')) return;
+    try {{
+      const res = await rpc({{action: 'remove', id: id}});
+      if (res.ok) {{
+        toast('Wallet removed', true);
+        const row = document.querySelector('tr[data-id="' + id + '"]');
+        if (row) row.remove();
+      }} else {{
+        toast(res.error || 'Failed to remove', false);
+      }}
+    }} catch(e) {{ toast('Network error', false); }}
+  }}
+
+  async function toggleWallet(id, enable) {{
+    try {{
+      const res = await rpc({{action: 'update', id: id, monitor_enabled: !!enable}});
+      if (res.ok) {{
+        toast(enable ? 'Monitoring resumed' : 'Monitoring paused', true);
+        setTimeout(() => location.reload(), 500);
+      }} else {{
+        toast(res.error || 'Failed to update', false);
+      }}
+    }} catch(e) {{ toast('Network error', false); }}
+  }}
+
+  // auto-refresh every 30s only if user hasn't interacted recently
+  let _lastInteract = 0;
+  document.addEventListener('keydown', () => _lastInteract = Date.now());
+  document.addEventListener('click', () => _lastInteract = Date.now());
+  setInterval(() => {{ if (Date.now() - _lastInteract > 5000) location.reload(); }}, 30000);
+
+  // submit on Enter in address field
+  document.getElementById('addr').addEventListener('keydown', e => {{ if (e.key === 'Enter') addWallet(); }});
+  </script>
 </body>
 </html>"""
     return html

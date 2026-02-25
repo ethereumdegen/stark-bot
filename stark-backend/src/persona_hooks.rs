@@ -10,6 +10,7 @@
 //! - `discord_member_join` — New member joins a Discord guild
 //! - `telegram_message`    — Telegram message
 //! - `telegram_mention`    — Bot is @mentioned or replied-to in Telegram
+//! - `twitter_mentioned`   — Bot is @mentioned on Twitter
 //! - `heartbeat`           — Fired each heartbeat tick for every agent with the hook
 //! - (custom)              — Any event name fired via `fire_custom_hooks()` / internal API
 
@@ -58,6 +59,7 @@ fn spawn_hook_session(
     prompt: String,
     chat_id: String,
     message_id_suffix: String,
+    safe_mode: bool,
     dispatcher: &Arc<MessageDispatcher>,
 ) {
     let hook_channel_id = -(950 + hook_channel_offset(&config.key));
@@ -73,7 +75,7 @@ fn spawn_hook_session(
         message_id: Some(format!("hook-{}-{}", config.key, message_id_suffix)),
         session_mode: Some("isolated".to_string()),
         selected_network: None,
-        force_safe_mode: false,
+        force_safe_mode: safe_mode,
     };
 
     log::info!(
@@ -152,6 +154,7 @@ pub async fn fire_discord_message_hooks(
             prompt,
             format!("hook:{}:{}:{}", config.key, channel_id_str, message_id),
             message_id.clone(),
+            hook.safe_mode,
             dispatcher,
         );
     }
@@ -201,6 +204,7 @@ pub async fn fire_discord_mention_hooks(
             prompt,
             format!("hook:{}:{}:{}", config.key, channel_id_str, message_id),
             message_id.clone(),
+            hook.safe_mode,
             dispatcher,
         );
     }
@@ -246,6 +250,7 @@ pub async fn fire_discord_member_join_hooks(
             prompt,
             format!("hook:{}:join:{}:{}", config.key, guild_id, user_id),
             format!("join-{}-{}", guild_id, user_id),
+            hook.safe_mode,
             dispatcher,
         );
     }
@@ -293,6 +298,7 @@ pub async fn fire_telegram_message_hooks(
             prompt,
             format!("hook:{}:tg:{}:{}", config.key, chat_id, message_id),
             format!("tg-{}", message_id),
+            hook.safe_mode,
             dispatcher,
         );
     }
@@ -340,6 +346,52 @@ pub async fn fire_telegram_mention_hooks(
             prompt,
             format!("hook:{}:tg:{}:{}", config.key, chat_id, message_id),
             format!("tg-{}", message_id),
+            hook.safe_mode,
+            dispatcher,
+        );
+    }
+}
+
+// =====================================================
+// twitter_mentioned
+// =====================================================
+
+/// Template variables for `twitter_mentioned`:
+/// `{tweetId}`, `{authorId}`, `{authorUsername}`, `{content}`, `{conversationId}`, `{timestamp}`
+pub async fn fire_twitter_mentioned_hooks(
+    tweet_id: &str,
+    author_id: &str,
+    author_username: &str,
+    content: &str,
+    conversation_id: Option<&str>,
+    dispatcher: &Arc<MessageDispatcher>,
+) {
+    let hooks = get_hooks_for_event("twitter_mentioned");
+    if hooks.is_empty() {
+        return;
+    }
+
+    let now = chrono::Utc::now();
+    let timestamp = now.to_rfc3339();
+
+    for (config, hook) in hooks {
+        let mut vars: HashMap<&str, String> = HashMap::new();
+        vars.insert("tweetId", tweet_id.to_string());
+        vars.insert("authorId", author_id.to_string());
+        vars.insert("authorUsername", author_username.to_string());
+        vars.insert("content", content.to_string());
+        vars.insert("conversationId", conversation_id.unwrap_or("").to_string());
+        vars.insert("timestamp", timestamp.clone());
+        vars.insert("goals", read_agent_goals(&config.key));
+
+        let prompt = render_template(&hook.prompt_template, &vars);
+        spawn_hook_session(
+            &config,
+            "twitter_mentioned",
+            prompt,
+            format!("hook:{}:twitter:{}", config.key, tweet_id),
+            format!("tw-{}", tweet_id),
+            hook.safe_mode,
             dispatcher,
         );
     }
@@ -384,6 +436,7 @@ pub async fn fire_heartbeat_hooks(
             prompt,
             format!("hook:{}:heartbeat:{}", config.key, now.timestamp()),
             format!("hb-{}", now.timestamp()),
+            hook.safe_mode,
             dispatcher,
         );
     }
@@ -399,7 +452,7 @@ pub async fn fire_heartbeat_hooks(
 ///
 /// This is the generic entry-point used by the internal hooks API
 /// (`POST /api/internal/hooks/fire`) and by module background workers.
-/// Any agent with a matching hook file (e.g. `hooks/auto_trader_pulse.md`)
+/// Any agent with a matching hook file (e.g. `hooks/spot_trader_pulse.md`)
 /// will be triggered.
 pub async fn fire_custom_hooks(
     event: &str,
@@ -430,6 +483,7 @@ pub async fn fire_custom_hooks(
             prompt,
             format!("hook:{}:custom:{}:{}", config.key, event, now.timestamp()),
             format!("custom-{}-{}", event, now.timestamp()),
+            hook.safe_mode,
             dispatcher,
         );
     }

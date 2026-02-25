@@ -307,6 +307,12 @@ fn start_module_services(db: &Database) {
     // All module services are discovered dynamically from ~/.starkbot/modules/
     let dynamic_services = modules::loader::get_dynamic_service_binaries();
     for svc in &dynamic_services {
+        // Only start services for modules that are enabled in the database
+        if !db.is_module_enabled(&svc.name).unwrap_or(false) {
+            log::info!("[MODULE] {} is disabled — skipping service start", svc.name);
+            continue;
+        }
+
         // A module must have either a command or a binary to start
         let has_command = svc.command.is_some();
         if !has_command && !svc.binary_path.exists() {
@@ -408,16 +414,21 @@ fn find_free_port() -> Option<u16> {
 /// The caller is responsible for checking port availability before calling this.
 fn start_service_binary(exe_path: &std::path::Path, name: &str, port: u16, envs: &[(&str, &str)]) {
     let mut cmd = std::process::Command::new(exe_path);
-    cmd.stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit());
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
 
     for (key, value) in envs {
         cmd.env(key, value);
     }
 
     match cmd.spawn() {
-        Ok(_child) => {
+        Ok(mut child) => {
             log::info!("[MODULE] Started {} (port {})", name, port);
+            modules::service_logs::spawn_log_capture_threads(
+                name,
+                child.stdout.take(),
+                child.stderr.take(),
+            );
         }
         Err(e) => {
             log::error!("[MODULE] Failed to start {}: {}", name, e);
@@ -431,16 +442,21 @@ fn start_service_command(command: &str, cwd: &std::path::Path, name: &str, port:
     let mut cmd = std::process::Command::new("sh");
     cmd.arg("-c").arg(command);
     cmd.current_dir(cwd);
-    cmd.stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit());
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
 
     for (key, value) in envs {
         cmd.env(key, value);
     }
 
     match cmd.spawn() {
-        Ok(_child) => {
+        Ok(mut child) => {
             log::info!("[MODULE] Started {} via `{}` (port {}, cwd={})", name, command, port, cwd.display());
+            modules::service_logs::spawn_log_capture_threads(
+                name,
+                child.stdout.take(),
+                child.stderr.take(),
+            );
         }
         Err(e) => {
             log::error!("[MODULE] Failed to start {} via `{}`: {}", name, command, e);
@@ -580,6 +596,57 @@ fn split_qmd_entries(content: &str) -> Vec<String> {
     entries
 }
 
+/// Ensure a CLI gateway external channel exists with the given token.
+/// Called on startup when CLI_GATEWAY_TOKEN env var is set.
+/// Creates the channel if it doesn't exist, or updates the token if it changed.
+fn ensure_cli_gateway_channel(db: &std::sync::Arc<db::Database>, token: &str) {
+    const CLI_CHANNEL_NAME: &str = "cli-gateway";
+
+    // Check if a channel named "cli-gateway" already exists
+    match db.list_channels() {
+        Ok(channels) => {
+            for ch in &channels {
+                if ch.name == CLI_CHANNEL_NAME && ch.channel_type == "external_channel" {
+                    // Channel exists — check if token matches
+                    if ch.bot_token == token {
+                        log::debug!("CLI gateway channel already exists with correct token");
+                    } else {
+                        // Update the token
+                        match db.update_channel(ch.id, None, None, Some(token), None) {
+                            Ok(_) => log::info!("Updated CLI gateway channel token"),
+                            Err(e) => log::warn!("Failed to update CLI gateway channel token: {}", e),
+                        }
+                    }
+
+                    // Ensure the API token setting matches (this is what the gateway validates)
+                    let _ = db.set_channel_setting(ch.id, "external_channel_api_token", token);
+                    // Ensure auto_start_on_boot is enabled
+                    let _ = db.set_channel_setting(ch.id, "auto_start_on_boot", "true");
+                    let _ = db.set_channel_enabled(ch.id, true);
+                    return;
+                }
+            }
+        }
+        Err(e) => {
+            log::warn!("Failed to list channels for CLI gateway setup: {}", e);
+        }
+    }
+
+    // Channel doesn't exist — create it
+    match db.create_channel_with_safe_mode("external_channel", CLI_CHANNEL_NAME, token, None, true) {
+        Ok(ch) => {
+            // Enable it, set the API token, and auto_start_on_boot
+            let _ = db.set_channel_enabled(ch.id, true);
+            let _ = db.set_channel_setting(ch.id, "external_channel_api_token", token);
+            let _ = db.set_channel_setting(ch.id, "auto_start_on_boot", "true");
+            log::info!("Created CLI gateway channel (id: {})", ch.id);
+        }
+        Err(e) => {
+            log::error!("Failed to create CLI gateway channel: {}", e);
+        }
+    }
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
@@ -696,6 +763,9 @@ async fn main() -> std::io::Result<()> {
         if let Err(e) = config::seed_agents() {
             log::warn!("Failed to seed agents: {}", e);
         }
+        if let Err(e) = config::seed_module_agents() {
+            log::warn!("Failed to seed module agents: {}", e);
+        }
         let agents_dir = config::runtime_agents_dir();
         std::fs::create_dir_all(&agents_dir).ok();
         let configs = agents::loader::load_agents_from_directory(&agents_dir)
@@ -721,21 +791,14 @@ async fn main() -> std::io::Result<()> {
     // Initialize Module Registry (compile-time plugin registry)
     let module_registry = modules::ModuleRegistry::new();
 
-    // Auto-start module service binaries as child processes.
-    // The binaries live in the same directory as stark-backend (built by cargo workspace).
-    // They can also be run standalone. Set DISABLE_MODULE_SERVICES=1 to skip auto-start.
-    if std::env::var("DISABLE_MODULE_SERVICES").map(|v| v == "1" || v == "true").unwrap_or(false) {
-        log::info!("[MODULE] Module service auto-start disabled via DISABLE_MODULE_SERVICES");
-    } else {
-        start_module_services(&db);
-    }
-
     // Auto-install all bundled modules that aren't already in the DB.
-    // Bundled modules are always on — this just ensures the DB row exists
-    // so the frontend and dashboard work correctly.
+    // Only kv_store is enabled by default — all others start disabled
+    // and must be explicitly enabled by the user. The enabled state is
+    // persisted in the keystore cloud backup so it survives resets.
     for module in module_registry.available_modules() {
         let name = module.name();
         if !db.is_module_installed(name).unwrap_or(true) {
+            let default_enabled = name == "kv_store";
             match db.install_module(
                 name,
                 module.description(),
@@ -743,10 +806,24 @@ async fn main() -> std::io::Result<()> {
                 module.has_tools(),
                 module.has_dashboard(),
             ) {
-                Ok(_) => log::info!("[MODULE] Auto-installed {} (enabled by default)", name),
+                Ok(_) => {
+                    if !default_enabled {
+                        let _ = db.set_module_enabled(name, false);
+                    }
+                    log::info!("[MODULE] Auto-installed {} (enabled={})", name, default_enabled);
+                }
                 Err(e) => log::warn!("[MODULE] Failed to auto-install {}: {}", name, e),
             }
         }
+    }
+
+    // Auto-start module service binaries as child processes.
+    // Only starts services for modules that are enabled in the database.
+    // Set DISABLE_MODULE_SERVICES=1 to skip auto-start entirely.
+    if std::env::var("DISABLE_MODULE_SERVICES").map(|v| v == "1" || v == "true").unwrap_or(false) {
+        log::info!("[MODULE] Module service auto-start disabled via DISABLE_MODULE_SERVICES");
+    } else {
+        start_module_services(&db);
     }
 
     // Initialize Tool Registry with built-in tools + installed module tools
@@ -786,7 +863,13 @@ async fn main() -> std::io::Result<()> {
         for entry in &installed_modules {
             if entry.enabled {
                 if let Some(module) = module_registry.get(&entry.module_name) {
-                    if let Some(skill_md) = module.skill_content() {
+                    // Prefer skill_dir (full skill folder), fall back to skill_content (legacy)
+                    if let Some(skill_dir) = module.skill_dir() {
+                        match skill_registry.create_skill_from_module_dir(skill_dir).await {
+                            Ok(s) => log::info!("[MODULE] Loaded skill '{}' from module '{}' (skill dir)", s.name, entry.module_name),
+                            Err(e) => log::warn!("[MODULE] Failed to load skill dir from '{}': {}", entry.module_name, e),
+                        }
+                    } else if let Some(skill_md) = module.skill_content() {
                         match skill_registry.create_skill_from_markdown(skill_md) {
                             Ok(s) => log::info!("[MODULE] Loaded skill '{}' from module '{}'", s.name, entry.module_name),
                             Err(e) => log::warn!("[MODULE] Failed to load skill from '{}': {}", entry.module_name, e),
@@ -1023,6 +1106,15 @@ async fn main() -> std::io::Result<()> {
             if let Some(ref wp) = wallet_provider_bg {
                 auto_retrieve_from_keystore(&db_bg, wp).await;
             }
+
+            // Auto-create CLI gateway channel if CLI_GATEWAY_TOKEN env var is set
+            // This enables direct CLI-to-instance communication without manual channel setup
+            if let Ok(cli_token) = std::env::var("CLI_GATEWAY_TOKEN") {
+                if !cli_token.is_empty() {
+                    ensure_cli_gateway_channel(&db_bg, &cli_token);
+                }
+            }
+
             // Start enabled channels (after keystore so restored channels are available)
             log::info!("Starting enabled channels (background)");
             gateway_bg.start_enabled_channels().await;

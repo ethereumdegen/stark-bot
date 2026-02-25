@@ -10,6 +10,59 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use crate::AppState;
 
+/// Load (or create) a module's skill using either skill_dir or skill_content.
+/// Returns the DbSkill on success.
+async fn load_module_skill(
+    module: &dyn crate::modules::Module,
+    skill_registry: &crate::skills::SkillRegistry,
+) -> Option<crate::skills::types::DbSkill> {
+    // Prefer skill_dir (full skill folder with scripts, ABIs, etc.)
+    if let Some(skill_dir) = module.skill_dir() {
+        match skill_registry.create_skill_from_module_dir(skill_dir).await {
+            Ok(s) => return Some(s),
+            Err(e) => {
+                log::warn!("[MODULE] Failed to load skill dir for '{}': {}", module.name(), e);
+            }
+        }
+    }
+    // Fall back to skill_content (legacy flat markdown)
+    if let Some(skill_md) = module.skill_content() {
+        match skill_registry.create_skill_from_markdown(skill_md) {
+            Ok(s) => return Some(s),
+            Err(e) => {
+                log::warn!("[MODULE] Failed to load skill from '{}': {}", module.name(), e);
+            }
+        }
+    }
+    None
+}
+
+/// Get the skill name from a module (for delete/enable/disable operations).
+/// Checks skill_dir first (parses the .md frontmatter), then falls back to skill_content.
+fn get_module_skill_name(module: &dyn crate::modules::Module) -> Option<String> {
+    // Check skill_dir first
+    if let Some(skill_dir) = module.skill_dir() {
+        let dir_name = skill_dir.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let named_md = skill_dir.join(format!("{}.md", dir_name));
+        let skill_md_path = skill_dir.join("SKILL.md");
+        let md_path = if named_md.exists() { named_md } else if skill_md_path.exists() { skill_md_path } else { return None };
+        if let Ok(content) = std::fs::read_to_string(&md_path) {
+            if let Ok((metadata, _)) = crate::skills::zip_parser::parse_skill_md(&content) {
+                return Some(metadata.name);
+            }
+        }
+    }
+    // Fall back to skill_content
+    if let Some(skill_md) = module.skill_content() {
+        if let Ok((metadata, _)) = crate::skills::zip_parser::parse_skill_md(skill_md) {
+            return Some(metadata.name);
+        }
+    }
+    None
+}
+
 /// Kill the service process listening on a given port (if any).
 fn kill_service_on_port(port: u16) {
     let output = std::process::Command::new("lsof")
@@ -123,7 +176,7 @@ struct ModuleActionRequest {
     action: String, // "install", "uninstall", "enable", "disable", "restart"
 }
 
-/// Activate a module at runtime: register its tools.
+/// Activate a module at runtime: register its tools and enable its agent.
 async fn activate_module(data: &web::Data<AppState>, module_name: &str) {
     let registry = crate::modules::ModuleRegistry::new();
     let module = match registry.get(module_name) {
@@ -140,9 +193,14 @@ async fn activate_module(data: &web::Data<AppState>, module_name: &str) {
             data.tool_registry.register(tool);
         }
     }
+
+    // Enable the module's agent subtype (if it has one)
+    if module.agent_dir().is_some() {
+        crate::ai::multi_agent::types::set_agent_enabled(module_name, true);
+    }
 }
 
-/// Deactivate a module at runtime: unregister its tools.
+/// Deactivate a module at runtime: unregister its tools and disable its agent.
 async fn deactivate_module(data: &web::Data<AppState>, module_name: &str) {
     let registry = crate::modules::ModuleRegistry::new();
     let module = match registry.get(module_name) {
@@ -160,6 +218,11 @@ async fn deactivate_module(data: &web::Data<AppState>, module_name: &str) {
                 log::info!("[MODULE] Unregistered tool: {} (from {})", name, module_name);
             }
         }
+    }
+
+    // Disable the module's agent subtype (if it has one)
+    if module.agent_dir().is_some() {
+        crate::ai::multi_agent::types::set_agent_enabled(module_name, false);
     }
 }
 
@@ -227,10 +290,8 @@ async fn module_action(
                 module.has_dashboard(),
             ) {
                 Ok(_) => {
-                    // Install skill if provided
-                    if let Some(skill_md) = module.skill_content() {
-                        let _ = data.skill_registry.create_skill_from_markdown(skill_md);
-                    }
+                    // Install skill if provided (prefer skill_dir, fall back to skill_content)
+                    load_module_skill(module, &data.skill_registry).await;
 
                     // Hot-activate: register tools immediately
                     activate_module(&data, &name).await;
@@ -257,10 +318,8 @@ async fn module_action(
             {
                 let registry = crate::modules::ModuleRegistry::new();
                 if let Some(module) = registry.get(&name) {
-                    if let Some(skill_md) = module.skill_content() {
-                        if let Ok((metadata, _)) = crate::skills::zip_parser::parse_skill_md(skill_md) {
-                            let _ = data.skill_registry.delete_skill(&metadata.name);
-                        }
+                    if let Some(skill_name) = get_module_skill_name(module) {
+                        let _ = data.skill_registry.delete_skill(&skill_name);
                     }
                     kill_service_on_port(module.default_port());
                 }
@@ -298,11 +357,8 @@ async fn module_action(
             }
 
             // Ensure the module's skill is created and enabled
-            if let Some(skill_md) = module.skill_content() {
-                let _ = data.skill_registry.create_skill_from_markdown(skill_md);
-                if let Ok((metadata, _)) = crate::skills::zip_parser::parse_skill_md(skill_md) {
-                    data.skill_registry.set_enabled(&metadata.name, true);
-                }
+            if let Some(db_skill) = load_module_skill(module, &data.skill_registry).await {
+                data.skill_registry.set_enabled(&db_skill.name, true);
             }
 
             match data.db.set_module_enabled(&name, true) {
@@ -329,10 +385,8 @@ async fn module_action(
             {
                 let registry = crate::modules::ModuleRegistry::new();
                 if let Some(module) = registry.get(&name) {
-                    if let Some(skill_md) = module.skill_content() {
-                        if let Ok((metadata, _)) = crate::skills::zip_parser::parse_skill_md(skill_md) {
-                            data.skill_registry.set_enabled(&metadata.name, false);
-                        }
+                    if let Some(skill_name) = get_module_skill_name(module) {
+                        data.skill_registry.set_enabled(&skill_name, false);
                     }
                     kill_service_on_port(module.default_port());
                 }
@@ -498,19 +552,14 @@ async fn reload_modules(data: web::Data<AppState>, _req: HttpRequest) -> HttpRes
                     }
                 }
                 // Ensure skill is created and enabled
-                if let Some(skill_md) = module.skill_content() {
-                    let _ = data.skill_registry.create_skill_from_markdown(skill_md);
-                    if let Ok((metadata, _)) = crate::skills::zip_parser::parse_skill_md(skill_md) {
-                        data.skill_registry.set_enabled(&metadata.name, true);
-                    }
+                if let Some(db_skill) = load_module_skill(module, &data.skill_registry).await {
+                    data.skill_registry.set_enabled(&db_skill.name, true);
                 }
                 activated.push(entry.module_name.clone());
             } else {
                 // Ensure skill is disabled for disabled modules
-                if let Some(skill_md) = module.skill_content() {
-                    if let Ok((metadata, _)) = crate::skills::zip_parser::parse_skill_md(skill_md) {
-                        data.skill_registry.set_enabled(&metadata.name, false);
-                    }
+                if let Some(skill_name) = get_module_skill_name(module) {
+                    data.skill_registry.set_enabled(&skill_name, false);
                 }
                 deactivated.push(entry.module_name.clone());
             }
@@ -782,6 +831,10 @@ async fn fetch_remote(
                                 match client.download_module_file(username, slug, &file_info.file_name).await {
                                     Ok(content) => {
                                         let file_path = module_dir.join(&file_info.file_name);
+                                        // Ensure parent directories exist for nested paths (e.g. agent/hooks/foo.md)
+                                        if let Some(parent) = file_path.parent() {
+                                            let _ = std::fs::create_dir_all(parent);
+                                        }
                                         if let Err(e) = std::fs::write(&file_path, &content) {
                                             log::error!("[MODULE] Failed to write file '{}': {}", file_info.file_name, e);
                                         } else {
@@ -1039,11 +1092,18 @@ async fn upload_module(
             // Hot-activate: register tools immediately
             activate_module(&data, &module_name).await;
 
-            // Install bundled skill if present
+            // Install bundled skill if present (prefer skill_dir, fall back to content_file)
             if let Some(ref skill_cfg) = manifest.skill {
-                let skill_path = module_dir.join(&skill_cfg.content_file);
-                if let Ok(skill_content) = std::fs::read_to_string(&skill_path) {
-                    let _ = data.skill_registry.create_skill_from_markdown(&skill_content);
+                if let Some(ref dir) = skill_cfg.skill_dir {
+                    let skill_dir = module_dir.join(dir);
+                    if skill_dir.is_dir() {
+                        let _ = data.skill_registry.create_skill_from_module_dir(&skill_dir).await;
+                    }
+                } else if let Some(ref content_file) = skill_cfg.content_file {
+                    let skill_path = module_dir.join(content_file);
+                    if let Ok(skill_content) = std::fs::read_to_string(&skill_path) {
+                        let _ = data.skill_registry.create_skill_from_markdown(&skill_content);
+                    }
                 }
             }
 
@@ -1166,31 +1226,53 @@ async fn publish_to_hub(
         .unwrap_or(&name)
         .to_string();
 
-    // Upload additional files (everything except module.toml)
+    // Upload additional files (everything except module.toml), recursing into subdirectories
     let mut uploaded_files = Vec::new();
     let mut skipped_files = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&module_dir) {
-        for entry in entries.flatten() {
-            let file_name = entry.file_name().to_string_lossy().to_string();
-            if file_name == "module.toml" || !entry.path().is_file() {
-                continue;
-            }
-            match std::fs::read_to_string(entry.path()) {
-                Ok(content) => {
-                    match client
-                        .upload_module_file(&username, &slug, &file_name, &content, &auth_token)
-                        .await
-                    {
-                        Ok(_) => uploaded_files.push(file_name),
-                        Err(e) => {
-                            log::warn!("[MODULE] Failed to upload file '{}': {}", file_name, e);
-                            skipped_files.push(file_name);
+    {
+        let mut dirs_to_visit = vec![module_dir.clone()];
+        while let Some(dir) = dirs_to_visit.pop() {
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        // Skip hidden directories and __pycache__
+                        let dir_name = entry.file_name().to_string_lossy().to_string();
+                        if !dir_name.starts_with('.') && dir_name != "__pycache__" {
+                            dirs_to_visit.push(path);
+                        }
+                        continue;
+                    }
+                    // Get path relative to module_dir
+                    let rel_path = match path.strip_prefix(&module_dir) {
+                        Ok(rel) => rel.to_string_lossy().to_string(),
+                        Err(_) => continue,
+                    };
+                    if rel_path == "module.toml" {
+                        continue;
+                    }
+                    // Skip common non-text files
+                    if rel_path.ends_with(".db") || rel_path.ends_with(".pyc") {
+                        continue;
+                    }
+                    match std::fs::read_to_string(&path) {
+                        Ok(content) => {
+                            match client
+                                .upload_module_file(&username, &slug, &rel_path, &content, &auth_token)
+                                .await
+                            {
+                                Ok(_) => uploaded_files.push(rel_path),
+                                Err(e) => {
+                                    log::warn!("[MODULE] Failed to upload file '{}': {}", rel_path, e);
+                                    skipped_files.push(rel_path);
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            log::warn!("[MODULE] Skipping binary file '{}' (not UTF-8)", rel_path);
+                            skipped_files.push(rel_path);
                         }
                     }
-                }
-                Err(_) => {
-                    log::warn!("[MODULE] Skipping binary file '{}' (not UTF-8)", file_name);
-                    skipped_files.push(file_name);
                 }
             }
         }
@@ -1209,6 +1291,16 @@ async fn publish_to_hub(
     HttpResponse::Ok().json(resp)
 }
 
+/// GET /api/modules/{name}/logs — return captured service stdout/stderr lines.
+async fn module_logs(path: web::Path<String>) -> HttpResponse {
+    let name = path.into_inner();
+    let lines = crate::modules::service_logs::read_lines(&name);
+    HttpResponse::Ok().json(serde_json::json!({
+        "module": name,
+        "lines": lines,
+    }))
+}
+
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/api/modules")
@@ -1219,6 +1311,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
             .route("/fetch_remote", web::post().to(fetch_remote))
             .route("/publish/{name}", web::post().to(publish_to_hub))
             .route("/{name}/dashboard", web::get().to(module_dashboard))
+            .route("/{name}/logs", web::get().to(module_logs))
             .route("/{name}/status", web::get().to(module_status))
             .route("/{name}/proxy/{path:.*}", web::get().to(module_proxy))
             .route("/{name}/proxy/{path:.*}", web::post().to(module_proxy_post))

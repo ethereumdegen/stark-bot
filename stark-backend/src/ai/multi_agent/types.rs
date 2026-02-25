@@ -17,6 +17,9 @@ pub struct PersonaHook {
     /// Prompt template with {variable} placeholders, loaded from hooks/{event}.md
     #[serde(default)]
     pub prompt_template: String,
+    /// When true, hook sessions run in safe mode (restricted tools)
+    #[serde(default)]
+    pub safe_mode: bool,
 }
 
 // =====================================================
@@ -117,6 +120,29 @@ pub fn default_subtype_key() -> String {
         .first()
         .map(|c| c.key.clone())
         .unwrap_or_default()
+}
+
+/// Set the enabled state of a subtype by key. Returns true if the subtype was found.
+pub fn set_agent_enabled(key: &str, enabled: bool) -> bool {
+    let mut reg = registry().write();
+    if let Some(config) = reg.iter_mut().find(|c| c.key == key) {
+        config.enabled = enabled;
+        log::info!("[SUBTYPE_REGISTRY] Set agent '{}' enabled={}", key, enabled);
+        true
+    } else {
+        false
+    }
+}
+
+/// Add or replace a subtype config in the registry.
+/// Used when module agents are seeded at runtime.
+pub fn upsert_subtype_config(config: AgentSubtypeConfig) {
+    let mut reg = registry().write();
+    if let Some(existing) = reg.iter_mut().find(|c| c.key == config.key) {
+        *existing = config;
+    } else {
+        reg.push(config);
+    }
 }
 
 /// Check if the registry has been populated.

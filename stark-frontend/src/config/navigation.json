@@ -41,7 +41,6 @@
         { "to": "/tools", "icon": "Wrench", "label": "Tools" },
         { "to": "/skills", "icon": "Zap", "label": "Skills" },
         { "to": "/modules", "icon": "Package", "label": "Modules" },
-        { "to": "/logs", "icon": "ScrollText", "label": "Live Logs" },
         { "to": "/system", "icon": "HardDrive", "label": "System" },
         { "to": "/debug", "icon": "Bug", "label": "Debug" },
         { "to": "/payments", "icon": "DollarSign", "label": "Payments" },

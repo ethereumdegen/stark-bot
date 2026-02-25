@@ -556,14 +556,24 @@ impl Tool for ManageModulesTool {
                     None, // no checksum
                 ) {
                     Ok(_) => {
-                        // Install bundled skill if present
+                        // Install bundled skill if present (prefer skill_dir, fall back to content_file)
                         if let Some(ref skill_cfg) = manifest.skill {
-                            let skill_path = module_dir.join(&skill_cfg.content_file);
-                            if let Ok(skill_content) = std::fs::read_to_string(&skill_path) {
-                                if let Some(skill_registry) = context.skill_registry.as_ref() {
-                                    match skill_registry.create_skill_from_markdown(&skill_content) {
-                                        Ok(_) => log::info!("[MODULE] Installed skill from module '{}'", module_name),
-                                        Err(e) => log::warn!("[MODULE] Failed to install skill from module '{}': {}", module_name, e),
+                            if let Some(skill_registry) = context.skill_registry.as_ref() {
+                                if let Some(ref dir) = skill_cfg.skill_dir {
+                                    let skill_dir = module_dir.join(dir);
+                                    if skill_dir.is_dir() {
+                                        match skill_registry.create_skill_from_module_dir(&skill_dir).await {
+                                            Ok(_) => log::info!("[MODULE] Installed skill from module '{}' (skill dir)", module_name),
+                                            Err(e) => log::warn!("[MODULE] Failed to install skill dir from module '{}': {}", module_name, e),
+                                        }
+                                    }
+                                } else if let Some(ref content_file) = skill_cfg.content_file {
+                                    let skill_path = module_dir.join(content_file);
+                                    if let Ok(skill_content) = std::fs::read_to_string(&skill_path) {
+                                        match skill_registry.create_skill_from_markdown(&skill_content) {
+                                            Ok(_) => log::info!("[MODULE] Installed skill from module '{}'", module_name),
+                                            Err(e) => log::warn!("[MODULE] Failed to install skill from module '{}': {}", module_name, e),
+                                        }
                                     }
                                 }
                             }

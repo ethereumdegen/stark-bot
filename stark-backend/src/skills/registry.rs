@@ -240,6 +240,57 @@ impl SkillRegistry {
             .ok_or_else(|| "Skill not found after creation".to_string())
     }
 
+    /// Create a skill from a module's skill directory (full skill folder with scripts, ABIs, etc.)
+    /// Finds the `.md` file inside the dir, loads it via the standard file-based loader,
+    /// and imports into DB — full parity with a normal skill folder.
+    pub async fn create_skill_from_module_dir(&self, skill_dir: &Path) -> Result<DbSkill, String> {
+        use crate::skills::loader::load_skill_from_file_with_dir;
+
+        // Find the .md file: prefer {dirname}.md, then SKILL.md, then first *.md
+        let dir_name = skill_dir.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        let named_md = skill_dir.join(format!("{}.md", dir_name));
+        let skill_md = skill_dir.join("SKILL.md");
+
+        let md_path = if named_md.exists() {
+            named_md
+        } else if skill_md.exists() {
+            skill_md
+        } else {
+            // Scan for first .md file
+            let mut found = None;
+            if let Ok(entries) = std::fs::read_dir(skill_dir) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.extension().map_or(false, |e| e == "md") && p.is_file() {
+                        found = Some(p);
+                        break;
+                    }
+                }
+            }
+            found.ok_or_else(|| format!("No .md file found in skill dir {}", skill_dir.display()))?
+        };
+
+        // Load the skill using the standard loader (sets skill_dir for script/ABI discovery)
+        let skill = load_skill_from_file_with_dir(
+            &md_path,
+            SkillSource::Managed,
+            Some(skill_dir.to_path_buf()),
+        ).await.map_err(|e| format!("Failed to load skill from {}: {}", md_path.display(), e))?;
+
+        // Import into DB (handles scripts, ABIs, presets)
+        self.import_file_skill(&skill)
+            .map_err(|e| format!("Failed to import skill '{}': {}", skill.metadata.name, e))?;
+
+        // Return the DB skill
+        self.db
+            .get_skill(&skill.metadata.name)
+            .map_err(|e| format!("Failed to retrieve skill: {}", e))?
+            .ok_or_else(|| "Skill not found after creation".to_string())
+    }
+
     /// Delete a skill from disk AND database
     pub fn delete_skill(&self, name: &str) -> Result<bool, String> {
         // Delete from disk (idempotent — safe if already removed)

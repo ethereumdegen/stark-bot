@@ -249,13 +249,35 @@ fn load_hooks_from_directory(agent_dir: &Path, config: &mut AgentSubtypeConfig) 
         if content.is_empty() {
             continue;
         }
+
+        // Parse optional YAML frontmatter (--- delimited) for hook settings
+        let mut safe_mode = false;
+        let prompt_template = if content.starts_with("---") {
+            if let Some(end) = content[3..].find("---") {
+                let frontmatter = &content[3..3 + end];
+                // Simple key: value parsing for safe_mode
+                for line in frontmatter.lines() {
+                    let line = line.trim();
+                    if let Some(val) = line.strip_prefix("safe_mode:") {
+                        safe_mode = val.trim().eq_ignore_ascii_case("true");
+                    }
+                }
+                content[3 + end + 3..].trim().to_string()
+            } else {
+                content
+            }
+        } else {
+            content
+        };
+
         log::info!(
-            "[AGENTS] Loaded hook '{}' for agent '{}' from {}",
-            event, config.key, path.display()
+            "[AGENTS] Loaded hook '{}' for agent '{}' from {} (safe_mode={})",
+            event, config.key, path.display(), safe_mode
         );
         config.hooks.push(PersonaHook {
             event,
-            prompt_template: content,
+            prompt_template,
+            safe_mode,
         });
     }
 }

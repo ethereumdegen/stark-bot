@@ -41,9 +41,9 @@ export default function BotSettings() {
   const [embeddingsServerUrl, setEmbeddingsServerUrl] = useState('');
   const [servicesHealth, setServicesHealth] = useState<ServicesHealth | null>(null);
   const [servicesHealthLoading, setServicesHealthLoading] = useState(false);
-  const [compactionBackgroundThreshold, setCompactionBackgroundThreshold] = useState(60);
-  const [compactionAggressiveThreshold, setCompactionAggressiveThreshold] = useState(80);
-  const [compactionEmergencyThreshold, setCompactionEmergencyThreshold] = useState(95);
+  const [compactionBackgroundThreshold, setCompactionBackgroundThreshold] = useState(0.80);
+  const [compactionAggressiveThreshold, setCompactionAggressiveThreshold] = useState(0.85);
+  const [compactionEmergencyThreshold, setCompactionEmergencyThreshold] = useState(0.95);
   const [themeAccent, setThemeAccent] = useState(() => localStorage.getItem('theme-accent') || '');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -131,9 +131,9 @@ export default function BotSettings() {
       setProxyUrl(data.proxy_url || '');
       setWhisperServerUrl(data.whisper_server_url || '');
       setEmbeddingsServerUrl(data.embeddings_server_url || '');
-      setCompactionBackgroundThreshold(data.compaction_background_threshold ?? 60);
-      setCompactionAggressiveThreshold(data.compaction_aggressive_threshold ?? 80);
-      setCompactionEmergencyThreshold(data.compaction_emergency_threshold ?? 95);
+      setCompactionBackgroundThreshold(data.compaction_background_threshold ?? 0.80);
+      setCompactionAggressiveThreshold(data.compaction_aggressive_threshold ?? 0.85);
+      setCompactionEmergencyThreshold(data.compaction_emergency_threshold ?? 0.95);
       // Sync theme from backend (backend is source of truth, update localStorage to match)
       const serverTheme = data.theme_accent || '';
       setThemeAccent(serverTheme);
@@ -655,39 +655,42 @@ export default function BotSettings() {
           </CardHeader>
           <CardContent className="space-y-4">
             <Input
-              label="Background Threshold (%)"
+              label="Background Threshold (0.0 – 1.0)"
               type="number"
               min={0}
-              max={100}
+              max={1}
+              step={0.01}
               value={compactionBackgroundThreshold}
-              onChange={(e) => setCompactionBackgroundThreshold(parseInt(e.target.value) || 60)}
+              onChange={(e) => setCompactionBackgroundThreshold(parseFloat(e.target.value) || 0.80)}
             />
             <p className="text-xs text-slate-500 -mt-2">
-              Context usage percentage at which background compaction begins to summarize older messages.
+              Context usage ratio at which background compaction begins to summarize older messages. Default: 0.80
             </p>
 
             <Input
-              label="Aggressive Threshold (%)"
+              label="Aggressive Threshold (0.0 – 1.0)"
               type="number"
               min={0}
-              max={100}
+              max={1}
+              step={0.01}
               value={compactionAggressiveThreshold}
-              onChange={(e) => setCompactionAggressiveThreshold(parseInt(e.target.value) || 80)}
+              onChange={(e) => setCompactionAggressiveThreshold(parseFloat(e.target.value) || 0.85)}
             />
             <p className="text-xs text-slate-500 -mt-2">
-              Context usage percentage at which aggressive compaction kicks in to free up space more aggressively.
+              Context usage ratio at which aggressive compaction kicks in to free up space. Default: 0.85
             </p>
 
             <Input
-              label="Emergency Threshold (%)"
+              label="Emergency Threshold (0.0 – 1.0)"
               type="number"
               min={0}
-              max={100}
+              max={1}
+              step={0.01}
               value={compactionEmergencyThreshold}
-              onChange={(e) => setCompactionEmergencyThreshold(parseInt(e.target.value) || 95)}
+              onChange={(e) => setCompactionEmergencyThreshold(parseFloat(e.target.value) || 0.95)}
             />
             <p className="text-xs text-slate-500 -mt-2">
-              Context usage percentage at which emergency compaction drops non-essential context to prevent overflow.
+              Context usage ratio at which emergency compaction drops non-essential context to prevent overflow. Default: 0.95
             </p>
           </CardContent>
         </Card>

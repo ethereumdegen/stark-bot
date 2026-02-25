@@ -251,6 +251,113 @@ pub fn seed_agents() -> std::io::Result<()> {
     Ok(())
 }
 
+/// Seed runtime agents directory from module agent folders.
+/// Scans runtime_modules_dir() for modules containing `agent/agent.md`,
+/// and copies them to runtime_agents_dir() using version-gated logic.
+pub fn seed_module_agents() -> std::io::Result<()> {
+    let modules_dir = runtime_modules_dir();
+    let runtime = runtime_agents_dir();
+
+    if !modules_dir.exists() {
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(&runtime)?;
+
+    let entries = std::fs::read_dir(&modules_dir)?;
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let file_type = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(_) => continue,
+        };
+        if !file_type.is_dir() || file_type.is_symlink() {
+            continue;
+        }
+
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy().to_string();
+
+        // Check for agent/ subdirectory with agent.md
+        let agent_src = entry.path().join("agent");
+        if !agent_src.join("agent.md").exists() {
+            continue;
+        }
+
+        let runtime_agent = runtime.join(&name);
+
+        let should_copy = if runtime_agent.exists() {
+            let bundled_version = extract_version_from_agent_dir(&agent_src);
+            let runtime_version = extract_version_from_agent_dir(&runtime_agent);
+
+            match (bundled_version, runtime_version) {
+                (Some(bv), Some(rv)) => {
+                    if semver_is_newer(&bv, &rv) {
+                        log::info!(
+                            "Upgrading module agent '{}' from v{} to v{}", name_str, rv, bv
+                        );
+                        true
+                    } else {
+                        false
+                    }
+                }
+                (Some(bv), None) => {
+                    log::info!(
+                        "Upgrading module agent '{}' (module has v{}, runtime has no version)",
+                        name_str, bv
+                    );
+                    true
+                }
+                _ => false,
+            }
+        } else {
+            log::info!("Seeding module agent '{}' from module dir", name_str);
+            true
+        };
+
+        if should_copy {
+            if runtime_agent.exists() {
+                let tmp_name = format!(".{}.seed_tmp", name_str);
+                let tmp_dir = runtime.join(&tmp_name);
+                if tmp_dir.exists() {
+                    let _ = std::fs::remove_dir_all(&tmp_dir);
+                }
+                match copy_dir_recursive(&agent_src, &tmp_dir) {
+                    Ok(()) => {
+                        if let Err(e) = std::fs::remove_dir_all(&runtime_agent) {
+                            log::error!("Failed to remove old module agent '{}': {}", name_str, e);
+                            let _ = std::fs::remove_dir_all(&tmp_dir);
+                            continue;
+                        }
+                        if let Err(e) = std::fs::rename(&tmp_dir, &runtime_agent) {
+                            log::error!("Failed to rename temp dir for module agent '{}': {}", name_str, e);
+                            continue;
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to copy module agent '{}': {}", name_str, e);
+                        let _ = std::fs::remove_dir_all(&tmp_dir);
+                        continue;
+                    }
+                }
+            } else {
+                if let Err(e) = copy_dir_recursive(&agent_src, &runtime_agent) {
+                    log::error!("Failed to seed module agent '{}': {}", name_str, e);
+                    let _ = std::fs::remove_dir_all(&runtime_agent);
+                    continue;
+                }
+            }
+        }
+    }
+
+    log::info!("Module agent seeding complete");
+    Ok(())
+}
+
 /// Get the notes directory from environment or default
 pub fn notes_dir() -> String {
     resolve_backend_dir(env_vars::NOTES_DIR, defaults::NOTES_DIR)

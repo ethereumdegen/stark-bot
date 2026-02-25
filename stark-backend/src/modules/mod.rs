@@ -9,6 +9,7 @@ pub mod dynamic_tool;
 pub mod loader;
 pub mod manifest;
 pub mod registry;
+pub mod service_logs;
 pub mod zip_parser;
 
 use async_trait::async_trait;
@@ -95,9 +96,19 @@ pub trait Module: Send + Sync {
         None
     }
 
+    /// Optional: path to a full skill folder (with .md, scripts, ABIs, etc.)
+    fn skill_dir(&self) -> Option<&PathBuf> {
+        None
+    }
+
+    /// Optional: path to an agent folder (with agent.md + hooks/)
+    fn agent_dir(&self) -> Option<&PathBuf> {
+        None
+    }
+
     /// Whether this module provides a skill
     fn has_skill(&self) -> bool {
-        self.skill_content().is_some()
+        self.skill_content().is_some() || self.skill_dir().is_some()
     }
 
     /// Return dashboard data as JSON (fetched from the service via RPC)

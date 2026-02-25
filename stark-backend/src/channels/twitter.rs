@@ -559,16 +559,40 @@ pub async fn start_twitter_listener(
                                     }
                                 );
 
-                                // Determine safe mode: admin gets standard mode, everyone else gets safe mode.
-                                // When no admin is configured, all tweets are safe mode.
-                                // (is_admin was computed above, before rate limit check)
-                                let force_safe_mode = !is_admin;
+                                // Fire twitter_mentioned hooks (community_manager, etc.)
+                                crate::persona_hooks::fire_twitter_mentioned_hooks(
+                                    &mention.id,
+                                    &mention.author_id,
+                                    &author_username,
+                                    &mention.text,
+                                    mention.conversation_id.as_deref(),
+                                    &dispatcher,
+                                ).await;
 
-                                if is_admin {
-                                    log::info!("Twitter: @{} is admin — using standard mode", author_username);
-                                } else {
-                                    log::info!("Twitter: @{} is not admin — using safe mode", author_username);
+                                // Non-admin mentions: hooks only, no gateway auto-reply.
+                                // Replies are handled by the `twitter_mentioned` persona hook —
+                                // configure an agent with a `hooks/twitter_mentioned.md` template
+                                // to reply to mentions.
+                                if !is_admin {
+                                    log::info!(
+                                        "Twitter: @{} is not admin — hooks fired, skipping gateway reply",
+                                        author_username
+                                    );
+                                    if let Err(e) = db.mark_tweet_processed(
+                                        &mention.id,
+                                        channel_id,
+                                        &mention.author_id,
+                                        &author_username,
+                                        &mention.text,
+                                    ) {
+                                        log::error!("Twitter: Failed to mark tweet {} as processed: {}", mention.id, e);
+                                    }
+                                    since_id = Some(mention.id.clone());
+                                    continue;
                                 }
+
+                                // Admin mentions: full gateway flow (process_mention → post_reply)
+                                log::info!("Twitter: @{} is admin — using standard mode", author_username);
 
                                 // Process the mention
                                 let response = process_mention(
@@ -576,7 +600,7 @@ pub async fn start_twitter_listener(
                                     &author_username,
                                     &config,
                                     channel_id,
-                                    force_safe_mode,
+                                    false, // admin = standard mode
                                     &dispatcher,
                                     &broadcaster,
                                     &bot_mention_regex,

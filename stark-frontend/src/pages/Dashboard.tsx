@@ -117,22 +117,22 @@ export default function Dashboard() {
 
   return (
     <div className="p-8">
-      <div className="mb-8 flex items-start justify-between">
+      <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white mb-2">Dashboard</h1>
           <p className="text-slate-400">Overview of your StarkBot instance</p>
         </div>
 
         {isConnected && address && (
-          <div className="flex flex-col items-end gap-1">
-            <div className="flex items-center gap-2 bg-slate-700/50 px-3 py-1.5 rounded-lg">
-              <Wallet className="w-4 h-4 text-slate-400" />
-              <span className="text-sm font-mono text-slate-300">
+          <div className="flex flex-col items-start sm:items-end gap-1 min-w-0">
+            <div className="flex items-center gap-2 bg-slate-700/50 px-3 py-1.5 rounded-lg overflow-hidden">
+              <Wallet className="w-4 h-4 text-slate-400 flex-shrink-0" />
+              <span className="text-sm font-mono text-slate-300 truncate">
                 {address}
               </span>
               <button
                 onClick={copyAddress}
-                className="text-slate-400 hover:text-slate-200 transition-colors"
+                className="text-slate-400 hover:text-slate-200 transition-colors flex-shrink-0"
                 title="Copy address"
               >
                 {copied ? (
@@ -142,7 +142,7 @@ export default function Dashboard() {
                 )}
               </button>
               {walletMode === 'flash' && (
-                <span className="text-xs px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded font-medium ml-1">
+                <span className="text-xs px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded font-medium ml-1 flex-shrink-0">
                   Flash
                 </span>
               )}

@@ -151,16 +151,19 @@ impl ChannelSettingKey {
                  Higher values reduce API usage but increase response latency."
             }
             Self::TwitterReplyChance => {
-                "Percentage chance of replying to each mention. Use lower values to avoid \
-                 appearing spammy. For example, 10% means roughly 1 in 10 mentions gets a reply."
+                "Percentage chance of processing each non-admin mention. \
+                 Non-admin mentions are not auto-replied to by the gateway — they trigger \
+                 the twitter_mentioned hook instead. Configure an agent persona with a \
+                 hooks/twitter_mentioned.md template to reply to mentions."
             }
             Self::TwitterMaxMentionsPerHour => {
-                "Maximum number of mentions to reply to per hour. Once the limit is reached, \
+                "Maximum number of mentions to process per hour. Once the limit is reached, \
                  remaining mentions are skipped until the next hour. Set to 0 for unlimited."
             }
             Self::TwitterAdminXAccount => {
-                "Numeric X (Twitter) user ID of an admin account. Tweets from this account \
-                 will use a standard channel with full tool access instead of the restricted safe mode. \
+                "Numeric X (Twitter) user ID of an admin account. Admin tweets get a direct \
+                 gateway reply with full tool access. Non-admin mentions only fire the \
+                 twitter_mentioned hook — configure an agent persona to handle replies. \
                  Use the numeric ID (not the handle) for security — handles can be changed or spoofed. \
                  Find your ID at tweeterid.com. \
                  WARNING: This account will have full agent access — only set this to an account you control."
