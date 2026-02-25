@@ -646,6 +646,74 @@ impl SkillRegistry {
             .ok_or_else(|| "Skill not found after restore".to_string())
     }
 
+    // -----------------------------------------------------------------------
+    // Module skill helpers — single entry points for sync/disable/delete
+    // -----------------------------------------------------------------------
+
+    /// Resolve the skill name embedded in a module's skill markdown.
+    fn resolve_module_skill_name(module: &dyn crate::modules::Module) -> Option<String> {
+        if let Some(skill_dir) = module.skill_dir() {
+            let dir_name = skill_dir.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let named_md = skill_dir.join(format!("{}.md", dir_name));
+            let skill_md = skill_dir.join("SKILL.md");
+            let md_path = if named_md.exists() { named_md } else if skill_md.exists() { skill_md } else { return None };
+            if let Ok(content) = std::fs::read_to_string(&md_path) {
+                if let Ok((meta, _)) = crate::skills::zip_parser::parse_skill_md(&content) {
+                    return Some(meta.name);
+                }
+            }
+        }
+        if let Some(skill_md) = module.skill_content() {
+            if let Ok((meta, _)) = crate::skills::zip_parser::parse_skill_md(skill_md) {
+                return Some(meta.name);
+            }
+        }
+        None
+    }
+
+    /// Load (or reload) a module's skill into the DB and enable it.
+    /// Call this after install or enable.
+    pub async fn sync_module_skill(&self, module_name: &str) {
+        let registry = crate::modules::ModuleRegistry::new();
+        let module = match registry.get(module_name) {
+            Some(m) => m,
+            None => return,
+        };
+        if let Some(skill_dir) = module.skill_dir() {
+            match self.create_skill_from_module_dir(skill_dir).await {
+                Ok(s) => { self.set_enabled(&s.name, true); }
+                Err(e) => log::warn!("Failed to sync skill for module '{}': {}", module_name, e),
+            }
+        } else if let Some(skill_md) = module.skill_content() {
+            match self.create_skill_from_markdown(skill_md) {
+                Ok(s) => { self.set_enabled(&s.name, true); }
+                Err(e) => log::warn!("Failed to sync skill for module '{}': {}", module_name, e),
+            }
+        }
+    }
+
+    /// Disable a module's skill without deleting it.
+    pub fn disable_module_skill(&self, module_name: &str) {
+        let registry = crate::modules::ModuleRegistry::new();
+        if let Some(module) = registry.get(module_name) {
+            if let Some(skill_name) = Self::resolve_module_skill_name(module.as_ref()) {
+                self.set_enabled(&skill_name, false);
+            }
+        }
+    }
+
+    /// Delete a module's skill entirely.
+    pub fn delete_module_skill(&self, module_name: &str) {
+        let registry = crate::modules::ModuleRegistry::new();
+        if let Some(module) = registry.get(module_name) {
+            if let Some(skill_name) = Self::resolve_module_skill_name(module.as_ref()) {
+                let _ = self.delete_skill(&skill_name);
+            }
+        }
+    }
+
     /// Search skills by name or tag
     pub fn search(&self, query: &str) -> Vec<Skill> {
         let query_lower = query.to_lowercase();

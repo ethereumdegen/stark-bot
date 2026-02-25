@@ -10,59 +10,6 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use crate::AppState;
 
-/// Load (or create) a module's skill using either skill_dir or skill_content.
-/// Returns the DbSkill on success.
-async fn load_module_skill(
-    module: &dyn crate::modules::Module,
-    skill_registry: &crate::skills::SkillRegistry,
-) -> Option<crate::skills::types::DbSkill> {
-    // Prefer skill_dir (full skill folder with scripts, ABIs, etc.)
-    if let Some(skill_dir) = module.skill_dir() {
-        match skill_registry.create_skill_from_module_dir(skill_dir).await {
-            Ok(s) => return Some(s),
-            Err(e) => {
-                log::warn!("[MODULE] Failed to load skill dir for '{}': {}", module.name(), e);
-            }
-        }
-    }
-    // Fall back to skill_content (legacy flat markdown)
-    if let Some(skill_md) = module.skill_content() {
-        match skill_registry.create_skill_from_markdown(skill_md) {
-            Ok(s) => return Some(s),
-            Err(e) => {
-                log::warn!("[MODULE] Failed to load skill from '{}': {}", module.name(), e);
-            }
-        }
-    }
-    None
-}
-
-/// Get the skill name from a module (for delete/enable/disable operations).
-/// Checks skill_dir first (parses the .md frontmatter), then falls back to skill_content.
-fn get_module_skill_name(module: &dyn crate::modules::Module) -> Option<String> {
-    // Check skill_dir first
-    if let Some(skill_dir) = module.skill_dir() {
-        let dir_name = skill_dir.file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let named_md = skill_dir.join(format!("{}.md", dir_name));
-        let skill_md_path = skill_dir.join("SKILL.md");
-        let md_path = if named_md.exists() { named_md } else if skill_md_path.exists() { skill_md_path } else { return None };
-        if let Ok(content) = std::fs::read_to_string(&md_path) {
-            if let Ok((metadata, _)) = crate::skills::zip_parser::parse_skill_md(&content) {
-                return Some(metadata.name);
-            }
-        }
-    }
-    // Fall back to skill_content
-    if let Some(skill_md) = module.skill_content() {
-        if let Ok((metadata, _)) = crate::skills::zip_parser::parse_skill_md(skill_md) {
-            return Some(metadata.name);
-        }
-    }
-    None
-}
-
 /// Kill the service process listening on a given port (if any).
 fn kill_service_on_port(port: u16) {
     let output = std::process::Command::new("lsof")
@@ -290,8 +237,8 @@ async fn module_action(
                 module.has_dashboard(),
             ) {
                 Ok(_) => {
-                    // Install skill if provided (prefer skill_dir, fall back to skill_content)
-                    load_module_skill(module, &data.skill_registry).await;
+                    // Install skill if provided
+                    data.skill_registry.sync_module_skill(&name).await;
 
                     // Hot-activate: register tools immediately
                     activate_module(&data, &name).await;
@@ -316,11 +263,9 @@ async fn module_action(
 
             // Delete module skill and kill the service process
             {
+                data.skill_registry.delete_module_skill(&name);
                 let registry = crate::modules::ModuleRegistry::new();
                 if let Some(module) = registry.get(&name) {
-                    if let Some(skill_name) = get_module_skill_name(module) {
-                        let _ = data.skill_registry.delete_skill(&skill_name);
-                    }
                     kill_service_on_port(module.default_port());
                 }
             }
@@ -357,9 +302,7 @@ async fn module_action(
             }
 
             // Ensure the module's skill is created and enabled
-            if let Some(db_skill) = load_module_skill(module, &data.skill_registry).await {
-                data.skill_registry.set_enabled(&db_skill.name, true);
-            }
+            data.skill_registry.sync_module_skill(&name).await;
 
             match data.db.set_module_enabled(&name, true) {
                 Ok(true) | Ok(false) => {
@@ -383,11 +326,9 @@ async fn module_action(
 
             // Disable module skill and kill the service process
             {
+                data.skill_registry.disable_module_skill(&name);
                 let registry = crate::modules::ModuleRegistry::new();
                 if let Some(module) = registry.get(&name) {
-                    if let Some(skill_name) = get_module_skill_name(module) {
-                        data.skill_registry.set_enabled(&skill_name, false);
-                    }
                     kill_service_on_port(module.default_port());
                 }
             }
@@ -552,15 +493,11 @@ async fn reload_modules(data: web::Data<AppState>, _req: HttpRequest) -> HttpRes
                     }
                 }
                 // Ensure skill is created and enabled
-                if let Some(db_skill) = load_module_skill(module, &data.skill_registry).await {
-                    data.skill_registry.set_enabled(&db_skill.name, true);
-                }
+                data.skill_registry.sync_module_skill(&entry.module_name).await;
                 activated.push(entry.module_name.clone());
             } else {
                 // Ensure skill is disabled for disabled modules
-                if let Some(skill_name) = get_module_skill_name(module) {
-                    data.skill_registry.set_enabled(&skill_name, false);
-                }
+                data.skill_registry.disable_module_skill(&entry.module_name);
                 deactivated.push(entry.module_name.clone());
             }
         }

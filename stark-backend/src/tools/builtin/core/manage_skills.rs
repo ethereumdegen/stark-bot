@@ -29,7 +29,7 @@ impl ManageSkillsTool {
             "action".to_string(),
             PropertySchema {
                 schema_type: "string".to_string(),
-                description: "The action to perform: 'list', 'get', 'install', 'update', 'enable', 'disable', 'delete', or 'search'. Use 'update' to modify an existing skill (bypasses version checks).".to_string(),
+                description: "The action to perform: 'list', 'get', 'install', 'update', 'enable', 'disable', 'delete', 'search', or 'reload'. Use 'update' to modify an existing skill (bypasses version checks). Use 'reload' to re-sync skills from disk (picks up manually added skill files).".to_string(),
                 default: None,
                 items: None,
                 enum_values: Some(vec![
@@ -41,6 +41,7 @@ impl ManageSkillsTool {
                     "disable".to_string(),
                     "delete".to_string(),
                     "search".to_string(),
+                    "reload".to_string(),
                 ]),
             },
         );

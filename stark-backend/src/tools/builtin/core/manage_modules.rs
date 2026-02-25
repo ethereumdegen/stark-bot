@@ -203,13 +203,8 @@ impl Tool for ManageModulesTool {
                         }
 
                         // Install skill if module provides one
-                        if let Some(skill_md) = module.skill_content() {
-                            if let Some(skill_registry) = context.skill_registry.as_ref() {
-                                match skill_registry.create_skill_from_markdown(skill_md) {
-                                    Ok(_) => result_parts.push("Skill installed.".to_string()),
-                                    Err(e) => result_parts.push(format!("Warning: Failed to install skill: {}", e)),
-                                }
-                            }
+                        if let Some(skill_registry) = context.skill_registry.as_ref() {
+                            skill_registry.sync_module_skill(name).await;
                         }
 
                         ToolResult::success(result_parts.join("\n"))
@@ -239,10 +234,15 @@ impl Tool for ManageModulesTool {
                     None => return ToolResult::error("'name' is required for 'enable' action"),
                 };
                 match db.set_module_enabled(name, true) {
-                    Ok(true) => ToolResult::success(format!(
-                        "Module '{}' enabled. Tools are now active.",
-                        name
-                    )),
+                    Ok(true) => {
+                        if let Some(skill_registry) = context.skill_registry.as_ref() {
+                            skill_registry.sync_module_skill(name).await;
+                        }
+                        ToolResult::success(format!(
+                            "Module '{}' enabled. Tools are now active.",
+                            name
+                        ))
+                    }
                     Ok(false) => ToolResult::error(format!("Module '{}' is not installed", name)),
                     Err(e) => ToolResult::error(format!("Failed to enable: {}", e)),
                 }
@@ -254,10 +254,15 @@ impl Tool for ManageModulesTool {
                     None => return ToolResult::error("'name' is required for 'disable' action"),
                 };
                 match db.set_module_enabled(name, false) {
-                    Ok(true) => ToolResult::success(format!(
-                        "Module '{}' disabled. Tools hidden. Service continues running.",
-                        name
-                    )),
+                    Ok(true) => {
+                        if let Some(skill_registry) = context.skill_registry.as_ref() {
+                            skill_registry.disable_module_skill(name);
+                        }
+                        ToolResult::success(format!(
+                            "Module '{}' disabled. Tools hidden. Service continues running.",
+                            name
+                        ))
+                    }
                     Ok(false) => ToolResult::error(format!("Module '{}' is not installed", name)),
                     Err(e) => ToolResult::error(format!("Failed to disable: {}", e)),
                 }

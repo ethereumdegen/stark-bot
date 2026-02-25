@@ -3,8 +3,9 @@
 //! Unlike x402_agent_invoke (which uses /entrypoints/{name}/invoke pattern),
 //! this tool works with any URL that supports the x402 payment protocol.
 //!
-//! For x402book.com endpoints, automatically injects the X402BOOK_TOKEN as Bearer auth.
+//! For x402book.com endpoints, automatically signs requests with ERC-8128 wallet auth.
 
+use crate::erc8128::Erc8128Signer;
 use crate::tools::registry::Tool;
 use crate::tools::types::{
     PropertySchema, ToolContext, ToolDefinition, ToolGroup, ToolInputSchema, ToolResult,
@@ -16,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::time::Duration;
+use url::Url;
 
 /// Generic x402 POST tool
 pub struct X402PostTool {
@@ -107,13 +109,57 @@ impl X402PostTool {
         X402Signer::from_private_key(&private_key)
     }
 
-    fn get_credential(&self, key_name: &str, context: &ToolContext) -> Option<String> {
-        context.get_api_key(key_name).filter(|k| !k.is_empty())
-    }
-
     /// Check if URL is an x402book endpoint
     fn is_x402book_url(url: &str) -> bool {
         url.contains("x402book.com") || url.contains("x402book.io")
+    }
+
+    /// Sign a request with ERC-8128 for x402book URLs.
+    /// Returns (signature-input, signature, optional content-digest) headers.
+    async fn sign_erc8128(
+        context: &ToolContext,
+        method: &str,
+        url: &str,
+        body: &[u8],
+    ) -> Result<crate::erc8128::Erc8128SignedHeaders, String> {
+        let wp = context
+            .wallet_provider
+            .as_ref()
+            .ok_or("No wallet provider available for ERC-8128 signing")?;
+
+        let parsed = Url::parse(url).map_err(|e| format!("Invalid URL: {}", e))?;
+        let authority = parsed
+            .host_str()
+            .map(|h| {
+                if let Some(port) = parsed.port() {
+                    format!("{}:{}", h, port)
+                } else {
+                    h.to_string()
+                }
+            })
+            .unwrap_or_default();
+        let path = parsed.path().to_string();
+        let query = parsed.query().map(|q| q.to_string());
+
+        let signer = Erc8128Signer::new(wp.clone(), 8453);
+        let body_opt = if body.is_empty() { None } else { Some(body) };
+        signer
+            .sign_request(method, &authority, &path, query.as_deref(), body_opt)
+            .await
+    }
+
+    /// Apply ERC-8128 signed headers to a request builder.
+    fn apply_erc8128_headers(
+        mut request: reqwest::RequestBuilder,
+        signed: &crate::erc8128::Erc8128SignedHeaders,
+    ) -> reqwest::RequestBuilder {
+        request = request
+            .header("signature-input", &signed.signature_input)
+            .header("signature", &signed.signature);
+        if let Some(ref digest) = signed.content_digest {
+            request = request.header("content-digest", digest);
+        }
+        request
     }
 }
 
@@ -269,9 +315,21 @@ impl Tool for X402PostTool {
 
         log::info!("[x402_post] POST to {} with body: {:?}", params.url, params.body);
 
-        // Check if this is an x402book URL and get the token if available
-        let x402book_token = if Self::is_x402book_url(&params.url) {
-            self.get_credential("X402BOOK_TOKEN", context)
+        let is_x402book = Self::is_x402book_url(&params.url);
+        let body_bytes = serde_json::to_vec(&params.body).unwrap_or_default();
+
+        // Sign with ERC-8128 for x402book URLs
+        let erc8128_signed = if is_x402book {
+            match Self::sign_erc8128(context, "POST", &params.url, &body_bytes).await {
+                Ok(signed) => {
+                    log::info!("[x402_post] Signed request with ERC-8128 for x402book");
+                    Some(signed)
+                }
+                Err(e) => {
+                    log::warn!("[x402_post] ERC-8128 signing failed, proceeding without: {}", e);
+                    None
+                }
+            }
         } else {
             None
         };
@@ -284,10 +342,9 @@ impl Tool for X402PostTool {
             .timeout(Duration::from_secs(60))
             .header(header::CONTENT_TYPE, "application/json");
 
-        // Auto-inject x402book token as Bearer auth if available
-        if let Some(ref token) = x402book_token {
-            log::info!("[x402_post] Injecting X402BOOK_TOKEN for x402book.com");
-            request = request.header("Authorization", format!("Bearer {}", token));
+        // Apply ERC-8128 headers for x402book
+        if let Some(ref signed) = erc8128_signed {
+            request = Self::apply_erc8128_headers(request, signed);
         }
 
         for (key, value) in &params.headers {
@@ -392,6 +449,16 @@ impl Tool for X402PostTool {
 
         log::info!("[x402_post] Retrying with X-PAYMENT header");
 
+        // Re-sign with ERC-8128 for the retry (nonce/timestamps differ)
+        let retry_signed = if is_x402book {
+            match Self::sign_erc8128(context, "POST", &params.url, &body_bytes).await {
+                Ok(signed) => Some(signed),
+                Err(_) => erc8128_signed.clone(),
+            }
+        } else {
+            None
+        };
+
         // Retry with payment
         let mut paid_request = client
             .post(&params.url)
@@ -399,9 +466,9 @@ impl Tool for X402PostTool {
             .header(header::CONTENT_TYPE, "application/json")
             .header("X-PAYMENT", &payment_header);
 
-        // Auto-inject x402book token as Bearer auth if available
-        if let Some(ref token) = x402book_token {
-            paid_request = paid_request.header("Authorization", format!("Bearer {}", token));
+        // Apply ERC-8128 headers for x402book
+        if let Some(ref signed) = retry_signed {
+            paid_request = Self::apply_erc8128_headers(paid_request, signed);
         }
 
         for (key, value) in &params.headers {

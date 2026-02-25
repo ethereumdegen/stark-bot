@@ -92,6 +92,14 @@ struct SseEvent {
     content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_subtype: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    task_name: Option<String>,
 }
 
 // ── Route configuration ─────────────────────────────────────────────────
@@ -443,6 +451,7 @@ async fn gateway_chat_stream(
                         event_type: "tool_call".to_string(),
                         content: None,
                         tool_name: Some(tool_name.to_string()),
+                        label: None, agent_subtype: None, error: None, task_name: None,
                     })
                 }
                 "tool.result" => {
@@ -455,12 +464,14 @@ async fn gateway_chat_stream(
                             event_type: "text".to_string(),
                             content: Some(content.to_string()),
                             tool_name: None,
+                            label: None, agent_subtype: None, error: None, task_name: None,
                         })
                     } else {
                         Some(SseEvent {
                             event_type: "tool_result".to_string(),
                             content: None,
                             tool_name: Some(tool_name.to_string()),
+                            label: None, agent_subtype: None, error: None, task_name: None,
                         })
                     }
                 }
@@ -471,16 +482,87 @@ async fn gateway_chat_stream(
                             event_type: "text".to_string(),
                             content: Some(content.to_string()),
                             tool_name: None,
+                            label: None, agent_subtype: None, error: None, task_name: None,
                         })
                     } else {
                         None
                     }
                 }
+                "subagent.spawned" => {
+                    let label = event.data.get("label").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let agent_subtype = event.data.get("agent_subtype").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let task = event.data.get("task").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    Some(SseEvent {
+                        event_type: "subagent_spawned".to_string(),
+                        content: task,
+                        tool_name: None,
+                        label: Some(label), agent_subtype, error: None, task_name: None,
+                    })
+                }
+                "subagent.completed" => {
+                    let label = event.data.get("label").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    Some(SseEvent {
+                        event_type: "subagent_completed".to_string(),
+                        content: None, tool_name: None,
+                        label: Some(label), agent_subtype: None, error: None, task_name: None,
+                    })
+                }
+                "subagent.failed" => {
+                    let label = event.data.get("label").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let error = event.data.get("error").and_then(|v| v.as_str()).unwrap_or("unknown error").to_string();
+                    Some(SseEvent {
+                        event_type: "subagent_failed".to_string(),
+                        content: None, tool_name: None,
+                        label: Some(label), agent_subtype: None, error: Some(error), task_name: None,
+                    })
+                }
+                "agent.subtype_change" => {
+                    let subtype = event.data.get("subtype").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let label = event.data.get("label").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    Some(SseEvent {
+                        event_type: "subtype_change".to_string(),
+                        content: None, tool_name: None,
+                        label: Some(label), agent_subtype: Some(subtype), error: None, task_name: None,
+                    })
+                }
+                "agent.thinking" => {
+                    let message = event.data.get("message").and_then(|v| v.as_str()).unwrap_or("thinking...").to_string();
+                    Some(SseEvent {
+                        event_type: "thinking".to_string(),
+                        content: Some(message),
+                        tool_name: None,
+                        label: None, agent_subtype: None, error: None, task_name: None,
+                    })
+                }
+                "execution.task_started" => {
+                    let name = event.data.get("name")
+                        .or_else(|| event.data.get("description"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("").to_string();
+                    if !name.is_empty() {
+                        Some(SseEvent {
+                            event_type: "task_started".to_string(),
+                            content: None, tool_name: None,
+                            label: None, agent_subtype: None, error: None, task_name: Some(name),
+                        })
+                    } else {
+                        None
+                    }
+                }
+                "execution.task_completed" => {
+                    let status = event.data.get("status").and_then(|v| v.as_str()).unwrap_or("completed").to_string();
+                    Some(SseEvent {
+                        event_type: "task_completed".to_string(),
+                        content: Some(status),
+                        tool_name: None,
+                        label: None, agent_subtype: None, error: None, task_name: None,
+                    })
+                }
                 "dispatch.complete" => {
                     let done = SseEvent {
                         event_type: "done".to_string(),
-                        content: None,
-                        tool_name: None,
+                        content: None, tool_name: None,
+                        label: None, agent_subtype: None, error: None, task_name: None,
                     };
                     if let Ok(json) = serde_json::to_string(&done) {
                         let _ = tx.send(web::Bytes::from(format!("data: {}\n\n", json))).await;

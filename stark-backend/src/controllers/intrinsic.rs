@@ -822,6 +822,12 @@ async fn write_by_path(
             });
         }
 
+        // If a skill .md file was edited, re-sync the module's skill to DB
+        let file_name = segments.last().unwrap_or(&"");
+        if file_name.ends_with(".md") {
+            data.skill_registry.sync_module_skill(module_name).await;
+        }
+
         log::info!("Updated module file: {}/{}", module_name, relative);
         return HttpResponse::Ok().json(WriteIntrinsicResponse {
             success: true,
