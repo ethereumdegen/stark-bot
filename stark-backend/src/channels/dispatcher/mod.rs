@@ -660,12 +660,26 @@ impl MessageDispatcher {
             self.context_manager.update_context_tokens(session.id, user_tokens);
         }
 
-        // Get active agent settings from database, falling back to kimi defaults
+        // Get active agent settings from database — if none are enabled, AI is disabled
         let settings = match self.db.get_active_agent_settings() {
             Ok(Some(settings)) => settings,
             Ok(None) => {
-                log::info!("No agent configured, using default kimi settings");
-                AgentSettings::default()
+                let error = "No AI model configured. Select a model in your instance settings to enable chat.".to_string();
+                log::info!("{}", error);
+                let _ = self.db.add_session_message(
+                    session.id, DbMessageRole::Assistant,
+                    &format!("[Error] {}", error), None, None, None, None,
+                );
+                self.active_cache.update_completion_status(session.id, CompletionStatus::Failed);
+                self.active_cache.flush_and_evict(session.id, &self.db);
+                self.broadcast_session_complete(message.channel_id, session.id);
+                self.broadcaster.broadcast(GatewayEvent::agent_error(message.channel_id, &error));
+                self.execution_tracker.complete_execution(message.channel_id);
+                self.rollout_manager.fail_attempt(&mut rollout, &error, &span_collector);
+                self.telemetry_store.persist_spans(&span_collector);
+                heartbeat_handle.abort();
+                telemetry::clear_active_collector();
+                return DispatchResult::error(error);
             }
             Err(e) => {
                 let error = format!("Database error: {}", e);

@@ -164,7 +164,7 @@ impl Database {
             max_context_tokens: row.get::<_, Option<i32>>(6)?.unwrap_or(DEFAULT_CONTEXT_TOKENS),
             enabled: row.get::<_, i32>(7)? != 0,
             secret_key: row.get(8)?,
-            payment_mode: row.get::<_, Option<String>>(11)?.unwrap_or_else(|| "x402".to_string()),
+            payment_mode: row.get::<_, Option<String>>(11)?.unwrap_or_else(|| "credits".to_string()),
             created_at: DateTime::parse_from_rfc3339(&created_at_str)
                 .unwrap()
                 .with_timezone(&Utc),

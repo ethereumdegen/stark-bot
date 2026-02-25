@@ -38,8 +38,8 @@ pub use core::{
     ReadSkillTool, RegisterNewIdentityTool, WorkstreamTool, ModifySoulTool, ModifySpecialRoleTool, SayToUserTool,
     SetAgentSubtypeTool, SubagentStatusTool, SpawnSubagentsTool, TaskFullyCompletedTool, UseSkillTool,
     // Meta tools (self-management)
-    CloudBackupTool, ManageGatewayChannelsTool, ReadOperatingModeTool, ReadRecentTransactionsTool,
-    SetThemeAccentTool,
+    CheckCreditBalanceTool, CloudBackupTool, ManageGatewayChannelsTool, ReadOperatingModeTool,
+    ReadRecentTransactionsTool, SetThemeAccentTool,
 };
 pub use cryptocurrency::{
     load_networks, load_tokens, BridgeUsdcTool, BroadcastWeb3TxTool, DecodeCalldataTool,

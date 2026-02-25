@@ -207,6 +207,9 @@ impl AiClient {
 
         // Convert payment_mode string to PaymentMode enum
         let payment_mode = match settings.payment_mode.as_str() {
+            "none" => {
+                return Err("AI is disabled (payment_mode=none). Select a model in your instance settings to enable chat.".to_string());
+            }
             "credits" => Some(PaymentMode::CreditsOnly),
             "x402" => Some(PaymentMode::X402Only),
             _ => Some(PaymentMode::Auto),

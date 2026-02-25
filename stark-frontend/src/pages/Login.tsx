@@ -204,13 +204,28 @@ export default function Login() {
               {/* Configuration warnings */}
               {configStatus && !configStatus.login_configured && (
                 <div className="bg-red-500/20 border border-red-500/50 text-red-400 px-4 py-3 rounded-lg text-sm">
-                  Login is not configured. Set BURNER_WALLET_BOT_PRIVATE_KEY environment variable and rebuild the instance.
+                  {configStatus.wallet_mode === 'flash' ? (
+                    <>
+                      Login is not configured. Launch StarkBot via the provisioning plane at{' '}
+                      <a href="https://starkbot.cloud" className="underline text-red-300 hover:text-red-200" target="_blank" rel="noopener noreferrer">starkbot.cloud</a>.
+                    </>
+                  ) : (
+                    <>Login is not configured. Set <code className="bg-red-500/30 px-1 rounded">BURNER_WALLET_BOT_PRIVATE_KEY</code> environment variable and rebuild the instance.</>
+                  )}
                 </div>
               )}
 
               {configStatus && configStatus.login_configured && !configStatus.burner_wallet_configured && (
                 <div className="bg-amber-500/20 border border-amber-500/50 text-amber-400 px-4 py-3 rounded-lg text-sm">
-                  BURNER_WALLET_BOT_PRIVATE_KEY is not configured. Web3 transaction tools will not work.
+                  {configStatus.wallet_mode === 'flash' ? (
+                    <>
+                      Wallet not configured. Launch StarkBot via the provisioning plane at{' '}
+                      <a href="https://starkbot.cloud" className="underline text-amber-300 hover:text-amber-200" target="_blank" rel="noopener noreferrer">starkbot.cloud</a>{' '}
+                      to enable Web3 transaction tools.
+                    </>
+                  ) : (
+                    <><code className="bg-amber-500/30 px-1 rounded">BURNER_WALLET_BOT_PRIVATE_KEY</code> is not configured. Web3 transaction tools will not work.</>
+                  )}
                 </div>
               )}
 

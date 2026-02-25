@@ -58,6 +58,7 @@ fn register_all_tools(registry: &mut ToolRegistry) {
     registry.register(Arc::new(builtin::SetThemeAccentTool::new()));
     registry.register(Arc::new(builtin::ReadOperatingModeTool::new()));
     registry.register(Arc::new(builtin::ReadRecentTransactionsTool::new()));
+    registry.register(Arc::new(builtin::CheckCreditBalanceTool::new()));
     registry.register(Arc::new(builtin::ManageGatewayChannelsTool::new()));
 
     // Web tools (shared)

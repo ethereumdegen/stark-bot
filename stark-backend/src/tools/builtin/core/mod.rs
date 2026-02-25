@@ -25,6 +25,7 @@ mod use_skill;
 mod task_complete;
 
 // Meta tools (self-management)
+mod check_credit_balance;
 mod cloud_backup;
 mod manage_gateway_channels;
 mod read_operating_mode;
@@ -54,6 +55,7 @@ pub use use_skill::UseSkillTool;
 pub use task_complete::TaskFullyCompletedTool;
 
 // Meta tools (self-management)
+pub use check_credit_balance::CheckCreditBalanceTool;
 pub use cloud_backup::CloudBackupTool;
 pub use manage_gateway_channels::ManageGatewayChannelsTool;
 pub use read_operating_mode::ReadOperatingModeTool;

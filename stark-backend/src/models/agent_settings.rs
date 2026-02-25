@@ -40,7 +40,7 @@ impl Default for AgentSettings {
             max_context_tokens: DEFAULT_CONTEXT_TOKENS,
             enabled: true,
             secret_key: None,
-            payment_mode: "none".to_string(),
+            payment_mode: "credits".to_string(),
             created_at: now,
             updated_at: now,
         }

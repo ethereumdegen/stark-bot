@@ -287,7 +287,7 @@ impl Database {
 
         // Migration: Add payment_mode column to agent_settings
         let _ = conn.execute(
-            "ALTER TABLE agent_settings ADD COLUMN payment_mode TEXT NOT NULL DEFAULT 'x402'",
+            "ALTER TABLE agent_settings ADD COLUMN payment_mode TEXT NOT NULL DEFAULT 'credits'",
             [],
         );
 

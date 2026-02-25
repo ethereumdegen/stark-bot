@@ -147,7 +147,7 @@ async fn validate_auth(
                 success: false,
                 token: None,
                 expires_at: None,
-                error: Some("Login not configured. Set LOGIN_ADMIN_PUBLIC_ADDRESS or BURNER_WALLET_BOT_PRIVATE_KEY environment variable.".to_string()),
+                error: Some("Login is not configured for this instance.".to_string()),
             });
         }
     };

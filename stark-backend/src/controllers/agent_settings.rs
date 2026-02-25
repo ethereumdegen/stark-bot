@@ -148,7 +148,7 @@ pub async fn update_agent_settings(
     let request = body.into_inner();
 
     // Validate payment_mode if provided
-    let payment_mode = request.payment_mode.as_deref().unwrap_or("x402");
+    let payment_mode = request.payment_mode.as_deref().unwrap_or("credits");
     if !["none", "credits", "x402", "custom"].contains(&payment_mode) {
         return HttpResponse::BadRequest().json(serde_json::json!({
             "error": format!("Invalid payment_mode: {}. Must be none, credits, x402, or custom.", payment_mode)
