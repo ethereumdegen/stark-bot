@@ -1,0 +1,24 @@
+[module]
+name = "hyper_claw"
+version = "1.0.0"
+author = "starkbot"
+description = "Autonomous perpetual futures trader on HyperClaw (Orderly Network) — leveraged LONG/SHORT positions from Bankr signals"
+
+[service]
+command = "uv run service.py"
+default_port = 9108
+port_env_var = "HYPER_CLAW_PORT"
+has_dashboard = true
+health_endpoint = "/rpc/status"
+backup_endpoint = "/rpc/backup/export"
+restore_endpoint = "/rpc/backup/restore"
+dashboard_endpoint = "/"
+
+[service.env_vars]
+ALCHEMY_API_KEY = { required = true, description = "Alchemy API key for Base RPC (vault deposits)" }
+
+[skill]
+skill_dir = "skill"
+
+[agent]
+dir = "agent"
