@@ -54,7 +54,7 @@ impl SetAgentSubtypeTool {
 
         let mut properties = HashMap::new();
         properties.insert(
-            "subtype".to_string(),
+            "agent_subtype".to_string(),
             PropertySchema {
                 schema_type: "string".to_string(),
                 description: param_desc,
@@ -70,7 +70,7 @@ impl SetAgentSubtypeTool {
             input_schema: ToolInputSchema {
                 schema_type: "object".to_string(),
                 properties,
-                required: vec!["subtype".to_string()],
+                required: vec!["agent_subtype".to_string()],
             },
             group: ToolGroup::System,
             hidden: false,
@@ -191,7 +191,7 @@ impl Default for SetAgentSubtypeTool {
 
 #[derive(Debug, Deserialize)]
 struct SetAgentSubtypeParams {
-    subtype: String,
+    agent_subtype: String,
 }
 
 #[async_trait]
@@ -203,10 +203,13 @@ impl Tool for SetAgentSubtypeTool {
     async fn execute(&self, params: Value, context: &ToolContext) -> ToolResult {
         let params: SetAgentSubtypeParams = match serde_json::from_value(params) {
             Ok(p) => p,
-            Err(e) => return ToolResult::error(format!("Invalid parameters: {}", e)),
+            Err(e) => {
+                let msg = format!("Invalid parameters: {}. The parameter name is `agent_subtype`, not `subtype`.", e);
+                return ToolResult::error(msg);
+            }
         };
 
-        let key = params.subtype.to_lowercase();
+        let key = params.agent_subtype.to_lowercase();
 
         // Resolve via exact key match or alias
         let resolved_key = match types::resolve_subtype_key(&key) {
@@ -218,7 +221,7 @@ impl Tool for SetAgentSubtypeTool {
                     .collect();
                 return ToolResult::error(format!(
                     "Invalid subtype '{}'. Valid options: {}",
-                    params.subtype,
+                    params.agent_subtype,
                     valid.join(", ")
                 ));
             }
@@ -233,7 +236,7 @@ impl Tool for SetAgentSubtypeTool {
                     .collect();
                 return ToolResult::error(format!(
                     "Invalid subtype '{}'. Valid options: {}",
-                    params.subtype,
+                    params.agent_subtype,
                     valid.join(", ")
                 ));
             }
@@ -289,7 +292,7 @@ mod tests {
         let context = ToolContext::new();
 
         let result = tool
-            .execute(json!({ "subtype": "finance" }), &context)
+            .execute(json!({ "agent_subtype": "finance" }), &context)
             .await;
 
         assert!(result.success);
@@ -304,7 +307,7 @@ mod tests {
         let context = ToolContext::new();
 
         let result = tool
-            .execute(json!({ "subtype": "code_engineer" }), &context)
+            .execute(json!({ "agent_subtype": "code_engineer" }), &context)
             .await;
 
         assert!(result.success);
@@ -319,7 +322,7 @@ mod tests {
         let context = ToolContext::new();
 
         let result = tool
-            .execute(json!({ "subtype": "secretary" }), &context)
+            .execute(json!({ "agent_subtype": "secretary" }), &context)
             .await;
 
         assert!(result.success);
@@ -334,7 +337,7 @@ mod tests {
         let context = ToolContext::new();
 
         let result = tool
-            .execute(json!({ "subtype": "invalid" }), &context)
+            .execute(json!({ "agent_subtype": "invalid" }), &context)
             .await;
 
         assert!(!result.success);
