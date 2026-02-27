@@ -559,55 +559,54 @@ pub async fn start_twitter_listener(
                                     }
                                 );
 
-                                // Fire twitter_mentioned hooks (community_manager, etc.)
-                                crate::persona_hooks::fire_twitter_mentioned_hooks(
-                                    &mention.id,
-                                    &mention.author_id,
-                                    &author_username,
-                                    &mention.text,
-                                    mention.conversation_id.as_deref(),
-                                    &dispatcher,
-                                ).await;
+                                if is_admin {
+                                    // Admin mentions go through the full gateway reply flow
+                                    // (direct chat session, no safe_mode).
+                                    log::info!("Twitter: @{} is admin — using gateway reply flow", author_username);
 
-                                // Non-admin mentions: hooks only, no gateway auto-reply.
-                                // Replies are handled by the `twitter_mentioned` persona hook —
-                                // configure an agent with a `hooks/twitter_mentioned.md` template
-                                // to reply to mentions.
-                                if !is_admin {
-                                    log::info!(
-                                        "Twitter: @{} is not admin — hooks fired, skipping gateway reply",
-                                        author_username
-                                    );
-                                    if let Err(e) = db.mark_tweet_processed(
-                                        &mention.id,
+                                    let response = process_mention(
+                                        &mention,
+                                        &author_username,
+                                        &config,
                                         channel_id,
+                                        false, // no safe_mode for admin
+                                        &dispatcher,
+                                        &broadcaster,
+                                        &bot_mention_regex,
+                                        &client,
+                                    ).await;
+
+                                    if let Some(response_text) = response {
+                                        match post_reply(
+                                            &client,
+                                            &config,
+                                            &mention.id,
+                                            &response_text,
+                                        ).await {
+                                            Ok(_) => {
+                                                replies_this_hour += 1;
+                                            }
+                                            Err(e) => {
+                                                log::error!("Twitter: Failed to post reply: {}", e);
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // Non-admin mentions are handled by persona hooks
+                                    // (community_manager, etc.) which reply directly via twitter_post.
+                                    log::info!("Twitter: @{} is non-admin — using persona hooks", author_username);
+
+                                    crate::persona_hooks::fire_twitter_mentioned_hooks(
+                                        &mention.id,
                                         &mention.author_id,
                                         &author_username,
                                         &mention.text,
-                                    ) {
-                                        log::error!("Twitter: Failed to mark tweet {} as processed: {}", mention.id, e);
-                                    }
-                                    since_id = Some(mention.id.clone());
-                                    continue;
+                                        mention.conversation_id.as_deref(),
+                                        &dispatcher,
+                                    ).await;
                                 }
 
-                                // Admin mentions: full gateway flow (process_mention → post_reply)
-                                log::info!("Twitter: @{} is admin — using standard mode", author_username);
-
-                                // Process the mention
-                                let response = process_mention(
-                                    &mention,
-                                    &author_username,
-                                    &config,
-                                    channel_id,
-                                    false, // admin = standard mode
-                                    &dispatcher,
-                                    &broadcaster,
-                                    &bot_mention_regex,
-                                    &client,
-                                ).await;
-
-                                // Mark as processed before replying (to avoid double-processing on errors)
+                                // Mark as processed
                                 if let Err(e) = db.mark_tweet_processed(
                                     &mention.id,
                                     channel_id,
@@ -616,23 +615,6 @@ pub async fn start_twitter_listener(
                                     &mention.text,
                                 ) {
                                     log::error!("Twitter: Failed to mark tweet {} as processed: {}", mention.id, e);
-                                }
-
-                                // Post reply if we have a response
-                                if let Some(response_text) = response {
-                                    match post_reply(
-                                        &client,
-                                        &config,
-                                        &mention.id,
-                                        &response_text,
-                                    ).await {
-                                        Ok(_) => {
-                                            replies_this_hour += 1;
-                                        }
-                                        Err(e) => {
-                                            log::error!("Twitter: Failed to post reply: {}", e);
-                                        }
-                                    }
                                 }
 
                                 // Update since_id to the most recent tweet

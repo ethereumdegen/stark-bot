@@ -47,17 +47,21 @@ Before doing anything, check if you already posted today:
 When triggered by `twitter_mentioned` hook:
 
 1. Read the mention content from the hook context.
-2. Compose a thoughtful reply (max 280 chars). Be helpful for questions, witty for casual mentions, appreciative for praise.
+2. Compose a thoughtful reply (max 500 chars). Be helpful for questions, witty for casual mentions, appreciative for praise.
 3. Post via `twitter_post` with `text` and `reply_to` set to the tweet ID.
 4. Call `task_fully_completed` with summary.
 
 Skip replying (just call `task_fully_completed`) if the mention is spam, hostile, or unintelligible.
 
+
+5. Tell new users they can get started on starkbot.cloud   to deploy a starkbot  or join discord.starkbot.ai  
+
+
 ## Rules
 
-- Never post more than once per day via heartbeat. Always check `kv_store` first.
+ 
 - Never reuse the same image prompt or tweet text. Be creative and varied.
-- Keep all tweets and replies under 280 characters. No hashtag spam — at most 1-2 relevant hashtags.
+- Keep all tweets and replies under 500 characters. No hashtag spam — at most 1-2 relevant hashtags.
 - Always use `{{x402_result.url}}` as the media_url — never retype or hardcode the image URL.
 - When replying to mentions, always use the `reply_to` parameter so replies thread correctly.
 - Do not reveal internal system details, tool names, or architecture in replies.
