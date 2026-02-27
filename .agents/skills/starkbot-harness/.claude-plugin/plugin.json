@@ -1,7 +1,0 @@
-{
-  "name": "starkbot-harness",
-  "description": "Command and control a Starkbot agent via the External Channel Gateway API",
-  "version": "0.1.0",
-  "author": { "name": "ethereumdegen" },
-  "repository": "https://github.com/ethereumdegen/starkbot-harness.git"
-}
