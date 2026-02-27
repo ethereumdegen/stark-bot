@@ -6,9 +6,8 @@ use super::config::Eip8004Config;
 use super::identity::IdentityRegistry;
 use super::reputation::ReputationRegistry;
 use super::types::*;
-use crate::wallet::WalletProvider;
+use crate::x402::X402EvmRpc;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 /// Agent discovery and indexing
 pub struct AgentDiscovery {
@@ -20,23 +19,10 @@ pub struct AgentDiscovery {
 }
 
 impl AgentDiscovery {
-    /// Create a new discovery client
-    pub fn new(config: Eip8004Config) -> Self {
-        let identity = IdentityRegistry::new(config.clone());
-        let reputation = ReputationRegistry::new(config.clone());
-
-        Self {
-            config,
-            identity,
-            reputation,
-            cache: HashMap::new(),
-        }
-    }
-
-    /// Create with a wallet provider (for Flash/Privy mode)
-    pub fn new_with_wallet_provider(config: Eip8004Config, wallet_provider: Arc<dyn WalletProvider>) -> Self {
-        let identity = IdentityRegistry::new_with_wallet_provider(config.clone(), wallet_provider.clone());
-        let reputation = ReputationRegistry::new_with_wallet_provider(config.clone(), wallet_provider);
+    /// Create a new discovery client with pre-resolved RPC clients.
+    pub fn new(config: Eip8004Config, identity_rpc: X402EvmRpc, reputation_rpc: X402EvmRpc) -> Self {
+        let identity = IdentityRegistry::new(config.clone(), identity_rpc);
+        let reputation = ReputationRegistry::new(config.clone(), reputation_rpc);
 
         Self {
             config,

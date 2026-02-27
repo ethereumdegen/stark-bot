@@ -5,7 +5,7 @@ version: 2.3.0
 author: starkbot
 homepage: https://eips.ethereum.org/EIPS/eip-8004
 tags: [crypto, identity, eip8004, registration, agent, discovery, nft]
-requires_tools: [import_identity, register_new_identity, x402_rpc, web3_preset_function_call]
+requires_tools: [import_identity, register_new_identity, unregister_identity, x402_rpc, web3_preset_function_call]
 arguments:
   agent_name:
     description: "Name for the agent identity"
@@ -28,11 +28,12 @@ Manage your on-chain agent identity using the EIP-8004 standard.
 
 ---
 
-## IMPORTANT: Import vs Create vs Read
+## IMPORTANT: Import vs Create vs Read vs Unregister
 
 - **"what is my identity?"** → use `import_identity` with NO params (returns existing DB identity)
 - **"import my identity" or has an NFT** → use `import_identity` (with `agent_id` if known — forces on-chain import)
 - **"create a new identity from scratch"** → use `register_new_identity`
+- **"unregister" / "remove identity" / "clear identity"** → use `unregister_identity` (wipes local DB only, NFT stays on-chain)
 - **NEVER** use `register_new_identity` when the user asks to import an existing NFT
 
 ## 1. Reading Your Identity
@@ -107,7 +108,24 @@ network: base
 
 Then set the URI later with `identity_set_uri`.
 
-## 4. Managing On-Chain Identity
+## 4. Unregistering Your Identity (Local Only)
+
+Wipes the agent identity from the local database. The on-chain NFT is **not** burned or affected — you can re-import it later with `import_identity`.
+
+```tool:unregister_identity
+confirm: true
+```
+
+To also delete the IDENTITY.json file from disk:
+
+```tool:unregister_identity
+confirm: true
+delete_identity_file: true
+```
+
+After unregistering, the agent will behave as if it has no identity until you run `import_identity` again.
+
+## 5. Managing On-Chain Identity
 
 ### Update Agent URI
 
@@ -147,7 +165,7 @@ network: base
 
 Set `agent_id` and `metadata_key` registers first.
 
-## 5. Querying the Registry
+## 6. Querying the Registry
 
 ### Check registration fee
 

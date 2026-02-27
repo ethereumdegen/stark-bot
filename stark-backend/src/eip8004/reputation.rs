@@ -6,58 +6,21 @@ use super::abi::common::keccak256;
 use super::abi::reputation::*;
 use super::config::Eip8004Config;
 use super::types::*;
-use crate::tools::rpc_config;
-use crate::wallet::WalletProvider;
 use crate::x402::X402EvmRpc;
 use ethers::types::Address;
 use std::str::FromStr;
-use std::sync::Arc;
 
 /// Reputation Registry client
 pub struct ReputationRegistry {
     config: Eip8004Config,
-    rpc: Option<X402EvmRpc>,
-    wallet_provider: Option<Arc<dyn WalletProvider>>,
+    rpc: X402EvmRpc,
 }
 
 impl ReputationRegistry {
-    /// Create a new Reputation Registry client
-    pub fn new(config: Eip8004Config) -> Self {
-        Self { config, rpc: None, wallet_provider: None }
-    }
-
-    /// Create with a wallet provider (for Flash/Privy mode)
-    pub fn new_with_wallet_provider(config: Eip8004Config, wallet_provider: Arc<dyn WalletProvider>) -> Self {
-        Self {
-            config,
-            rpc: None,
-            wallet_provider: Some(wallet_provider),
-        }
-    }
-
-    /// Create with an existing RPC client
-    pub fn with_rpc(config: Eip8004Config, rpc: X402EvmRpc) -> Self {
-        Self {
-            config,
-            rpc: Some(rpc),
-            wallet_provider: None,
-        }
-    }
-
-    /// Get or create RPC client using unified 3-tier resolver.
-    fn get_rpc(&self) -> Result<X402EvmRpc, String> {
-        let network = if self.config.chain_id == 1 { "mainnet" } else { "base" };
-        let resolved = rpc_config::resolve_rpc(network);
-
-        // Prefer wallet provider (works in both Standard and Flash/Privy mode)
-        if let Some(ref wp) = self.wallet_provider {
-            return X402EvmRpc::new_with_wallet_provider(wp.clone(), network, Some(resolved.url), resolved.use_x402);
-        }
-
-        // Fall back to raw private key (Standard mode only)
-        let private_key = crate::config::burner_wallet_private_key()
-            .ok_or("BURNER_WALLET_BOT_PRIVATE_KEY not set")?;
-        X402EvmRpc::new_with_config(&private_key, network, Some(resolved.url), resolved.use_x402)
+    /// Create with a pre-resolved RPC client.
+    /// Callers should use `resolve_rpc_from_context` or `resolve_rpc` to build the RPC.
+    pub fn new(config: Eip8004Config, rpc: X402EvmRpc) -> Self {
+        Self { config, rpc }
     }
 
     /// Get the registry contract address
@@ -88,11 +51,10 @@ impl ReputationRegistry {
             return Err("Reputation Registry not deployed".to_string());
         }
 
-        let rpc = self.get_rpc()?;
         let registry_addr = self.parse_registry_address()?;
         let calldata = encode_get_summary(agent_id, client_addresses, tag1, tag2);
 
-        let result = rpc.eth_call(registry_addr, &calldata).await?;
+        let result = self.rpc.eth_call(registry_addr, &calldata).await?;
 
         let (count, total_value, value_decimals) = decode_summary_result(&result)?;
 
@@ -407,10 +369,7 @@ mod tests {
             total_payments_usdc: None,
         };
 
-        let config = Eip8004Config::base_mainnet();
-        let registry = ReputationRegistry::new(config);
-
-        assert!(registry.should_trust(&high));
-        assert_eq!(registry.get_trust_level(&high), TrustLevel::High);
+        assert!(matches!(high.trust_level(), TrustLevel::High | TrustLevel::Medium));
+        assert_eq!(high.trust_level(), TrustLevel::High);
     }
 }

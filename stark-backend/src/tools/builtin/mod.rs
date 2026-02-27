@@ -35,7 +35,7 @@ pub use code::{CommitterTool, DeployTool, IndexProjectTool, PrQualityTool, Verif
 pub use core::{
     AddTaskTool, DefineTasksTool, AgentSendTool, ApiKeysCheckTool, AskUserTool, HeartbeatConfigTool,
     ImportIdentityTool, InstallApiKeyTool, ManageModulesTool, ManageSkillsTool, ImpulseMapManageTool,
-    ReadSkillTool, RegisterNewIdentityTool, WorkstreamTool, ModifySoulTool, ModifySpecialRoleTool, SayToUserTool,
+    ReadSkillTool, RegisterNewIdentityTool, UnregisterIdentityTool, WorkstreamTool, ModifySoulTool, ModifySpecialRoleTool, SayToUserTool,
     SetAgentSubtypeTool, SubagentStatusTool, SpawnSubagentsTool, TaskFullyCompletedTool, UseSkillTool,
     // Meta tools (self-management)
     CheckCreditBalanceTool, CloudBackupTool, ManageGatewayChannelsTool, ReadOperatingModeTool,

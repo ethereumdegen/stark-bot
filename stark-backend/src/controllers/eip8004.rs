@@ -171,11 +171,14 @@ async fn get_our_identity(
     let mut fetch_errors: Vec<String> = Vec::new();
 
     if agent_id > 0 && config.is_identity_deployed() {
-        let registry = if let Some(ref wp) = state.wallet_provider {
-            IdentityRegistry::new_with_wallet_provider(config.clone(), wp.clone())
-        } else {
-            IdentityRegistry::new(config.clone())
+        let rpc = match config.build_rpc(state.wallet_provider.clone()) {
+            Ok(r) => r,
+            Err(e) => {
+                log::warn!("[eip8004/identity] Failed to build RPC: {}", e);
+                return HttpResponse::InternalServerError().json(serde_json::json!({"error": e}));
+            }
         };
+        let registry = IdentityRegistry::new(config.clone(), rpc);
 
         match registry.get_owner(agent_id as u64).await {
             Ok(o) => owner_address = o,
@@ -253,11 +256,11 @@ async fn get_agent_identity(
         return HttpResponse::BadRequest().json(ApiResponse::<()>::error("Identity Registry not deployed"));
     }
 
-    let registry = if let Some(ref wp) = state.wallet_provider {
-        IdentityRegistry::new_with_wallet_provider(config, wp.clone())
-    } else {
-        IdentityRegistry::new(config)
+    let rpc = match config.build_rpc(state.wallet_provider.clone()) {
+        Ok(r) => r,
+        Err(e) => return HttpResponse::InternalServerError().json(ApiResponse::<()>::error(&e)),
     };
+    let registry = IdentityRegistry::new(config, rpc);
 
     match registry.get_agent_details(agent_id).await {
         Ok(agent) => HttpResponse::Ok().json(ApiResponse::success(agent)),
@@ -320,11 +323,11 @@ async fn get_agent_reputation(
         return HttpResponse::BadRequest().json(ApiResponse::<()>::error("Reputation Registry not deployed"));
     }
 
-    let registry = if let Some(ref wp) = state.wallet_provider {
-        ReputationRegistry::new_with_wallet_provider(config, wp.clone())
-    } else {
-        ReputationRegistry::new(config)
+    let rpc = match config.build_rpc(state.wallet_provider.clone()) {
+        Ok(r) => r,
+        Err(e) => return HttpResponse::InternalServerError().json(ApiResponse::<()>::error(&e)),
     };
+    let registry = ReputationRegistry::new(config, rpc);
 
     match registry.get_summary(agent_id, &[], "", "").await {
         Ok(summary) => HttpResponse::Ok().json(ApiResponse::success(summary)),
@@ -354,11 +357,11 @@ async fn check_trust(
         }));
     }
 
-    let registry = if let Some(ref wp) = state.wallet_provider {
-        ReputationRegistry::new_with_wallet_provider(config, wp.clone())
-    } else {
-        ReputationRegistry::new(config)
+    let rpc = match config.build_rpc(state.wallet_provider.clone()) {
+        Ok(r) => r,
+        Err(e) => return HttpResponse::InternalServerError().json(ApiResponse::<()>::error(&e)),
     };
+    let registry = ReputationRegistry::new(config, rpc);
 
     match registry.get_summary(agent_id, &[], "", "").await {
         Ok(summary) => {
@@ -405,11 +408,16 @@ async fn discover_agents(
         return HttpResponse::BadRequest().json(ApiResponse::<()>::error("Identity Registry not deployed"));
     }
 
-    let mut discovery = if let Some(ref wp) = state.wallet_provider {
-        AgentDiscovery::new_with_wallet_provider(config, wp.clone())
-    } else {
-        AgentDiscovery::new(config)
+    let (identity_rpc, reputation_rpc) = match (
+        config.build_rpc(state.wallet_provider.clone()),
+        config.build_rpc(state.wallet_provider.clone()),
+    ) {
+        (Ok(i), Ok(r)) => (i, r),
+        (Err(e), _) | (_, Err(e)) => {
+            return HttpResponse::InternalServerError().json(ApiResponse::<()>::error(&e));
+        }
     };
+    let mut discovery = AgentDiscovery::new(config, identity_rpc, reputation_rpc);
     let offset = query.offset.unwrap_or(0);
     let limit = query.limit.unwrap_or(20).min(100);
 
@@ -444,11 +452,16 @@ async fn search_agents(
         return HttpResponse::BadRequest().json(ApiResponse::<()>::error("Identity Registry not deployed"));
     }
 
-    let mut discovery = if let Some(ref wp) = state.wallet_provider {
-        AgentDiscovery::new_with_wallet_provider(config, wp.clone())
-    } else {
-        AgentDiscovery::new(config)
+    let (identity_rpc, reputation_rpc) = match (
+        config.build_rpc(state.wallet_provider.clone()),
+        config.build_rpc(state.wallet_provider.clone()),
+    ) {
+        (Ok(i), Ok(r)) => (i, r),
+        (Err(e), _) | (_, Err(e)) => {
+            return HttpResponse::InternalServerError().json(ApiResponse::<()>::error(&e));
+        }
     };
+    let mut discovery = AgentDiscovery::new(config, identity_rpc, reputation_rpc);
 
     let criteria = SearchCriteria {
         x402_required: query.x402_only.unwrap_or(false),
@@ -487,11 +500,16 @@ async fn get_agent_details(
         return HttpResponse::BadRequest().json(ApiResponse::<()>::error("Identity Registry not deployed"));
     }
 
-    let mut discovery = if let Some(ref wp) = state.wallet_provider {
-        AgentDiscovery::new_with_wallet_provider(config, wp.clone())
-    } else {
-        AgentDiscovery::new(config)
+    let (identity_rpc, reputation_rpc) = match (
+        config.build_rpc(state.wallet_provider.clone()),
+        config.build_rpc(state.wallet_provider.clone()),
+    ) {
+        (Ok(i), Ok(r)) => (i, r),
+        (Err(e), _) | (_, Err(e)) => {
+            return HttpResponse::InternalServerError().json(ApiResponse::<()>::error(&e));
+        }
     };
+    let mut discovery = AgentDiscovery::new(config, identity_rpc, reputation_rpc);
 
     match discovery.discover_agent(agent_id).await {
         Ok(agent) => HttpResponse::Ok().json(ApiResponse::success(agent)),

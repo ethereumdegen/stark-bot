@@ -106,17 +106,19 @@ impl Tool for RegisterNewIdentityTool {
         if let Some(wp) = &context.wallet_provider {
             let config = crate::eip8004::config::Eip8004Config::from_env();
             if config.is_identity_deployed() {
-                let registry = crate::eip8004::identity::IdentityRegistry::new_with_wallet_provider(
-                    config, wp.clone(),
-                );
-                let wallet = wp.get_address();
-                if let Ok(balance) = registry.balance_of(&wallet).await {
-                    if balance > 0 {
-                        return ToolResult::error(format!(
-                            "This wallet already owns {} identity NFT(s) on-chain. \
-                            Use import_identity to import your existing identity.",
-                            balance
-                        ));
+                if let Ok(rpc) = config.build_rpc(Some(wp.clone())) {
+                    let registry = crate::eip8004::identity::IdentityRegistry::new(
+                        config, rpc,
+                    );
+                    let wallet = wp.get_address();
+                    if let Ok(balance) = registry.balance_of(&wallet).await {
+                        if balance > 0 {
+                            return ToolResult::error(format!(
+                                "This wallet already owns {} identity NFT(s) on-chain. \
+                                Use import_identity to import your existing identity.",
+                                balance
+                            ));
+                        }
                     }
                 }
             }

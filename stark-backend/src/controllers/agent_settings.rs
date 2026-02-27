@@ -182,7 +182,7 @@ pub async fn update_agent_settings(
     // Validate archetype
     if ArchetypeId::from_str(&request.model_archetype).is_none() {
         return HttpResponse::BadRequest().json(serde_json::json!({
-            "error": format!("Invalid archetype: {}. Must be kimi, llama, claude, openai, or minimax.", request.model_archetype)
+            "error": format!("Invalid archetype: {}. Must be kimi, llama, claude, openai, minimax, or standard.", request.model_archetype)
         }));
     }
 
@@ -504,13 +504,12 @@ pub async fn get_credit_balance(
     // Determine the inference endpoint base URL from active settings
     let base_url = match state.db.get_active_agent_settings() {
         Ok(Some(settings)) if settings.endpoint.contains("defirelay.com") => {
-            // Extract base URL from endpoint (e.g. "https://inference.defirelay.com/api/v1/chat/completions" -> "https://inference.defirelay.com")
-            if let Some(idx) = settings.endpoint.find("/api/") {
-                settings.endpoint[..idx].to_string()
-            } else if let Some(idx) = settings.endpoint.find("/chat") {
-                settings.endpoint[..idx].to_string()
+            // Extract origin (scheme + host) from endpoint
+            // e.g. "https://inference.defirelay.com/minimax/api/v1/chat/completions" -> "https://inference.defirelay.com"
+            if let Ok(url) = reqwest::Url::parse(&settings.endpoint) {
+                format!("{}://{}", url.scheme(), url.host_str().unwrap_or("inference.defirelay.com"))
             } else {
-                settings.endpoint.trim_end_matches('/').to_string()
+                "https://inference.defirelay.com".to_string()
             }
         }
         _ => "https://inference.defirelay.com".to_string(),
@@ -559,17 +558,16 @@ pub async fn get_credit_balance(
             match resp.text().await {
                 Ok(body) => {
                     if status.is_success() {
+                        log::info!("Credits balance response: {}", body);
                         match serde_json::from_str::<serde_json::Value>(&body) {
                             Ok(json) => HttpResponse::Ok().json(json),
                             Err(_) => HttpResponse::Ok().json(serde_json::json!({
-                                "credits": 0,
                                 "error": "Invalid response from credits service"
                             })),
                         }
                     } else {
                         log::warn!("Credits balance request failed: {} {}", status, body);
                         HttpResponse::Ok().json(serde_json::json!({
-                            "credits": 0,
                             "error": format!("Credits service returned {}", status)
                         }))
                     }
@@ -577,7 +575,6 @@ pub async fn get_credit_balance(
                 Err(e) => {
                     log::error!("Failed to read credits response: {}", e);
                     HttpResponse::Ok().json(serde_json::json!({
-                        "credits": 0,
                         "error": "Failed to read response"
                     }))
                 }
@@ -586,7 +583,6 @@ pub async fn get_credit_balance(
         Err(e) => {
             log::error!("Credits balance request failed: {}", e);
             HttpResponse::Ok().json(serde_json::json!({
-                "credits": 0,
                 "error": "Failed to connect to credits service"
             }))
         }

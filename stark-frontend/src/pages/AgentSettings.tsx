@@ -137,7 +137,9 @@ export default function AgentSettings() {
     setCreditBalanceLoading(true);
     try {
       const data = await getCreditBalance();
-      if (data.credits !== undefined) {
+      if (data.error) {
+        console.warn('Credit balance error:', data.error);
+      } else if (data.credits !== undefined) {
         setCreditBalance(data.credits);
       }
     } catch (err) {

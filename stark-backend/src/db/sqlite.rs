@@ -1933,6 +1933,13 @@ impl Database {
         Ok(())
     }
 
+    /// Delete all rows from the agent_identity table (local unregister).
+    pub fn delete_agent_identity(&self) -> Result<(), rusqlite::Error> {
+        let conn = self.conn();
+        conn.execute("DELETE FROM agent_identity", [])?;
+        Ok(())
+    }
+
     /// Update a single field on the agent identity row
     pub fn update_agent_identity_field(&self, field: &str, value: &str) -> Result<(), rusqlite::Error> {
         let conn = self.conn();

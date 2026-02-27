@@ -2,7 +2,11 @@
 //!
 //! Contract addresses and chain configuration for EIP-8004 registries.
 
+use crate::tools::rpc_config;
+use crate::wallet::WalletProvider;
+use crate::x402::X402EvmRpc;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// EIP-8004 registry configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,8 +21,6 @@ pub struct Eip8004Config {
     pub chain_id: u64,
     /// Chain name for display
     pub chain_name: String,
-    /// RPC endpoint (via x402 or direct)
-    pub rpc_endpoint: String,
     /// Block explorer URL
     pub explorer_url: String,
 }
@@ -32,7 +34,6 @@ impl Eip8004Config {
             validation_registry: None,
             chain_id: 8453,
             chain_name: "Base".to_string(),
-            rpc_endpoint: "https://rpc.defirelay.com/rpc/light/base".to_string(),
             explorer_url: "https://basescan.org".to_string(),
         }
     }
@@ -46,7 +47,6 @@ impl Eip8004Config {
             validation_registry: None,
             chain_id: 84532,
             chain_name: "Base Sepolia".to_string(),
-            rpc_endpoint: "https://sepolia.base.org".to_string(),
             explorer_url: "https://sepolia.basescan.org".to_string(),
         }
     }
@@ -73,10 +73,6 @@ impl Eip8004Config {
                 if let Ok(addr) = std::env::var("EIP8004_VALIDATION_REGISTRY") {
                     config.validation_registry = Some(addr);
                 }
-                if let Ok(rpc) = std::env::var("EIP8004_RPC_ENDPOINT") {
-                    config.rpc_endpoint = rpc;
-                }
-
                 config
             }
         }
@@ -111,6 +107,33 @@ impl Eip8004Config {
     /// Get block explorer URL for an NFT token
     pub fn token_url(&self, token_id: u64) -> String {
         format!("{}/token/{}?a={}", self.explorer_url, self.identity_registry, token_id)
+    }
+
+    /// Get the network name for this chain config.
+    pub fn network(&self) -> &str {
+        match self.chain_id {
+            1 => "mainnet",
+            84532 => "base-sepolia",
+            _ => "base",
+        }
+    }
+
+    /// Build an X402EvmRpc for this chain using the unified RPC resolver.
+    /// Uses `resolve_rpc` which respects bot settings custom RPC endpoints.
+    pub fn build_rpc(&self, wallet_provider: Option<Arc<dyn WalletProvider>>) -> Result<X402EvmRpc, String> {
+        let network = self.network();
+        let resolved = rpc_config::resolve_rpc(network);
+
+        if let Some(wp) = wallet_provider {
+            return X402EvmRpc::new_with_wallet_provider(wp, network, Some(resolved.url), resolved.use_x402);
+        }
+
+        let private_key = crate::config::burner_wallet_private_key()
+            .ok_or("BURNER_WALLET_BOT_PRIVATE_KEY not set")?;
+        let wp: Arc<dyn WalletProvider> = Arc::new(
+            crate::wallet::EnvWalletProvider::from_private_key(&private_key)?
+        );
+        X402EvmRpc::new_with_wallet_provider(wp, network, Some(resolved.url), resolved.use_x402)
     }
 
     /// Format agent registry string

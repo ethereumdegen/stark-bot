@@ -37,7 +37,7 @@ impl ArchetypeId {
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "llama" | "text" | "json" => Some(ArchetypeId::Llama),
-            "kimi" | "moonshot" | "native" => Some(ArchetypeId::Kimi),
+            "kimi" | "moonshot" | "native" | "standard" => Some(ArchetypeId::Kimi),
             "openai" => Some(ArchetypeId::OpenAI),
             "claude" | "anthropic" => Some(ArchetypeId::Claude),
             "minimax" => Some(ArchetypeId::MiniMax),

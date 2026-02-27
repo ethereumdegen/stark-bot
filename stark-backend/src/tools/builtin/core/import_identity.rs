@@ -131,10 +131,11 @@ impl Tool for ImportIdentityTool {
 
         // Create IdentityRegistry
         let config = Eip8004Config::from_env();
-        let registry = IdentityRegistry::new_with_wallet_provider(
-            config.clone(),
-            wallet_provider.clone(),
-        );
+        let rpc = match config.build_rpc(Some(wallet_provider.clone())) {
+            Ok(r) => r,
+            Err(e) => return ToolResult::error(format!("Failed to build RPC: {}", e)),
+        };
+        let registry = IdentityRegistry::new(config.clone(), rpc);
 
         if !registry.is_deployed() {
             return ToolResult::error("Identity Registry not deployed on this chain.");
