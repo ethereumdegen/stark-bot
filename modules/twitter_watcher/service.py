@@ -59,6 +59,8 @@ _poll_interval: int = DEFAULT_POLL_INTERVAL
 _worker_running: bool = True
 _last_poll_at: str | None = None
 _start_time = time.time()
+_hook_event_log: list[dict] = []  # last N fired hook events
+MAX_HOOK_LOG = 10
 
 # ---------------------------------------------------------------------------
 # Twitter client
@@ -89,6 +91,26 @@ def _resolve_user_id(client: tweepy.Client, username: str) -> str | None:
     return None
 
 
+def _resolve_user_id_async(username: str) -> None:
+    """Background task: resolve a Twitter username to its user ID and update the watchlist."""
+    client = _get_twitter_client()
+    if not client:
+        log.warning("Cannot resolve user ID for @%s — Twitter API keys not configured", username)
+        return
+
+    user_id = _resolve_user_id(client, username)
+    if not user_id:
+        log.warning("Could not resolve user ID for @%s — will retry on next poll", username)
+        return
+
+    key = username.upper()
+    with _lock:
+        if key in _watchlist:
+            _watchlist[key].user_id = user_id
+            log.info("Resolved @%s -> user_id %s", username, user_id)
+    notify_tui_update("twitter_watcher")
+
+
 # ---------------------------------------------------------------------------
 # Hook firing
 # ---------------------------------------------------------------------------
@@ -96,8 +118,23 @@ def _resolve_user_id(client: tweepy.Client, username: str) -> str | None:
 
 def _fire_hook(payload: dict) -> None:
     """Fire twitter_watched_tweet hook via backend internal API."""
+    # Record in event log regardless of whether we can fire
+    event_entry = {
+        "username": payload.get("username", ""),
+        "tweet_id": payload.get("tweet_id", ""),
+        "tweet_text": (payload.get("tweet_text") or "")[:120],
+        "tweet_url": payload.get("tweet_url", ""),
+        "fired_at": datetime.now(timezone.utc).isoformat(),
+        "status": "pending",
+    }
+
     if not INTERNAL_TOKEN:
         log.warning("No STARKBOT_INTERNAL_TOKEN — cannot fire hook")
+        event_entry["status"] = "no_token"
+        with _lock:
+            _hook_event_log.append(event_entry)
+            if len(_hook_event_log) > MAX_HOOK_LOG:
+                _hook_event_log.pop(0)
         return
 
     import httpx
@@ -113,8 +150,15 @@ def _fire_hook(payload: dict) -> None:
             timeout=10,
         )
         log.info("Fired twitter_watched_tweet hook for @%s", payload.get("username"))
+        event_entry["status"] = "fired"
     except Exception as e:
         log.warning("Failed to fire hook: %s", e)
+        event_entry["status"] = f"error: {e}"
+
+    with _lock:
+        _hook_event_log.append(event_entry)
+        if len(_hook_event_log) > MAX_HOOK_LOG:
+            _hook_event_log.pop(0)
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +177,11 @@ def _poll_once(client: tweepy.Client) -> None:
         return
 
     for user in users:
+        if not user.user_id:
+            # Try to resolve missing user ID
+            _resolve_user_id_async(user.username)
+            continue
+
         try:
             kwargs: dict = {
                 "max_results": 5,
@@ -248,24 +297,23 @@ def rpc_twitter_watcher():
                     "message": "Already watching this account",
                 })
 
-        # Resolve user ID via Twitter API
-        client = _get_twitter_client()
-        if not client:
-            return error("Twitter API keys not configured")
-
-        user_id = _resolve_user_id(client, username)
-        if not user_id:
-            return error(f"Could not resolve Twitter user @{username}")
-
-        watched = WatchedUser(username=username, user_id=user_id)
+        # Add immediately with empty user_id; resolve async in background
+        watched = WatchedUser(username=username, user_id="")
         with _lock:
             _watchlist[key] = watched
 
         notify_tui_update("twitter_watcher")
+
+        # Kick off background user ID resolution
+        threading.Thread(
+            target=_resolve_user_id_async,
+            args=(username,),
+            daemon=True,
+        ).start()
+
         return success({
             "username": username,
-            "user_id": user_id,
-            "message": f"Now watching @{username}",
+            "message": f"Now watching @{username} (resolving user ID in background)",
         })
 
     elif action == "remove":
@@ -298,6 +346,7 @@ def rpc_twitter_watcher():
             "count": len(entries),
             "poll_interval": _poll_interval,
             "entries": entries,
+            "recent_hooks": list(_hook_event_log),
         })
 
     elif action == "set_interval":
@@ -314,8 +363,29 @@ def rpc_twitter_watcher():
         notify_tui_update("twitter_watcher")
         return success({"interval": _poll_interval, "message": f"Poll interval set to {interval}s"})
 
+    elif action == "set_user_id":
+        username = (data.get("username") or "").strip().lstrip("@")
+        user_id = (data.get("user_id") or "").strip()
+        if not username:
+            return error("'username' is required for 'set_user_id' action")
+        if not user_id:
+            return error("'user_id' is required for 'set_user_id' action")
+
+        key = username.upper()
+        with _lock:
+            if key not in _watchlist:
+                return error(f"@{username} is not in the watchlist")
+            _watchlist[key].user_id = user_id
+
+        notify_tui_update("twitter_watcher")
+        return success({
+            "username": username,
+            "user_id": user_id,
+            "message": f"Set user_id for @{username} to {user_id}",
+        })
+
     else:
-        return error(f"Unknown action '{action}'. Use: add, remove, list, set_interval")
+        return error(f"Unknown action '{action}'. Use: add, remove, list, set_interval, set_user_id")
 
 
 # ---------------------------------------------------------------------------

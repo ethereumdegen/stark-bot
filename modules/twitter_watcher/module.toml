@@ -1,6 +1,6 @@
 [module]
 name = "twitter_watcher"
-version = "0.1.1"
+version = "0.1.2"
 author = "starkbot"
 description = "Watch Twitter accounts for new tweets and fire hook events for agent reactions (quote-tweets, replies, commentary)."
 
@@ -28,13 +28,18 @@ rpc_endpoint = "/rpc/twitter_watcher"
 
 [tools.parameters.action]
 type = "string"
-description = "The action to perform: add, remove, list, or set_interval."
+description = "The action to perform: add, remove, list, set_interval, or set_user_id."
 required = true
-enum = ["add", "remove", "list", "set_interval"]
+enum = ["add", "remove", "list", "set_interval", "set_user_id"]
 
 [tools.parameters.username]
 type = "string"
-description = "Twitter username to add or remove (without @ prefix). Required for 'add' and 'remove' actions."
+description = "Twitter username to add or remove (without @ prefix). Required for 'add', 'remove', and 'set_user_id' actions."
+required = false
+
+[tools.parameters.user_id]
+type = "string"
+description = "Numeric Twitter user ID. Required for 'set_user_id' action."
 required = false
 
 [tools.parameters.interval]
