@@ -433,6 +433,8 @@ stark-bot/
 
 ---
 
+Ready to expand the bot? Read our [Skill Development Guide](STARK_BOT_SKILLS.md).
+
 ## License
 
 MIT — see [LICENSE](LICENSE) for details.
