@@ -44,7 +44,7 @@ _ADD_WALLET_HTML = """\
 </div>
 <script>
 async function rpc(body){
-  var r=await fetch('/rpc/tools/watchlist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  var r=await fetch('rpc/tools/watchlist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   return r.json();
 }
 async function addWallet(){
@@ -130,7 +130,7 @@ class WalletMonitorDashboard(Dashboard):
                 f'${w.get("large_trade_threshold_usd", 1000):.0f}',
                 status,
                 last_block,
-                Cell(actions_html),
+                Cell(actions_html, raw=True),
             ])
 
         # Activity rows

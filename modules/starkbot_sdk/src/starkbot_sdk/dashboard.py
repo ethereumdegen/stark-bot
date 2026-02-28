@@ -53,6 +53,7 @@ class Cell:
     color: str | None = None
     mono: bool = False
     title: str | None = None  # HTML tooltip
+    raw: bool = False  # if True, text is rendered as raw HTML (no escaping)
 
 
 @dataclass
@@ -214,6 +215,8 @@ def _cell_html(value: str | Badge | Cell, col_mono: bool = False) -> str:
         style = _BADGE_STYLES.get(value.variant, _BADGE_STYLES["default"])
         return f'<span class="badge" style="{style}">{escape(value.text)}</span>'
     if isinstance(value, Cell):
+        if value.raw:
+            return value.text
         parts: list[str] = []
         if value.mono or col_mono:
             parts.append("font-family:'SF Mono',SFMono-Regular,Consolas,monospace")

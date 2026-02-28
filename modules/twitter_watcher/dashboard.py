@@ -14,6 +14,49 @@ from starkbot_sdk.dashboard import (
     Table,
 )
 
+_ADD_ACCOUNT_HTML = """\
+<div style="background:#141414;border:1px solid #252525;border-radius:8px;padding:1rem 1.2rem;margin-bottom:1.5rem;">
+  <h2 style="margin:0 0 0.75rem;font-size:0.95rem;color:#ccc;">Add Account</h2>
+  <div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:flex-end;">
+    <div style="display:flex;flex-direction:column;gap:4px;">
+      <label style="font-size:0.75rem;color:#777;text-transform:uppercase;">Username</label>
+      <input type="text" id="tw-user" placeholder="@handle" spellcheck="false"
+             style="background:#0c0c0c;border:1px solid #333;border-radius:6px;padding:0.5rem 0.75rem;color:#e0e0e0;font-family:monospace;font-size:0.85rem;width:220px;">
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px;">
+      <label>&nbsp;</label>
+      <button class="btn btn-success" id="btn-add-tw" onclick="addAccount()">Add</button>
+    </div>
+  </div>
+</div>
+<script>
+async function twRpc(body){
+  var r=await fetch('rpc/twitter_watcher',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  return r.json();
+}
+async function addAccount(){
+  var user=document.getElementById('tw-user').value.trim().replace(/^@/,'');
+  if(!user){showToast('Username is required',false);return;}
+  var btn=document.getElementById('btn-add-tw');btn.disabled=true;
+  try{
+    var res=await twRpc({action:'add',username:user});
+    if(res.success){showToast('Added @'+user,true);setTimeout(function(){location.reload()},400)}
+    else{showToast(res.error||'Failed',false)}
+  }catch(e){showToast('Network error',false)}
+  btn.disabled=false;
+}
+async function removeAccount(username){
+  if(!confirm('Remove @'+username+'?'))return;
+  try{
+    var res=await twRpc({action:'remove',username:username});
+    if(res.success){showToast('Removed @'+username,true);setTimeout(function(){location.reload()},400)}
+    else{showToast(res.error||'Failed',false)}
+  }catch(e){showToast('Network error',false)}
+}
+document.getElementById('tw-user').addEventListener('keydown',function(e){if(e.key==='Enter')addAccount()});
+</script>
+"""
+
 
 class TwitterWatcherDashboard(Dashboard):
     title = "Twitter Watcher"
@@ -60,12 +103,18 @@ class TwitterWatcherDashboard(Dashboard):
                 status = Badge("seeding", "default")
                 uid_cell = Cell(user_id)
 
+            uname_raw = u['username'].replace("'", "\\'")
+            remove_html = (
+                f'<button class="btn btn-danger" onclick="removeAccount(\'{uname_raw}\')" '
+                f'style="padding:2px 8px;font-size:0.8rem;">\u2715</button>'
+            )
             watchlist_rows.append([
                 Cell(username, mono=True),
                 uid_cell,
                 status,
                 Cell(since_id or "\u2014"),
                 Cell(u.get("added_at", "\u2014")[:19]),
+                Cell(remove_html, raw=True),
             ])
 
         # Hook event rows (newest first)
@@ -98,6 +147,7 @@ class TwitterWatcherDashboard(Dashboard):
                 Stat("Poll Interval", f"{poll_interval}s"),
                 Stat("Last Poll", last_poll_display),
             ],
+            extra_html=_ADD_ACCOUNT_HTML,
             tables=[
                 Table(
                     columns=[
@@ -106,9 +156,10 @@ class TwitterWatcherDashboard(Dashboard):
                         "Status",
                         "Last Tweet ID",
                         "Added",
+                        "",
                     ],
                     rows=watchlist_rows,
-                    empty="No accounts watched",
+                    empty="No accounts watched. Add one above.",
                 ),
                 Table(
                     columns=["Time", Column("User", mono=True), "Tweet", "Status"],

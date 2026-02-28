@@ -11,6 +11,73 @@ from starkbot_sdk.dashboard import (
     Table,
 )
 
+_ADD_WHALE_HTML = """\
+<div style="background:#141414;border:1px solid #252525;border-radius:8px;padding:1rem 1.2rem;margin-bottom:1.5rem;">
+  <h2 style="margin:0 0 0.75rem;font-size:0.95rem;color:#ccc;">Add Whale</h2>
+  <div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:flex-end;">
+    <div style="display:flex;flex-direction:column;gap:4px;">
+      <label style="font-size:0.75rem;color:#777;text-transform:uppercase;">Address</label>
+      <input type="text" id="waddr" placeholder="0x..." spellcheck="false"
+             style="background:#0c0c0c;border:1px solid #333;border-radius:6px;padding:0.5rem 0.75rem;color:#e0e0e0;font-family:monospace;font-size:0.85rem;width:380px;">
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px;">
+      <label style="font-size:0.75rem;color:#777;text-transform:uppercase;">Label</label>
+      <input type="text" id="wlbl" placeholder="optional"
+             style="background:#0c0c0c;border:1px solid #333;border-radius:6px;padding:0.5rem 0.75rem;color:#e0e0e0;font-size:0.85rem;width:140px;">
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px;">
+      <label style="font-size:0.75rem;color:#777;text-transform:uppercase;">Chain</label>
+      <select id="wchain" style="background:#0c0c0c;border:1px solid #333;border-radius:6px;padding:0.5rem 0.75rem;color:#e0e0e0;font-size:0.85rem;">
+        <option value="ethereum">Ethereum</option><option value="base">Base</option>
+      </select>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px;">
+      <label style="font-size:0.75rem;color:#777;text-transform:uppercase;">Category</label>
+      <select id="wcat" style="background:#0c0c0c;border:1px solid #333;border-radius:6px;padding:0.5rem 0.75rem;color:#e0e0e0;font-size:0.85rem;">
+        <option value="individual">Individual</option><option value="fund">Fund</option><option value="exchange">Exchange</option><option value="other">Other</option>
+      </select>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px;">
+      <label>&nbsp;</label>
+      <button class="btn btn-success" id="btn-add-whale" onclick="addWhale()">Add</button>
+    </div>
+  </div>
+</div>
+<script>
+async function whaleRpc(body){
+  var r=await fetch('rpc/tools/whales',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  return r.json();
+}
+async function addWhale(){
+  var addr=document.getElementById('waddr').value.trim();
+  if(!addr){showToast('Address is required',false);return;}
+  var btn=document.getElementById('btn-add-whale');btn.disabled=true;
+  try{
+    var res=await whaleRpc({action:'add',address:addr,label:document.getElementById('wlbl').value.trim()||null,chain:document.getElementById('wchain').value,category:document.getElementById('wcat').value});
+    if(res.success){showToast('Whale added',true);setTimeout(function(){location.reload()},400)}
+    else{showToast(res.error||'Failed',false)}
+  }catch(e){showToast('Network error',false)}
+  btn.disabled=false;
+}
+async function removeWhale(addr,preview){
+  if(!confirm('Remove whale '+preview+'?'))return;
+  try{
+    var res=await whaleRpc({action:'remove',address:addr});
+    if(res.success){showToast('Removed',true);setTimeout(function(){location.reload()},400)}
+    else{showToast(res.error||'Failed',false)}
+  }catch(e){showToast('Network error',false)}
+}
+async function toggleWhale(addr,enable){
+  try{
+    var res=await whaleRpc({action:'update',address:addr,enabled:!!enable});
+    if(res.success){showToast(enable?'Resumed':'Paused',true);setTimeout(function(){location.reload()},400)}
+    else{showToast(res.error||'Failed',false)}
+  }catch(e){showToast('Network error',false)}
+}
+document.getElementById('waddr').addEventListener('keydown',function(e){if(e.key==='Enter')addWhale()});
+</script>
+"""
+
 
 def _format_usd(val) -> str:
     if val is None:
@@ -157,6 +224,15 @@ class WhaleTrackerDashboard(Dashboard):
             acc_str = f"{float(acc):.1f}%" if acc is not None else "-"
             enabled = w.get("enabled", False)
             status = Badge("Active", "success") if enabled else Badge("Paused", "warning")
+            toggle_val = 0 if enabled else 1
+            toggle_label = "\u23f8" if enabled else "\u25b6"
+            addr_js = addr.replace("'", "\\'")
+            actions_html = (
+                f'<button class="btn" onclick="toggleWhale(\'{addr_js}\',{toggle_val})" '
+                f'style="padding:2px 8px;font-size:0.8rem;">{toggle_label}</button> '
+                f'<button class="btn btn-danger" onclick="removeWhale(\'{addr_js}\',\'{addr_short}\')" '
+                f'style="padding:2px 8px;font-size:0.8rem;">\u2715</button>'
+            )
             whale_rows.append([
                 label,
                 Cell(addr_short, mono=True),
@@ -166,6 +242,7 @@ class WhaleTrackerDashboard(Dashboard):
                 acc_str,
                 str(w.get("total_signals", 0)),
                 status,
+                Cell(actions_html, raw=True),
             ])
 
         return Layout(
@@ -197,12 +274,13 @@ class WhaleTrackerDashboard(Dashboard):
                     empty="No movements recorded yet.",
                 ),
                 Table(
-                    columns=["Label", "Address", "Chain", "Category", "Tags", "Accuracy", "Signals", "Status"],
+                    columns=["Label", "Address", "Chain", "Category", "Tags", "Accuracy", "Signals", "Status", ""],
                     rows=whale_rows,
                     title="Tracked Whales",
-                    empty="No whales tracked. Add one via the whales tool.",
+                    empty="No whales tracked. Add one above.",
                 ),
             ],
             warnings=warnings,
+            extra_html=_ADD_WHALE_HTML,
             navigable_table=-1,
         )
