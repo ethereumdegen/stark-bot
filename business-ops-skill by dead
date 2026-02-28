@@ -1,0 +1,89 @@
+---
+name: business_operations_assistant by discord @deadisdeadd
+description: "Transforms StarkBot into an autonomous business operations assistant for crypto teams/DAOs/founders — email triage & drafting, calendar scheduling, simple CRM note-taking, invoice reminders, task delegation, daily ops reports. Runs via heartbeat for background automation."
+version: 1.0.0
+author: yourhandle (hackathon submission – Business Operations track)
+requires_tools: [run_skill_script, memory_store, memory_retrieve, web_fetch, schedule_task, send_email, post_to_channel]
+requires_binaries: [curl, jq]  # for API calls if email provider used
+scripts: []  # can add bash/ python later for Gmail/Outlook integration; pure agentic for now
+requires_api_keys: 
+  EMAIL_API_KEY: "Optional – for send_email tool (e.g. Resend, SendGrid, or SMTP)"
+tags: [business, operations, automation, crm, email, scheduling, productivity]
+arguments:
+  command:
+    description: "Action to execute: activate, triage_emails, schedule_meeting, update_crm, send_invoice_reminder, generate_daily_report, delegate_task"
+    required: true
+    enum: ["activate", "triage_emails", "schedule_meeting", "update_crm", "send_invoice_reminder", "generate_daily_report", "delegate_task"]
+---
+
+# StarkBot Business Operations Assistant
+**Hackathon Submission – Business Operations Track**
+
+## What it does
+Makes StarkBot your 24/7 virtual COO / ops team member:
+- Triages incoming emails → summarize, prioritize, draft replies
+- Schedules meetings / reminders using calendar integrations or memory-based cron
+- Maintains lightweight CRM in memory graph (contacts, deals, notes)
+- Sends invoice/payment reminders (crypto or fiat via x402)
+- Generates daily/weekly ops reports (tasks done, emails handled, upcoming deadlines)
+- Delegates subtasks to other agents or humans via Discord/X/Slack
+
+Leverages existing StarkBot features: heartbeat (background runs), memory graph (persistent CRM/tasks), scheduling.md (cron), notes.md (logging), x402 (payments/reminders).
+
+## Activation & Background Mode
+Tell StarkBot:  
+`use business_operations_assistant with command is activate`
+
+→ Spawns Ops Sub-Agent that runs every heartbeat (15 min default):
+- Checks pending emails/tasks in memory
+- Processes triage/scheduling/reminders
+- Logs actions as memory entities
+
+## Core Workflows (Ops Sub-Agent Instructions)
+
+### 1. Email Triage & Drafting
+- On heartbeat or trigger: use `web_fetch` or email tool to scan inbox (if API key)
+- Classify: urgent / deal / community / spam / invoice
+- Summarize thread + draft reply (professional or degen tone per SOUL)
+- Store draft in memory → ask for approval before `send_email`
+- Example: "High priority: Investor DM about token allocation"
+
+### 2. Calendar & Scheduling
+- Parse natural language requests → create `schedule_task` cron entries
+- Check conflicts via memory_retrieve("calendar")
+- Send reminders via email/Discord/X (e.g. 30 min before)
+- Example: "Schedule investor call next Tuesday 3PM UTC"
+
+### 3. Lightweight CRM
+- Entity types in memory graph:
+  - Contact:{wallet/email} → name, role, last_interaction, notes, deal_stage
+  - Task:{id} → description, due_date, status, assigned_to
+- Commands: add note, update stage (lead → closed), list open deals
+
+### 4. Invoice & Payment Reminders
+- Track unpaid invoices in memory (amount, due_date, recipient_wallet)
+- Daily scan: if overdue → auto-send reminder via email/X + x402 link
+- Optional: auto-tip small bounties for completed tasks
+
+### 5. Daily Ops Report
+- Every 24h: aggregate actions (emails handled, tasks completed, upcoming)
+- Format nice summary → post to Discord/Slack or store in notes
+- Include metrics: "Handled 12 emails, scheduled 3 meetings, 2 invoices sent"
+
+### 6. Task Delegation
+- Break big requests into subtasks
+- Assign to self (via heartbeat), other StarkBot agents, or ping human on channel
+
+## Usage Examples
+
+**Example 1 – Activate full assistant**
+
+→ Bot starts background ops loop, sends first report after 1 cycle.
+
+**Example 2 – Triage inbox now**
+
+→ Processes recent emails, drafts replies, asks confirmation.
+
+**Example 3 – Schedule something**
+
+→ Follow-up prompt: "When and with who?"
