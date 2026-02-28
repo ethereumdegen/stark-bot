@@ -1,6 +1,6 @@
 [module]
 name = "twitter_watcher"
-version = "0.1.2"
+version = "0.1.3"
 author = "starkbot"
 description = "Watch Twitter accounts for new tweets and fire hook events for agent reactions (quote-tweets, replies, commentary)."
 
@@ -8,8 +8,9 @@ description = "Watch Twitter accounts for new tweets and fire hook events for ag
 command = "uv run service.py"
 default_port = 9108
 port_env_var = "TWITTER_WATCHER_PORT"
-dashboard_style = "tui"
+dashboard_styles = ["tui", "html"]
 health_endpoint = "/rpc/status"
+dashboard_endpoint = "/"
 backup_endpoint = "/rpc/backup/export"
 restore_endpoint = "/rpc/backup/restore"
 
@@ -18,31 +19,3 @@ TWITTER_CONSUMER_KEY = { required = true, description = "Twitter API consumer ke
 TWITTER_CONSUMER_SECRET = { required = true, description = "Twitter API consumer secret (OAuth 1.0a)" }
 TWITTER_ACCESS_TOKEN = { required = true, description = "Twitter API access token (OAuth 1.0a)" }
 TWITTER_ACCESS_TOKEN_SECRET = { required = true, description = "Twitter API access token secret (OAuth 1.0a)" }
-
-[[tools]]
-name = "twitter_watcher"
-description = "Watch Twitter accounts for new tweets. Add/remove accounts to monitor, list watched accounts, or change the poll interval. When a watched account tweets, a 'twitter_watched_tweet' hook fires automatically."
-group = "twitter"
-rpc_method = "POST"
-rpc_endpoint = "/rpc/twitter_watcher"
-
-[tools.parameters.action]
-type = "string"
-description = "The action to perform: add, remove, list, set_interval, or set_user_id."
-required = true
-enum = ["add", "remove", "list", "set_interval", "set_user_id"]
-
-[tools.parameters.username]
-type = "string"
-description = "Twitter username to add or remove (without @ prefix). Required for 'add', 'remove', and 'set_user_id' actions."
-required = false
-
-[tools.parameters.user_id]
-type = "string"
-description = "Numeric Twitter user ID. Required for 'set_user_id' action."
-required = false
-
-[tools.parameters.interval]
-type = "integer"
-description = "Poll interval in seconds (required for 'set_interval' action). Minimum 30."
-required = false

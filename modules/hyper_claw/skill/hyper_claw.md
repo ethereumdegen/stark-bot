@@ -1,7 +1,7 @@
 ---
 name: hyper_claw
 description: "Autonomous perpetual futures trader on HyperClaw (Orderly Network) — leveraged LONG/SHORT positions from Bankr signals"
-version: 1.0.0
+version: 1.1.0
 author: starkbot
 requires_tools: [local_rpc, sign_raw_tx, sign_typed_data]
 ---
@@ -9,7 +9,10 @@ requires_tools: [local_rpc, sign_raw_tx, sign_typed_data]
 # HyperClaw — RPC Reference
 
 The `hyper_claw` module exposes these RPC endpoints via `local_rpc`.
-All endpoints are at `http://127.0.0.1:9108`.
+
+**After reading these instructions, call `local_rpc` directly to fulfill the user's request. Do NOT call `use_skill` again.**
+
+Use `module="hyper_claw"` — the port is resolved automatically.
 
 ## Setup Flow
 
@@ -18,7 +21,7 @@ Before trading, complete these one-time setup steps:
 ### 1. Register with Orderly
 
 ```
-local_rpc(url="http://127.0.0.1:9108/rpc/register", method="POST")
+local_rpc(module="hyper_claw", path="/rpc/register", method="POST")
 ```
 
 Returns EIP-712 data and fires `hyper_claw_sign_tx` hook. After signing, the module registers with Orderly Network using broker_id `hyper_claw`.
@@ -26,7 +29,7 @@ Returns EIP-712 data and fires `hyper_claw_sign_tx` hook. After signing, the mod
 ### 2. Add Trading Key
 
 ```
-local_rpc(url="http://127.0.0.1:9108/rpc/add_key", method="POST")
+local_rpc(module="hyper_claw", path="/rpc/add_key", method="POST")
 ```
 
 Generates an ed25519 keypair, returns EIP-712 data to sign. After signing, the key is registered with Orderly for API authentication.
@@ -34,7 +37,7 @@ Generates an ed25519 keypair, returns EIP-712 data to sign. After signing, the k
 ### 3. Deposit USDC
 
 ```
-local_rpc(url="http://127.0.0.1:9108/rpc/deposit", method="POST", body={
+local_rpc(module="hyper_claw", path="/rpc/deposit", method="POST", body={
   "amount": 50
 })
 ```
@@ -46,8 +49,8 @@ Constructs USDC approval + vault deposit transactions. Fires `hyper_claw_sign_tx
 Submit a trading decision after evaluating market signals and risk.
 
 ```
-local_rpc(url="http://127.0.0.1:9108/rpc/decision", method="POST", body={
-  "decision": "OPEN_LONG" | "OPEN_SHORT" | "CLOSE" | "HOLD",
+local_rpc(module="hyper_claw", path="/rpc/decision", method="POST", body={
+  "decision": "OPEN_LONG",
   "symbol": "PERP_ETH_USDC",
   "leverage": 5,
   "collateral": 10.0,
@@ -68,7 +71,7 @@ After signing EIP-712 data or on-chain transactions, submit:
 
 For EIP-712 (register, add_key):
 ```
-local_rpc(url="http://127.0.0.1:9108/rpc/sign", method="POST", body={
+local_rpc(module="hyper_claw", path="/rpc/sign", method="POST", body={
   "tx_id": 123,
   "signature": "0x...",
   "eip712_data": {...}
@@ -77,7 +80,7 @@ local_rpc(url="http://127.0.0.1:9108/rpc/sign", method="POST", body={
 
 For on-chain tx (deposit, approve_usdc):
 ```
-local_rpc(url="http://127.0.0.1:9108/rpc/sign", method="POST", body={
+local_rpc(module="hyper_claw", path="/rpc/sign", method="POST", body={
   "tx_id": 123,
   "signed_tx": "0x..."
 })
@@ -88,7 +91,7 @@ local_rpc(url="http://127.0.0.1:9108/rpc/sign", method="POST", body={
 View open positions with unrealized P&L:
 
 ```
-local_rpc(url="http://127.0.0.1:9108/rpc/positions", method="GET")
+local_rpc(module="hyper_claw", path="/rpc/positions", method="GET")
 ```
 
 Returns list of positions with symbol, side, qty, entry/mark price, liquidation price, unrealized P&L.
@@ -98,7 +101,7 @@ Returns list of positions with symbol, side, qty, entry/mark price, liquidation 
 View open orders on Orderly:
 
 ```
-local_rpc(url="http://127.0.0.1:9108/rpc/orders", method="GET")
+local_rpc(module="hyper_claw", path="/rpc/orders", method="GET")
 ```
 
 ## Account
@@ -106,7 +109,7 @@ local_rpc(url="http://127.0.0.1:9108/rpc/orders", method="GET")
 View Orderly account info and balances:
 
 ```
-local_rpc(url="http://127.0.0.1:9108/rpc/account", method="GET")
+local_rpc(module="hyper_claw", path="/rpc/account", method="GET")
 ```
 
 ## Refresh
@@ -114,7 +117,7 @@ local_rpc(url="http://127.0.0.1:9108/rpc/account", method="GET")
 Sync positions from Orderly and update P&L:
 
 ```
-local_rpc(url="http://127.0.0.1:9108/rpc/refresh", method="POST")
+local_rpc(module="hyper_claw", path="/rpc/refresh", method="POST")
 ```
 
 ## History
@@ -122,7 +125,7 @@ local_rpc(url="http://127.0.0.1:9108/rpc/refresh", method="POST")
 Query recent trade decisions:
 
 ```
-local_rpc(url="http://127.0.0.1:9108/rpc/history", method="POST", body={
+local_rpc(module="hyper_claw", path="/rpc/history", method="POST", body={
   "limit": 20,
   "status": "executed"
 })
@@ -135,7 +138,7 @@ Optional filters: `limit` (default 20), `status` ("pending", "executed", "failed
 Aggregate trading statistics:
 
 ```
-local_rpc(url="http://127.0.0.1:9108/rpc/stats", method="GET")
+local_rpc(module="hyper_claw", path="/rpc/stats", method="GET")
 ```
 
 ## P&L
@@ -143,7 +146,7 @@ local_rpc(url="http://127.0.0.1:9108/rpc/stats", method="GET")
 Get aggregate profit & loss summary:
 
 ```
-local_rpc(url="http://127.0.0.1:9108/rpc/pnl", method="GET")
+local_rpc(module="hyper_claw", path="/rpc/pnl", method="GET")
 ```
 
 Returns:
@@ -159,7 +162,7 @@ Returns:
 View closed trade records with realized P&L:
 
 ```
-local_rpc(url="http://127.0.0.1:9108/rpc/trade_history", method="GET")
+local_rpc(module="hyper_claw", path="/rpc/trade_history", method="GET")
 ```
 
 ## Config
@@ -167,8 +170,9 @@ local_rpc(url="http://127.0.0.1:9108/rpc/trade_history", method="GET")
 View or update trader configuration:
 
 ```
-local_rpc(url="http://127.0.0.1:9108/rpc/config", method="GET")
-local_rpc(url="http://127.0.0.1:9108/rpc/config", method="POST", body={
+local_rpc(module="hyper_claw", path="/rpc/config", method="GET")
+
+local_rpc(module="hyper_claw", path="/rpc/config", method="POST", body={
   "key": "max_collateral_per_trade",
   "value": "15"
 })
@@ -194,8 +198,8 @@ Config keys:
 Control the trading loop:
 
 ```
-local_rpc(url="http://127.0.0.1:9108/rpc/control", method="POST", body={
-  "action": "start" | "stop" | "trigger"
+local_rpc(module="hyper_claw", path="/rpc/control", method="POST", body={
+  "action": "start"
 })
 ```
 
@@ -208,7 +212,7 @@ local_rpc(url="http://127.0.0.1:9108/rpc/control", method="POST", body={
 View available perpetual symbols:
 
 ```
-local_rpc(url="http://127.0.0.1:9108/rpc/symbols", method="GET")
+local_rpc(module="hyper_claw", path="/rpc/symbols", method="GET")
 ```
 
 ## Backup
@@ -216,13 +220,13 @@ local_rpc(url="http://127.0.0.1:9108/rpc/symbols", method="GET")
 Export all data:
 
 ```
-local_rpc(url="http://127.0.0.1:9108/rpc/backup/export", method="POST")
+local_rpc(module="hyper_claw", path="/rpc/backup/export", method="POST")
 ```
 
 Restore from backup:
 
 ```
-local_rpc(url="http://127.0.0.1:9108/rpc/backup/restore", method="POST", body={
+local_rpc(module="hyper_claw", path="/rpc/backup/restore", method="POST", body={
   "data": { ... }
 })
 ```

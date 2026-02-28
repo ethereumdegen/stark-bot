@@ -1,6 +1,6 @@
 [module]
 name = "perps_trader"
-version = "1.0.0"
+version = "1.1.0"
 author = "starkbot"
 description = "Autonomous perpetual futures trader on Avantis (Base) — leveraged LONG/SHORT positions from Bankr signals"
 

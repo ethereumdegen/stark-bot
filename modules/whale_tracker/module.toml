@@ -22,17 +22,3 @@ skill_dir = "skill"
 
 [agent]
 dir = "agent"
-
-[[tools]]
-name = "whales"
-description = "Manage whale watchlist and query whale activity, signals, and accuracy stats"
-group = "finance"
-rpc_method = "POST"
-rpc_endpoint = "/rpc/tools/whales"
-
-[[tools]]
-name = "whale_signals"
-description = "Query whale movement signals with scoring and historical accuracy context"
-group = "finance"
-rpc_method = "POST"
-rpc_endpoint = "/rpc/tools/signals"

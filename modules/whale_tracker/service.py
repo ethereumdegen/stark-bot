@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["flask", "requests", "starkbot-sdk"]
+# dependencies = ["requests", "starkbot-sdk"]
 #
 # [tool.uv.sources]
 # starkbot-sdk = { path = "../starkbot_sdk" }
@@ -1133,39 +1133,12 @@ def rpc_backup_restore():
 
 
 # ---------------------------------------------------------------------------
-# Dashboard
+# Dashboard data endpoint (for recent movements not exposed elsewhere)
 # ---------------------------------------------------------------------------
 
-def _format_uptime(secs: int) -> str:
-    hours = secs // 3600
-    minutes = (secs % 3600) // 60
-    seconds = secs % 60
-    if hours > 0:
-        return f"{hours}h {minutes}m {seconds}s"
-    elif minutes > 0:
-        return f"{minutes}m {seconds}s"
-    return f"{seconds}s"
 
-
-def _format_usd(val) -> str:
-    if val is None:
-        return "-"
-    if val >= 1_000_000_000:
-        return f"${val / 1_000_000_000:,.1f}B"
-    if val >= 1_000_000:
-        return f"${val / 1_000_000:,.1f}M"
-    if val >= 1_000:
-        return f"${val / 1_000:,.1f}K"
-    return f"${val:,.0f}"
-
-
-@app.route("/")
-def dashboard():
-    stats = get_stats()
-    whales = whale_list()
-    recent_signals = signals_recent(limit=20)
-    accuracy_data = signals_accuracy()
-
+@app.route("/rpc/dashboard/data")
+def rpc_dashboard_data():
     conn = get_db()
     recent_movements = [row_to_dict(r) for r in conn.execute("""
         SELECT m.*, w.label as whale_label
@@ -1175,159 +1148,18 @@ def dashboard():
         LIMIT 20
     """).fetchall()]
     conn.close()
+    return success({"recent_movements": recent_movements})
 
-    with _tick_lock:
-        last_tick = _last_tick_at or "not yet"
-    uptime = _format_uptime(int(time.time() - _start_time))
-    worker_enabled = bool(ALCHEMY_API_KEY)
 
-    warning_banner = ""
-    if not worker_enabled:
-        warning_banner = """<div style="background:#5a2d00;border:1px solid #b35c00;border-radius:8px;padding:12px 16px;margin-bottom:20px;display:flex;align-items:center;gap:10px;">
-            <span style="font-size:1.3em;">&#9888;</span>
-            <div>
-                <strong style="color:#ffb347;">Background worker disabled</strong>
-                <span style="color:#ccc;"> &mdash; <code style="background:#3d2200;padding:2px 6px;border-radius:4px;font-size:0.9em;">ALCHEMY_API_KEY</code> is not set.</span>
-            </div>
-        </div>"""
+# ---------------------------------------------------------------------------
+# Dashboard (HTML + TUI)
+# ---------------------------------------------------------------------------
 
-    # Whale leaderboard rows
-    leaderboard_rows = ""
-    for a in accuracy_data[:10]:
-        label = a.get("label") or a["whale_address"][:12] + "..."
-        acc_color = "#3fb950" if a["accuracy_pct"] >= 60 else "#d29922" if a["accuracy_pct"] >= 40 else "#f85149"
-        leaderboard_rows += f'<tr><td>{label}</td><td>{a.get("chain", "-")}</td><td>{a.get("category", "-")}</td><td style="color:{acc_color};font-weight:bold;">{a["accuracy_pct"]:.1f}%</td><td>{a["total_signals"]}</td><td>{a["correct_signals"]}</td><td>{a["avg_price_impact_24h"]:.2f}%</td></tr>\n'
-    if not leaderboard_rows:
-        leaderboard_rows = '<tr><td colspan="7" style="text-align:center;color:#8b949e;padding:20px;">No accuracy data yet. Signals need 24h+ to resolve.</td></tr>'
+from starkbot_sdk.dashboard import register_dashboard  # noqa: E402
+from dashboard import WhaleTrackerDashboard  # noqa: E402
 
-    # Recent signals rows
-    signal_rows = ""
-    for s in recent_signals:
-        label = s.get("whale_label") or s["whale_address"][:12] + "..."
-        type_color = {"bearish": "#f85149", "bullish": "#3fb950", "neutral": "#8b949e"}.get(s["signal_type"], "#8b949e")
-        outcome_badge = {"correct": '<span class="status-badge correct">Correct</span>', "incorrect": '<span class="status-badge incorrect">Incorrect</span>', "pending": '<span class="status-badge pending">Pending</span>'}.get(s["outcome"], s["outcome"])
-        conf_color = "#3fb950" if s["confidence"] >= 70 else "#d29922" if s["confidence"] >= 50 else "#8b949e"
-        signal_rows += f'<tr><td>{label}</td><td style="color:{type_color};font-weight:bold;">{s["signal_type"].upper()}</td><td>{s.get("token", "-")}</td><td style="color:{conf_color};font-weight:bold;">{s["confidence"]:.0f}</td><td style="max-width:400px;">{s.get("summary", "-")}</td><td>{outcome_badge}</td><td>{s["timestamp"][:19] if s.get("timestamp") else "-"}</td></tr>\n'
-    if not signal_rows:
-        signal_rows = '<tr><td colspan="7" style="text-align:center;color:#8b949e;padding:20px;">No signals recorded yet.</td></tr>'
-
-    # Recent movements rows
-    movement_rows = ""
-    for m in recent_movements:
-        label = m.get("whale_label") or m["whale_address"][:12] + "..."
-        dir_color = "#f85149" if m["direction"] == "outflow" else "#3fb950"
-        usd = _format_usd(m.get("usd_value"))
-        cp_label = m.get("counterparty_label") or (m["counterparty"][:12] + "..." if m.get("counterparty") else "-")
-        tx_short = f'{m["tx_hash"][:8]}...{m["tx_hash"][-4:]}' if m.get("tx_hash") and len(m["tx_hash"]) > 14 else m.get("tx_hash", "-")
-        amt = m.get("amount")
-        amt_str = f"{amt:,.2f}" if isinstance(amt, (int, float)) else "-"
-        movement_rows += f'<tr><td>{label}</td><td style="color:{dir_color};">{m["direction"]}</td><td>{m.get("token_symbol", "ETH")}</td><td>{amt_str}</td><td>{usd}</td><td>{m.get("classification", "-")}</td><td>{cp_label}</td><td>{m.get("size_tier", "-")}</td><td class="mono">{tx_short}</td></tr>\n'
-    if not movement_rows:
-        movement_rows = '<tr><td colspan="9" style="text-align:center;color:#8b949e;padding:20px;">No movements recorded yet.</td></tr>'
-
-    # Whale table rows
-    whale_rows = ""
-    for w in whales:
-        label = w.get("label") or "-"
-        status_cls = "active" if w["enabled"] else "paused"
-        status_label = "Active" if w["enabled"] else "Paused"
-        tags = ", ".join(w.get("tags", [])) if isinstance(w.get("tags"), list) and w["tags"] else "-"
-        acc = f'{w["accuracy_pct"]:.1f}%' if w.get("accuracy_pct") is not None else "-"
-        total_sigs = w.get("total_signals") or 0
-        addr_short = f'{w["address"][:8]}...{w["address"][-4:]}'
-        whale_rows += f'<tr><td>{label}</td><td class="mono">{addr_short}</td><td>{w["chain"]}</td><td>{w["category"]}</td><td>{tags}</td><td>{acc}</td><td>{total_sigs}</td><td><span class="status-badge {status_cls}">{status_label}</span></td></tr>\n'
-    if not whale_rows:
-        whale_rows = '<tr><td colspan="8" style="text-align:center;color:#8b949e;padding:20px;">No whales tracked. Add one via the whales tool.</td></tr>'
-
-    avg_acc = f'{stats["avg_accuracy"]:.1f}%' if stats.get("avg_accuracy") is not None else "N/A"
-
-    html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Whale Tracker Dashboard</title>
-<style>
-  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f1117; color: #e0e0e0; padding: 20px; }}
-  h1 {{ color: #58a6ff; margin-bottom: 8px; }}
-  .meta {{ color: #8b949e; font-size: 0.85em; margin-bottom: 20px; }}
-  .stats {{ display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }}
-  .stat {{ background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px 24px; text-align: center; min-width: 140px; }}
-  .stat .val {{ display: block; font-size: 2em; font-weight: bold; color: #58a6ff; }}
-  .stat .lbl {{ display: block; font-size: 0.85em; color: #8b949e; margin-top: 4px; }}
-  table {{ width: 100%; border-collapse: collapse; margin-bottom: 24px; }}
-  th {{ background: #161b22; color: #8b949e; text-align: left; padding: 8px 12px; font-size: 0.85em; text-transform: uppercase; border-bottom: 1px solid #30363d; }}
-  td {{ padding: 8px 12px; border-bottom: 1px solid #21262d; font-size: 0.9em; }}
-  tr:hover {{ background: #161b22; }}
-  .mono {{ font-family: 'SF Mono', 'Consolas', monospace; font-size: 0.85em; }}
-  h2 {{ color: #c9d1d9; margin-bottom: 12px; font-size: 1.1em; }}
-  .section {{ margin-bottom: 28px; }}
-  .status-badge {{ padding: 2px 8px; border-radius: 12px; font-size: 0.8em; font-weight: 500; }}
-  .status-badge.active {{ background: #0d2818; color: #3fb950; }}
-  .status-badge.paused {{ background: #2d1b00; color: #d29922; }}
-  .status-badge.correct {{ background: #0d2818; color: #3fb950; }}
-  .status-badge.incorrect {{ background: #3d0a0a; color: #f85149; }}
-  .status-badge.pending {{ background: #1a1a2e; color: #8b949e; }}
-</style>
-</head>
-<body>
-  <h1>Whale Tracker</h1>
-  <p class="meta">Uptime: {uptime} &middot; Last tick: {last_tick} &middot; Poll interval: {POLL_INTERVAL}s &middot; Alert threshold: {ALERT_CONFIDENCE_THRESHOLD}</p>
-
-  {warning_banner}
-
-  <div class="stats">
-    <div class="stat"><span class="val">{stats['total_whales']}</span><span class="lbl">Whales Tracked</span></div>
-    <div class="stat"><span class="val">{stats['active_whales']}</span><span class="lbl">Active</span></div>
-    <div class="stat"><span class="val">{stats['total_movements']}</span><span class="lbl">Total Movements</span></div>
-    <div class="stat"><span class="val">{stats['total_signals']}</span><span class="lbl">Total Signals</span></div>
-    <div class="stat"><span class="val">{stats['pending_signals']}</span><span class="lbl">Pending</span></div>
-    <div class="stat"><span class="val">{avg_acc}</span><span class="lbl">Avg Accuracy</span></div>
-  </div>
-
-  <div class="section">
-    <h2>Whale Leaderboard (by Accuracy)</h2>
-    <table>
-      <thead><tr><th>Whale</th><th>Chain</th><th>Category</th><th>Accuracy</th><th>Signals</th><th>Correct</th><th>Avg Impact 24h</th></tr></thead>
-      <tbody>{leaderboard_rows}</tbody>
-    </table>
-  </div>
-
-  <div class="section">
-    <h2>Recent Signals</h2>
-    <table>
-      <thead><tr><th>Whale</th><th>Signal</th><th>Token</th><th>Confidence</th><th>Summary</th><th>Outcome</th><th>Time</th></tr></thead>
-      <tbody>{signal_rows}</tbody>
-    </table>
-  </div>
-
-  <div class="section">
-    <h2>Recent Movements</h2>
-    <table>
-      <thead><tr><th>Whale</th><th>Direction</th><th>Token</th><th>Amount</th><th>USD</th><th>Classification</th><th>Counterparty</th><th>Size</th><th>Tx</th></tr></thead>
-      <tbody>{movement_rows}</tbody>
-    </table>
-  </div>
-
-  <div class="section">
-    <h2>Tracked Whales</h2>
-    <table>
-      <thead><tr><th>Label</th><th>Address</th><th>Chain</th><th>Category</th><th>Tags</th><th>Accuracy</th><th>Signals</th><th>Status</th></tr></thead>
-      <tbody>{whale_rows}</tbody>
-    </table>
-  </div>
-
-  <script>
-  // auto-refresh every 30s only if user hasn't interacted recently
-  let _lastInteract = 0;
-  document.addEventListener('keydown', () => _lastInteract = Date.now());
-  document.addEventListener('click', () => _lastInteract = Date.now());
-  setInterval(() => {{ if (Date.now() - _lastInteract > 5000) location.reload(); }}, 30000);
-  </script>
-</body>
-</html>"""
-    return html
+PORT = int(os.environ.get("MODULE_PORT", os.environ.get("WHALE_TRACKER_PORT", "9106")))
+register_dashboard(app, WhaleTrackerDashboard, module_url=f"http://127.0.0.1:{PORT}")
 
 
 # ---------------------------------------------------------------------------

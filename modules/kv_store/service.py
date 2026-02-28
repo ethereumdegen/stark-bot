@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["flask", "starkbot-sdk[tui]"]
+# dependencies = ["starkbot-sdk"]
 # [tool.uv.sources]
 # starkbot-sdk = { path = "../starkbot_sdk" }
 # ///
@@ -18,8 +18,9 @@ import signal
 import sys
 import threading
 
-from flask import Response, request
+from flask import request
 from starkbot_sdk import create_app, error, success
+from starkbot_sdk.tui import notify_tui_update
 
 # ---------------------------------------------------------------------------
 # In-memory store (thread-safe)
@@ -171,14 +172,14 @@ def backup_restore():
 
 
 # ---------------------------------------------------------------------------
-# TUI Dashboard
+# Dashboard (HTML + TUI)
 # ---------------------------------------------------------------------------
 
-from starkbot_sdk.tui import register_tui_endpoint, notify_tui_update
-from tui import KVStoreDashboard
+from starkbot_sdk.dashboard import register_dashboard  # noqa: E402
+from dashboard import KVStoreDashboard  # noqa: E402
 
 PORT = int(os.environ.get("MODULE_PORT", os.environ.get("KV_STORE_PORT", "9103")))
-register_tui_endpoint(app, KVStoreDashboard, module_url=f"http://127.0.0.1:{PORT}")
+register_dashboard(app, KVStoreDashboard, module_url=f"http://127.0.0.1:{PORT}")
 
 
 # ---------------------------------------------------------------------------

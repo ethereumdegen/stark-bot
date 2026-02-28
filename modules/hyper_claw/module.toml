@@ -6,7 +6,7 @@ description = "Autonomous perpetual futures trader on HyperClaw (Orderly Network
 
 [service]
 command = "uv run service.py"
-default_port = 9108
+default_port = 9111
 port_env_var = "HYPER_CLAW_PORT"
 has_dashboard = true
 health_endpoint = "/rpc/status"

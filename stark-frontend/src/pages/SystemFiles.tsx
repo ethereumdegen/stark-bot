@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   FileCode,
   RefreshCw,
@@ -39,6 +40,7 @@ interface TreeNode {
 }
 
 export default function SystemFiles() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [rootNodes, setRootNodes] = useState<TreeNode[]>([]);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [currentPath, setCurrentPath] = useState<string | null>(null);
@@ -55,6 +57,7 @@ export default function SystemFiles() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [mobileView, setMobileView] = useState<'list' | 'preview'>('list');
+  const deepLinkHandled = useRef(false);
 
   const loadRootNodes = useCallback(async () => {
     setIsLoading(true);
@@ -243,6 +246,66 @@ export default function SystemFiles() {
   useEffect(() => {
     loadRootNodes();
   }, [loadRootNodes]);
+
+  // Deep-link: auto-expand folders and load file from ?path= query param
+  useEffect(() => {
+    if (isLoading || deepLinkHandled.current || rootNodes.length === 0) return;
+    const targetPath = searchParams.get('path');
+    if (!targetPath) return;
+    deepLinkHandled.current = true;
+    // Clear the query param so refreshing doesn't re-trigger
+    searchParams.delete('path');
+    setSearchParams(searchParams, { replace: true });
+
+    (async () => {
+      const segments = targetPath.split('/').filter(Boolean);
+      const expanded = new Set(expandedFolders);
+      let currentNodes = rootNodes;
+      let updatedRoot = [...rootNodes];
+
+      // Walk each segment, expanding directories along the way
+      for (let i = 0; i < segments.length; i++) {
+        const partialPath = segments.slice(0, i + 1).join('/');
+        const node = currentNodes.find((n) => n.path === partialPath || n.name === segments[i]);
+        if (!node) break;
+
+        const isLast = i === segments.length - 1;
+        if (node.is_dir) {
+          expanded.add(node.path);
+          if (!node.loaded || !node.children?.length) {
+            const children = await loadDirChildren(node.path);
+            updatedRoot = updateNodeChildren(updatedRoot, node.path, children);
+            currentNodes = children;
+          } else {
+            currentNodes = node.children || [];
+          }
+          // If this directory is the final segment, try to find the first .md file inside
+          if (isLast) {
+            if (!currentNodes.length) {
+              const children = await loadDirChildren(node.path);
+              updatedRoot = updateNodeChildren(updatedRoot, node.path, children);
+              currentNodes = children;
+            }
+            const mdFile = currentNodes.find((n) => !n.is_dir && n.name.endsWith('.md'));
+            if (mdFile) {
+              setRootNodes(updatedRoot);
+              setExpandedFolders(expanded);
+              loadFile(mdFile.path);
+              return;
+            }
+          }
+        } else if (isLast) {
+          setRootNodes(updatedRoot);
+          setExpandedFolders(expanded);
+          loadFile(node.path);
+          return;
+        }
+      }
+
+      setRootNodes(updatedRoot);
+      setExpandedFolders(expanded);
+    })();
+  }, [isLoading, rootNodes, searchParams, setSearchParams, expandedFolders, loadDirChildren, updateNodeChildren, loadFile]);
 
   const refresh = () => {
     setExpandedFolders(new Set());

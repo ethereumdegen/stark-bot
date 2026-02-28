@@ -1,6 +1,6 @@
 [module]
 name = "kv_store"
-version = "0.3.0"
+version = "0.3.2"
 author = "starkbot"
 description = "Persistent key/value store for agent state tracking (counters, flags, etc.)"
 
@@ -10,38 +10,9 @@ default_port = 9103
 port_env_var = "KV_STORE_PORT"
 dashboard_styles = ["tui", "html"]
 health_endpoint = "/rpc/status"
+dashboard_endpoint = "/"
 backup_endpoint = "/rpc/backup/export"
 restore_endpoint = "/rpc/backup/restore"
 
-[[tools]]
-name = "kv_store"
-description = "Persistent key/value store for tracking state across conversations. Supports get, set, delete, increment (atomic counter), and list (with prefix filter). Keys are auto-uppercased. Use for counters, flags, user-specific state, etc."
-group = "system"
-rpc_method = "POST"
-rpc_endpoint = "/rpc/kv"
-
-[tools.parameters.action]
-type = "string"
-description = "The action to perform: get, set, delete, increment, or list."
-required = true
-enum = ["get", "set", "delete", "increment", "list"]
-
-[tools.parameters.key]
-type = "string"
-description = "The key name. Must be alphanumeric + underscores, max 128 chars. Auto-uppercased."
-required = false
-
-[tools.parameters.value]
-type = "string"
-description = "The value to set (required for 'set' action)."
-required = false
-
-[tools.parameters.amount]
-type = "integer"
-description = "Amount to increment by (default: 1). Can be negative for decrement."
-required = false
-
-[tools.parameters.prefix]
-type = "string"
-description = "Key prefix to filter by when using 'list' action. Lists all keys if empty."
-required = false
+[skill]
+content_file = "skill.md"

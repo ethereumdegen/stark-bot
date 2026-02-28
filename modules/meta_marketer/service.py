@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["flask", "requests", "starkbot-sdk"]
+# dependencies = ["requests", "starkbot-sdk"]
 #
 # [tool.uv.sources]
 # starkbot-sdk = { path = "../starkbot_sdk" }
@@ -42,7 +42,13 @@ BASE_URL = f"https://graph.facebook.com/{API_VERSION}"
 
 log = logging.getLogger("meta_marketer")
 
-app = create_app("meta_marketer")
+app = create_app("meta_marketer", status_extra_fn=lambda: {
+    "has_token": bool(META_ACCESS_TOKEN),
+    "has_account": bool(META_AD_ACCOUNT_ID),
+    "has_secret": bool(META_APP_SECRET),
+    "ad_account_id": META_AD_ACCOUNT_ID,
+    "api_version": API_VERSION,
+})
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -593,41 +599,14 @@ def backup_restore():
 
 
 # ===================================================================
-# Dashboard
+# Dashboard (HTML + TUI)
 # ===================================================================
 
-@app.route("/", methods=["GET"])
-def dashboard():
-    has_token = bool(META_ACCESS_TOKEN)
-    has_account = bool(META_AD_ACCOUNT_ID)
-    status = "ready" if (has_token and has_account) else "missing credentials"
+from starkbot_sdk.dashboard import register_dashboard  # noqa: E402
+from dashboard import MetaMarketerDashboard  # noqa: E402
 
-    html = f"""<!DOCTYPE html>
-<html><head><title>Meta Marketer</title>
-<style>
-  body {{ font-family: -apple-system, system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; background: #0a0a0a; color: #e0e0e0; }}
-  h1 {{ color: #1877f2; }}
-  .status {{ padding: 12px; border-radius: 8px; margin: 16px 0; }}
-  .ok {{ background: #1a3a1a; border: 1px solid #2d6a2d; }}
-  .warn {{ background: #3a3a1a; border: 1px solid #6a6a2d; }}
-  code {{ background: #1a1a1a; padding: 2px 6px; border-radius: 4px; }}
-  table {{ width: 100%; border-collapse: collapse; margin: 16px 0; }}
-  td {{ padding: 8px; border-bottom: 1px solid #222; }}
-  td:first-child {{ color: #888; }}
-</style>
-</head><body>
-<h1>Meta Marketer</h1>
-<div class="status {'ok' if status == 'ready' else 'warn'}">
-  Status: <strong>{status}</strong>
-</div>
-<table>
-  <tr><td>Access Token</td><td>{'configured' if has_token else 'MISSING'}</td></tr>
-  <tr><td>Ad Account</td><td><code>{META_AD_ACCOUNT_ID or 'MISSING'}</code></td></tr>
-  <tr><td>App Secret</td><td>{'configured' if META_APP_SECRET else 'not set (optional)'}</td></tr>
-  <tr><td>API Version</td><td><code>{API_VERSION}</code></td></tr>
-</table>
-</body></html>"""
-    return html
+PORT = int(os.environ.get("MODULE_PORT", os.environ.get("META_MARKETER_PORT", "9110")))
+register_dashboard(app, MetaMarketerDashboard, module_url=f"http://127.0.0.1:{PORT}")
 
 
 # ===================================================================

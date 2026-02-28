@@ -1,24 +1,29 @@
 ---
 name: meta_marketer
 description: "Manage Meta (Facebook/Instagram) ad campaigns — create campaigns, monitor performance, audit spend, and optimize ROAS/CPA"
-version: 1.0.0
+version: 1.1.0
 author: starkbot
-requires_tools: [meta_ads, meta_insights, kv_store]
+requires_tools: [local_rpc]
 tags: [marketing, meta, ads, facebook, instagram]
 ---
 
-# Meta Marketer — Tool Reference
+# Meta Marketer — RPC Reference
 
-The `meta_marketer` module provides two tools for managing Meta advertising: `meta_ads` for campaign CRUD and `meta_insights` for performance analytics.
+The `meta_marketer` module provides two RPC endpoints: `/rpc/tools/ads` for campaign CRUD and `/rpc/tools/insights` for performance analytics.
 
-## meta_ads — Campaign Management
+**After reading these instructions, call `local_rpc` directly to fulfill the user's request. Do NOT call `use_skill` again.**
 
-Manage campaigns, ad sets, ads, and creatives.
+Use `module="meta_marketer"` — the port is resolved automatically.
+
+## Campaign Management — `/rpc/tools/ads`
 
 ### List Campaigns
 
 ```
-meta_ads(action="list_campaigns", limit=25)
+local_rpc(module="meta_marketer", path="/rpc/tools/ads", method="POST", body={
+  "action": "list_campaigns",
+  "limit": 25
+})
 ```
 
 ### Create a Campaign
@@ -26,7 +31,10 @@ meta_ads(action="list_campaigns", limit=25)
 All campaigns are created in **PAUSED** state for safety.
 
 ```
-meta_ads(action="create_campaign", config="{\"name\": \"Summer Sale 2026\", \"objective\": \"OUTCOME_SALES\"}")
+local_rpc(module="meta_marketer", path="/rpc/tools/ads", method="POST", body={
+  "action": "create_campaign",
+  "config": "{\"name\": \"Summer Sale 2026\", \"objective\": \"OUTCOME_SALES\"}"
+})
 ```
 
 **Supported objectives:** `OUTCOME_AWARENESS`, `OUTCOME_ENGAGEMENT`, `OUTCOME_TRAFFIC`, `OUTCOME_LEADS`, `OUTCOME_APP_PROMOTION`, `OUTCOME_SALES`
@@ -36,78 +44,106 @@ meta_ads(action="create_campaign", config="{\"name\": \"Summer Sale 2026\", \"ob
 Budget values are in the account's currency (e.g. cents for USD accounts — $50/day = 5000).
 
 ```
-meta_ads(action="create_adset", campaign_id="CAMPAIGN_ID", config="{
-  \"name\": \"US Women 25-44\",
-  \"daily_budget\": 5000,
-  \"optimization_goal\": \"OFFSITE_CONVERSIONS\",
-  \"billing_event\": \"IMPRESSIONS\",
-  \"targeting\": {
-    \"geo_locations\": {\"countries\": [\"US\"]},
-    \"age_min\": 25,
-    \"age_max\": 44,
-    \"genders\": [2]
-  }
-}")
+local_rpc(module="meta_marketer", path="/rpc/tools/ads", method="POST", body={
+  "action": "create_adset",
+  "campaign_id": "CAMPAIGN_ID",
+  "config": "{\"name\": \"US Women 25-44\", \"daily_budget\": 5000, \"optimization_goal\": \"OFFSITE_CONVERSIONS\", \"billing_event\": \"IMPRESSIONS\", \"targeting\": {\"geo_locations\": {\"countries\": [\"US\"]}, \"age_min\": 25, \"age_max\": 44, \"genders\": [2]}}"
+})
 ```
 
 ### Create an Ad Creative
 
 ```
-meta_ads(action="create_creative", config="{
-  \"name\": \"Summer Sale Image Ad\",
-  \"object_story_spec\": {
-    \"page_id\": \"PAGE_ID\",
-    \"link_data\": {
-      \"image_hash\": \"IMAGE_HASH\",
-      \"link\": \"https://example.com/sale\",
-      \"message\": \"50% off everything this weekend!\",
-      \"name\": \"Summer Sale\",
-      \"description\": \"Shop now before it's gone\",
-      \"call_to_action\": {\"type\": \"SHOP_NOW\"}
-    }
-  }
-}")
+local_rpc(module="meta_marketer", path="/rpc/tools/ads", method="POST", body={
+  "action": "create_creative",
+  "config": "{\"name\": \"Summer Sale Image Ad\", \"object_story_spec\": {\"page_id\": \"PAGE_ID\", \"link_data\": {\"image_hash\": \"IMAGE_HASH\", \"link\": \"https://example.com/sale\", \"message\": \"50% off everything this weekend!\", \"name\": \"Summer Sale\", \"description\": \"Shop now before it's gone\", \"call_to_action\": {\"type\": \"SHOP_NOW\"}}}}"
+})
 ```
 
 ### Create an Ad
 
 ```
-meta_ads(action="create_ad", adset_id="ADSET_ID", config="{
-  \"name\": \"Summer Sale - Image Variant A\",
-  \"creative\": {\"creative_id\": \"CREATIVE_ID\"}
-}")
+local_rpc(module="meta_marketer", path="/rpc/tools/ads", method="POST", body={
+  "action": "create_ad",
+  "adset_id": "ADSET_ID",
+  "config": "{\"name\": \"Summer Sale - Image Variant A\", \"creative\": {\"creative_id\": \"CREATIVE_ID\"}}"
+})
 ```
 
-### Update & Pause
+### Get / Update / Pause
 
 ```
-meta_ads(action="update_campaign", campaign_id="ID", config="{\"daily_budget\": 7500}")
-meta_ads(action="pause_campaign", campaign_id="ID")
-meta_ads(action="update_adset", adset_id="ID", config="{\"daily_budget\": 3000}")
-meta_ads(action="update_ad", ad_id="ID", config="{\"status\": \"ACTIVE\"}")
+local_rpc(module="meta_marketer", path="/rpc/tools/ads", method="POST", body={
+  "action": "get_campaign", "campaign_id": "ID"
+})
+
+local_rpc(module="meta_marketer", path="/rpc/tools/ads", method="POST", body={
+  "action": "update_campaign", "campaign_id": "ID", "config": "{\"daily_budget\": 7500}"
+})
+
+local_rpc(module="meta_marketer", path="/rpc/tools/ads", method="POST", body={
+  "action": "pause_campaign", "campaign_id": "ID"
+})
+
+local_rpc(module="meta_marketer", path="/rpc/tools/ads", method="POST", body={
+  "action": "update_adset", "adset_id": "ID", "config": "{\"daily_budget\": 3000}"
+})
+
+local_rpc(module="meta_marketer", path="/rpc/tools/ads", method="POST", body={
+  "action": "update_ad", "ad_id": "ID", "config": "{\"status\": \"ACTIVE\"}"
+})
 ```
 
-## meta_insights — Performance Analytics
+### All Ad Management Actions
 
-Pull spend, impressions, clicks, conversions, CPA, ROAS with optional breakdowns.
+`list_campaigns`, `get_campaign`, `create_campaign`, `update_campaign`, `pause_campaign`, `list_adsets`, `get_adset`, `create_adset`, `update_adset`, `list_ads`, `get_ad`, `create_ad`, `update_ad`, `list_creatives`, `create_creative`
+
+### Parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `action` | Action to perform (required) |
+| `campaign_id` | Campaign ID (for get/update/pause and adset/ad listing) |
+| `adset_id` | Ad Set ID (for get/update and ad listing) |
+| `ad_id` | Ad ID (for get/update) |
+| `config` | JSON string for create/update actions |
+| `limit` | Max results (default 25, max 100) |
+
+## Performance Analytics — `/rpc/tools/insights`
 
 ### Account-Level Insights
 
 ```
-meta_insights(action="account_insights", date_preset="last_7d")
+local_rpc(module="meta_marketer", path="/rpc/tools/insights", method="POST", body={
+  "action": "account_insights",
+  "date_preset": "last_7d"
+})
 ```
 
 ### Campaign-Level Insights
 
 ```
-meta_insights(action="campaign_insights", date_preset="last_7d")
-meta_insights(action="campaign_insights", campaign_id="ID", date_preset="last_30d")
+local_rpc(module="meta_marketer", path="/rpc/tools/insights", method="POST", body={
+  "action": "campaign_insights",
+  "date_preset": "last_7d"
+})
+
+local_rpc(module="meta_marketer", path="/rpc/tools/insights", method="POST", body={
+  "action": "campaign_insights",
+  "campaign_id": "ID",
+  "date_preset": "last_30d"
+})
 ```
 
 ### With Breakdowns
 
 ```
-meta_insights(action="adset_insights", campaign_id="ID", date_preset="last_7d", breakdowns="age,gender")
+local_rpc(module="meta_marketer", path="/rpc/tools/insights", method="POST", body={
+  "action": "adset_insights",
+  "campaign_id": "ID",
+  "date_preset": "last_7d",
+  "breakdowns": "age,gender"
+})
 ```
 
 **Available breakdowns:** `age`, `gender`, `placement`, `device`, `country`
@@ -115,7 +151,10 @@ meta_insights(action="adset_insights", campaign_id="ID", date_preset="last_7d", 
 ### Custom Date Range
 
 ```
-meta_insights(action="campaign_insights", time_range="{\"since\": \"2026-01-01\", \"until\": \"2026-01-31\"}")
+local_rpc(module="meta_marketer", path="/rpc/tools/insights", method="POST", body={
+  "action": "campaign_insights",
+  "time_range": "{\"since\": \"2026-01-01\", \"until\": \"2026-01-31\"}"
+})
 ```
 
 ### Full Account Audit
@@ -123,7 +162,12 @@ meta_insights(action="campaign_insights", time_range="{\"since\": \"2026-01-01\"
 Pulls all active campaigns and flags issues against your targets.
 
 ```
-meta_insights(action="audit", target_cpa=45.00, target_roas=4.0, date_preset="last_7d")
+local_rpc(module="meta_marketer", path="/rpc/tools/insights", method="POST", body={
+  "action": "audit",
+  "target_cpa": 45.00,
+  "target_roas": 4.0,
+  "date_preset": "last_7d"
+})
 ```
 
 Returns:
@@ -137,21 +181,23 @@ Issue types detected:
 - `LOW_CTR` — CTR <0.5% with significant spend (creative fatigue)
 - `ZERO_CONVERSIONS` — money spent with no conversions
 
-### Date Presets
+### All Insight Actions
 
-`today`, `yesterday`, `last_3d`, `last_7d`, `last_14d`, `last_30d`, `last_90d`, `this_month`, `last_month`
+`account_insights`, `campaign_insights`, `adset_insights`, `ad_insights`, `audit`
 
-## State Tracking with kv_store
+### Parameters
 
-The meta_marketer agent uses kv_store to track state between sessions:
-
-| Key Pattern | Purpose |
-|-------------|---------|
-| `META_LAST_AUDIT_TS` | Timestamp of last full audit |
-| `META_DAILY_SPEND_{date}` | Daily spend tracking |
-| `META_CAMPAIGN_{id}_CPA_TREND` | CPA direction per campaign |
-| `META_ALERT_{type}_{id}` | Alert dedup to avoid repeat warnings |
-| `META_CHANGE_LOG_{ts}` | Log of all changes made |
+| Parameter | Description |
+|-----------|-------------|
+| `action` | Action to perform (required) |
+| `campaign_id` | Campaign ID (for campaign/adset/ad level) |
+| `adset_id` | Ad Set ID (for adset/ad level) |
+| `ad_id` | Ad ID (for ad level) |
+| `date_preset` | Date range: today, yesterday, last_3d, last_7d, last_14d, last_30d, last_90d, this_month, last_month |
+| `time_range` | Custom JSON: {"since": "YYYY-MM-DD", "until": "YYYY-MM-DD"} |
+| `breakdowns` | Comma-separated: age, gender, placement, device, country |
+| `target_cpa` | Target CPA for audit (flags campaigns exceeding this) |
+| `target_roas` | Target ROAS for audit (flags campaigns below this) |
 
 ## Safety Model
 

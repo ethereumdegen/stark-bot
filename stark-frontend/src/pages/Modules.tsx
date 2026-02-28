@@ -354,9 +354,12 @@ export default function Modules() {
                           </span>
                         )}
                         {module.has_skill && (
-                          <span className="text-xs text-purple-300 bg-purple-500/20 px-2 py-1 rounded flex items-center gap-1">
+                          <a
+                            href={`/system-files?path=skills/${encodeURIComponent(module.name)}`}
+                            className="text-xs text-purple-300 bg-purple-500/20 px-2 py-1 rounded flex items-center gap-1 hover:bg-purple-500/30 transition-colors"
+                          >
                             <Zap className="w-3 h-3" /> Skill
-                          </span>
+                          </a>
                         )}
                       </div>
 

@@ -1,6 +1,6 @@
 [module]
 name = "spot_trader"
-version = "1.0.0"
+version = "1.1.0"
 author = "starkbot"
 description = "Autonomous DeFi spot trader — scans DexScreener, makes trade decisions, executes swaps on Base"
 

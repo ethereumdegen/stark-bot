@@ -1,7 +1,7 @@
 ---
 name: whale_tracker
 description: "Track whale wallet movements on Ethereum and Base — detect exchange deposits/withdrawals, score confidence, and verify signal accuracy"
-version: 1.0.0
+version: 1.1.0
 author: starkbot
 requires_tools: [local_rpc]
 ---
@@ -9,14 +9,17 @@ requires_tools: [local_rpc]
 # Whale Tracker — RPC Reference
 
 The `whale_tracker` module exposes these RPC endpoints via `local_rpc`.
-All endpoints are at `http://127.0.0.1:9106`.
+
+**After reading these instructions, call `local_rpc` directly to fulfill the user's request. Do NOT call `use_skill` again.**
+
+Use `module="whale_tracker"` — the port is resolved automatically.
 
 ## Whale Registry
 
 Manage the whale watchlist — add, remove, list, and update tracked whale wallets.
 
 ```
-local_rpc(url="http://127.0.0.1:9106/rpc/tools/whales", method="POST", body={
+local_rpc(module="whale_tracker", path="/rpc/tools/whales", method="POST", body={
   "action": "add",
   "address": "0x...",
   "chain": "ethereum",
@@ -50,7 +53,7 @@ Returns array of whales with joined accuracy data (total_signals, correct_signal
 **import_exchanges** — Seed the exchange address database with known exchange hot wallets for Binance, Coinbase, Kraken, OKX, Gemini, and Bybit on Ethereum and Base. Run this once after setup.
 
 ```
-local_rpc(url="http://127.0.0.1:9106/rpc/tools/whales", method="POST", body={
+local_rpc(module="whale_tracker", path="/rpc/tools/whales", method="POST", body={
   "action": "import_exchanges"
 })
 ```
@@ -60,7 +63,7 @@ local_rpc(url="http://127.0.0.1:9106/rpc/tools/whales", method="POST", body={
 Query whale movement signals with scoring and historical accuracy context.
 
 ```
-local_rpc(url="http://127.0.0.1:9106/rpc/tools/signals", method="POST", body={
+local_rpc(module="whale_tracker", path="/rpc/tools/signals", method="POST", body={
   "action": "recent",
   "min_confidence": 60,
   "limit": 20
@@ -88,7 +91,7 @@ Returns array of whales ranked by accuracy percentage, including total signals, 
 Control the background polling worker.
 
 ```
-local_rpc(url="http://127.0.0.1:9106/rpc/tools/control", method="POST", body={
+local_rpc(module="whale_tracker", path="/rpc/tools/control", method="POST", body={
   "action": "status"
 })
 ```
@@ -103,9 +106,9 @@ local_rpc(url="http://127.0.0.1:9106/rpc/tools/control", method="POST", body={
 
 The worker classifies each whale movement by checking the counterparty address:
 
-1. **exchange_deposit**: Whale sends tokens to a known exchange address → **bearish** (likely preparing to sell)
-2. **exchange_withdrawal**: Whale receives tokens from a known exchange → **bullish** (likely accumulating)
-3. **wallet_transfer**: Transfer to/from an unknown wallet → **neutral** (portfolio rebalancing, cold storage, etc.)
+1. **exchange_deposit**: Whale sends tokens to a known exchange address — **bearish** (likely preparing to sell)
+2. **exchange_withdrawal**: Whale receives tokens from a known exchange — **bullish** (likely accumulating)
+3. **wallet_transfer**: Transfer to/from an unknown wallet — **neutral** (portfolio rebalancing, cold storage, etc.)
 
 Exchange addresses are pre-seeded via `import_exchanges` and cover major CEXs (Binance, Coinbase, Kraken, OKX, Gemini, Bybit) on Ethereum and Base.
 
@@ -141,21 +144,21 @@ Signals only fire for movements sized "large" or above ($1M+).
 
 Signals are verified against actual price movement:
 - After 24h, the token price is compared to `price_at_signal`
-- Bearish signal + price dropped >= 1% → **correct**
-- Bullish signal + price rose >= 1% → **correct**
-- After 72h with no confirming move → **incorrect**
+- Bearish signal + price dropped >= 1% — **correct**
+- Bullish signal + price rose >= 1% — **correct**
+- After 72h with no confirming move — **incorrect**
 - Accuracy stats are rebuilt from resolved signals
 
 ## Backup & Restore
 
 Export whale registry and exchange addresses:
 ```
-local_rpc(url="http://127.0.0.1:9106/rpc/backup/export", method="POST")
+local_rpc(module="whale_tracker", path="/rpc/backup/export", method="POST")
 ```
 
 Restore from backup:
 ```
-local_rpc(url="http://127.0.0.1:9106/rpc/backup/restore", method="POST", body={
+local_rpc(module="whale_tracker", path="/rpc/backup/restore", method="POST", body={
   "whales": [...],
   "exchange_addresses": [...]
 })

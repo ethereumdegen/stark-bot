@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["flask", "tweepy", "starkbot-sdk[tui]"]
+# dependencies = ["tweepy", "starkbot-sdk"]
 # [tool.uv.sources]
 # starkbot-sdk = { path = "../starkbot_sdk" }
 # ///
@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 import tweepy
 from flask import request
 from starkbot_sdk import create_app, error, success
+from starkbot_sdk.tui import notify_tui_update
 
 log = logging.getLogger("twitter_watcher")
 
@@ -345,6 +346,7 @@ def rpc_twitter_watcher():
         return success({
             "count": len(entries),
             "poll_interval": _poll_interval,
+            "last_poll_at": _last_poll_at,
             "entries": entries,
             "recent_hooks": list(_hook_event_log),
         })
@@ -437,14 +439,14 @@ def backup_restore():
 
 
 # ---------------------------------------------------------------------------
-# TUI Dashboard
+# Dashboard (HTML + TUI)
 # ---------------------------------------------------------------------------
 
-from starkbot_sdk.tui import register_tui_endpoint, notify_tui_update  # noqa: E402
-from tui import TwitterWatcherDashboard  # noqa: E402
+from starkbot_sdk.dashboard import register_dashboard  # noqa: E402
+from dashboard import TwitterWatcherDashboard  # noqa: E402
 
 PORT = int(os.environ.get("MODULE_PORT", os.environ.get("TWITTER_WATCHER_PORT", "9108")))
-register_tui_endpoint(app, TwitterWatcherDashboard, module_url=f"http://127.0.0.1:{PORT}")
+register_dashboard(app, TwitterWatcherDashboard, module_url=f"http://127.0.0.1:{PORT}")
 
 
 # ---------------------------------------------------------------------------

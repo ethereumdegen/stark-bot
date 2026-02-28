@@ -10,5 +10,5 @@ __all__ = [
     "create_app",
 ]
 
-# TUI dashboard support available via: from starkbot_sdk.tui import StarkbotDashboard
-# Requires optional dependency group: pip install starkbot-sdk[tui]
+# TUI dashboard support: from starkbot_sdk.tui import StarkbotDashboard
+# Declarative dashboard: from starkbot_sdk.dashboard import Dashboard, register_dashboard

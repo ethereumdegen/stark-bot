@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["flask", "starkbot-sdk"]
+# dependencies = ["starkbot-sdk"]
 #
 # [tool.uv.sources]
 # starkbot-sdk = { path = "../starkbot_sdk" }
@@ -21,7 +21,6 @@ Launch with:  uv run service.py
 """
 
 from flask import request, Response
-from markupsafe import escape
 from starkbot_sdk import create_app, success, error
 import sqlite3
 import os
@@ -357,95 +356,14 @@ def rpc_csv_import():
 
 
 # ---------------------------------------------------------------------------
-# Dashboard
+# Dashboard (HTML + TUI)
 # ---------------------------------------------------------------------------
 
-@app.route("/")
-def dashboard():
-    stats = profile_stats()
-    profiles = profile_list_all()
+from starkbot_sdk.dashboard import register_dashboard  # noqa: E402
+from dashboard import DiscordTippingDashboard  # noqa: E402
 
-    rows_html = ""
-    for p in profiles:
-        addr = p.get("public_address") or ""
-        addr_display = f"{addr[:6]}...{addr[-4:]}" if len(addr) > 10 else (addr or "\u2014")
-        status_class = "registered" if p["registration_status"] == "registered" else "unregistered"
-        rows_html += f"""
-        <tr>
-            <td>{escape(p['discord_user_id'])}</td>
-            <td>{escape(p.get('discord_username') or '\u2014')}</td>
-            <td title="{escape(addr)}">{escape(addr_display)}</td>
-            <td><span class="status {escape(status_class)}">{escape(p['registration_status'])}</span></td>
-            <td>{escape(p.get('updated_at', '\u2014'))}</td>
-        </tr>"""
-
-    html = f"""<!DOCTYPE html>
-<html><head>
-<title>Discord Tipping</title>
-<style>
-  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 2rem; background: #0d1117; color: #c9d1d9; }}
-  .header {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }}
-  .header h1 {{ margin: 0; color: #58a6ff; }}
-  .header-actions {{ display: flex; gap: 0.5rem; }}
-  .btn {{ padding: 0.45rem 1rem; border-radius: 6px; border: 1px solid #30363d; background: #21262d; color: #c9d1d9; font-size: 0.85rem; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 0.4rem; }}
-  .btn:hover {{ background: #30363d; }}
-  .stats {{ display: flex; gap: 1.5rem; margin-bottom: 1.5rem; }}
-  .stat {{ background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem 1.5rem; }}
-  .stat .value {{ font-size: 1.8rem; font-weight: bold; color: #58a6ff; }}
-  .stat .label {{ font-size: 0.85rem; color: #8b949e; }}
-  table {{ border-collapse: collapse; width: 100%; background: #161b22; border-radius: 8px; overflow: hidden; }}
-  th, td {{ padding: 0.6rem 1rem; text-align: left; border-bottom: 1px solid #21262d; }}
-  th {{ background: #0d1117; color: #8b949e; font-weight: 600; }}
-  .status {{ padding: 2px 8px; border-radius: 12px; font-size: 0.8rem; }}
-  .status.registered {{ background: #238636; color: #fff; }}
-  .status.unregistered {{ background: #30363d; color: #8b949e; }}
-</style>
-</head><body>
-<div class="header">
-  <h1>Discord Tipping</h1>
-  <div class="header-actions">
-    <a class="btn" href="rpc/csv/export" download>Export CSV</a>
-    <button class="btn" id="importBtn">Import CSV</button>
-    <input type="file" id="csvFile" accept=".csv" hidden>
-  </div>
-</div>
-<div class="stats">
-  <div class="stat"><div class="value">{stats['total_profiles']}</div><div class="label">Total Profiles</div></div>
-  <div class="stat"><div class="value">{stats['registered_count']}</div><div class="label">Registered</div></div>
-  <div class="stat"><div class="value">{stats['unregistered_count']}</div><div class="label">Unregistered</div></div>
-</div>
-<table>
-  <thead><tr><th>Discord ID</th><th>Username</th><th>Address</th><th>Status</th><th>Updated</th></tr></thead>
-  <tbody>{rows_html if rows_html else '<tr><td colspan="5" style="text-align:center;color:#8b949e;">No profiles yet</td></tr>'}</tbody>
-</table>
-<script>
-document.getElementById('importBtn').addEventListener('click', function() {{
-  document.getElementById('csvFile').click();
-}});
-document.getElementById('csvFile').addEventListener('change', function(e) {{
-  var file = e.target.files[0];
-  if (!file) return;
-  var reader = new FileReader();
-  reader.onload = function(ev) {{
-    var formData = new FormData();
-    formData.append('file', file);
-    fetch('rpc/csv/import', {{ method: 'POST', body: formData }})
-      .then(function(r) {{ return r.json(); }})
-      .then(function(data) {{
-        if (data.ok) {{
-          alert('Imported ' + data.result.imported + ' profile(s).');
-          location.reload();
-        }} else {{
-          alert('Import failed: ' + (data.error || 'unknown error'));
-        }}
-      }})
-      .catch(function(err) {{ alert('Import error: ' + err); }});
-  }};
-  reader.readAsText(file);
-}});
-</script>
-</body></html>"""
-    return html
+PORT = int(os.environ.get("MODULE_PORT", os.environ.get("DISCORD_TIPPING_PORT", "9101")))
+register_dashboard(app, DiscordTippingDashboard, module_url=f"http://127.0.0.1:{PORT}")
 
 
 # ---------------------------------------------------------------------------

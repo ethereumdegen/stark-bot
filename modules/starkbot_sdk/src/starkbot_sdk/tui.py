@@ -1,11 +1,11 @@
-"""TUI dashboard support for StarkBot modules.
-
-Requires the [tui] optional dependency group:
-    pip install starkbot-sdk[tui]
+"""TUI dashboard support for StarkBot modules (legacy).
 
 Modules subclass StarkbotDashboard and override `build()` to return
 a Rich renderable. The SDK handles ANSI rendering and Flask endpoint
 registration.
+
+NOTE: New modules should use the declarative dashboard system instead:
+    from starkbot_sdk.dashboard import Dashboard, register_dashboard
 """
 
 from __future__ import annotations

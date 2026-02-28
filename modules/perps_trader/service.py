@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["flask", "requests", "starkbot-sdk", "avantis_trader_sdk"]
+# dependencies = ["requests", "starkbot-sdk", "avantis_trader_sdk"]
 #
 # [tool.uv.sources]
 # starkbot-sdk = { path = "../starkbot_sdk" }
@@ -35,7 +35,7 @@ RPC protocol endpoints:
 Launch with:  uv run service.py
 """
 
-from flask import request, Response
+from flask import request
 from starkbot_sdk import create_app, success, error
 import sqlite3
 import os
@@ -1649,247 +1649,15 @@ def rpc_backup_restore():
     return success({"restored": restored})
 
 
-# ----- Dashboard -----
+# ---------------------------------------------------------------------------
+# Dashboard (HTML + TUI)
+# ---------------------------------------------------------------------------
 
-DASHBOARD_HTML = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Perps Trader</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-     background:#0d1117;color:#c9d1d9;padding:24px}
-h1{font-size:1.4rem;margin-bottom:16px;color:#58a6ff}
-h2{font-size:1.1rem;margin:20px 0 10px;color:#79c0ff}
-.stats{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px}
-.stat{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 18px;min-width:100px}
-.stat .val{font-size:1.6rem;font-weight:bold;color:#58a6ff}
-.stat .lbl{font-size:.8rem;color:#8b949e;margin-top:2px}
-.stat.long .val,.stat.pos .val{color:#3fb950}
-.stat.short .val,.stat.neg .val{color:#f85149}
-.toolbar{display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap}
-.btn{background:#238636;color:#fff;border:none;padding:6px 14px;border-radius:6px;
-     cursor:pointer;font-size:.85rem;font-weight:500}
-.btn:hover{background:#2ea043}
-.btn-danger{background:#da3633}.btn-danger:hover{background:#f85149}
-.btn-secondary{background:#30363d;color:#c9d1d9}.btn-secondary:hover{background:#484f58}
-.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:.75rem;font-weight:600}
-.badge-long{background:#238636;color:#fff}
-.badge-short{background:#da3633;color:#fff}
-.badge-hold{background:#30363d;color:#8b949e}
-.badge-ok{background:#238636;color:#fff}
-.badge-fail{background:#da3633;color:#fff}
-.badge-pending{background:#d29922;color:#000}
-table{width:100%;border-collapse:collapse;margin-top:8px}
-th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #21262d;font-size:.85rem}
-th{color:#8b949e;font-weight:600;text-transform:uppercase;font-size:.75rem}
-td{font-family:"SF Mono",Consolas,monospace}
-.empty{color:#484f58;padding:20px;text-align:center}
-.worker-status{font-size:.85rem;color:#8b949e;flex:1}
-.worker-status .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}
-.dot-on{background:#3fb950}.dot-off{background:#f85149}
-.pnl-pos{color:#3fb950}.pnl-neg{color:#f85149}.pnl-zero{color:#8b949e}
-.toast{position:fixed;bottom:20px;right:20px;padding:10px 16px;border-radius:6px;
-       opacity:0;transition:opacity .3s;pointer-events:none;z-index:99;color:#fff}
-.toast.show{opacity:1}.toast.ok{background:#238636}.toast.err{background:#da3633}
-</style>
-</head>
-<body>
-<h1>Perps Trader</h1>
+from starkbot_sdk.dashboard import register_dashboard  # noqa: E402
+from dashboard import PerpsTraderDashboard  # noqa: E402
 
-<div class="stats" id="stats"><div class="stat"><div class="val">...</div><div class="lbl">Loading</div></div></div>
-
-<div class="stats" id="pnl-stats"></div>
-
-<div class="toolbar">
-  <div class="worker-status" id="worker-status">...</div>
-  <button class="btn btn-secondary" onclick="refreshPrices()">Refresh Prices</button>
-  <button class="btn btn-secondary" onclick="syncPositions()">Sync Positions</button>
-  <button class="btn" onclick="ctrl('trigger')">Trigger Pulse</button>
-  <button class="btn btn-secondary" onclick="ctrl('start')">Start Worker</button>
-  <button class="btn btn-danger" onclick="ctrl('stop')">Stop Worker</button>
-</div>
-
-<h2>Open Positions</h2>
-<table>
-<thead><tr><th>Pair</th><th>Direction</th><th>Collateral</th><th>Leverage</th><th>Entry</th><th>Current</th><th>Liq. Price</th><th>P&L %</th><th>Unrealized</th></tr></thead>
-<tbody id="positions"><tr><td colspan="9" class="empty">Loading...</td></tr></tbody>
-</table>
-
-<h2>Trade History</h2>
-<table>
-<thead><tr><th>Pair</th><th>Direction</th><th>Collateral</th><th>Leverage</th><th>Entry</th><th>Exit</th><th>Realized P&L</th><th>P&L %</th><th>Closed</th></tr></thead>
-<tbody id="trade-history"><tr><td colspan="9" class="empty">Loading...</td></tr></tbody>
-</table>
-
-<h2>Recent Decisions</h2>
-<table>
-<thead><tr><th>ID</th><th>Decision</th><th>Pair</th><th>Reason</th><th>Status</th><th>Time</th></tr></thead>
-<tbody id="decisions"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody>
-</table>
-
-<div class="toast" id="toast"></div>
-
-<script>
-function api(path,opts){return fetch(path,opts).then(r=>r.json())}
-
-function toast(msg,ok){
-  const t=document.getElementById('toast');
-  t.textContent=msg;t.className='toast show '+(ok?'ok':'err');
-  setTimeout(()=>t.className='toast',2000);
-}
-
-function badge(type,text){
-  const cls={'OPEN_LONG':'long','OPEN_SHORT':'short','CLOSE':'short','HOLD':'hold','APPROVE_USDC':'pending',
-    'executed':'ok','broadcasted':'ok','signed':'pending',
-    'tx_constructed':'pending','pending':'pending','logged':'hold',
-    'failed':'fail','reverted':'fail','broadcast_failed':'fail','tx_failed':'fail'};
-  return '<span class="badge badge-'+(cls[type]||'hold')+'">'+text+'</span>';
-}
-
-function dirBadge(isLong){
-  return isLong?'<span class="badge badge-long">LONG</span>':'<span class="badge badge-short">SHORT</span>';
-}
-
-function pnlClass(v){return v>0?'pnl-pos':v<0?'pnl-neg':'pnl-zero'}
-function pnlFmt(v){if(v==null)return '—';v=parseFloat(v);return (v>=0?'+':'')+v.toFixed(2)}
-function priceFmt(v){if(v==null||v==0)return '—';v=parseFloat(v);return v>=1?'$'+v.toFixed(2):'$'+v.toFixed(6)}
-
-function loadStats(){
-  api('rpc/stats').then(d=>{
-    const s=d.data||{};
-    document.getElementById('stats').innerHTML=
-      '<div class="stat"><div class="val">'+s.open_positions+'</div><div class="lbl">Positions</div></div>'+
-      '<div class="stat"><div class="val">$'+s.total_collateral_deployed+'</div><div class="lbl">Collateral</div></div>'+
-      '<div class="stat"><div class="val">'+s.total_decisions+'</div><div class="lbl">Decisions</div></div>'+
-      '<div class="stat long"><div class="val">'+s.open_longs+'</div><div class="lbl">Longs</div></div>'+
-      '<div class="stat short"><div class="val">'+s.open_shorts+'</div><div class="lbl">Shorts</div></div>'+
-      '<div class="stat"><div class="val">'+s.closes+'</div><div class="lbl">Closes</div></div>'+
-      '<div class="stat long"><div class="val">'+s.executed+'</div><div class="lbl">Executed</div></div>'+
-      '<div class="stat short"><div class="val">'+s.failed+'</div><div class="lbl">Failed</div></div>';
-  });
-}
-
-function loadPnl(){
-  api('rpc/pnl').then(d=>{
-    const p=d.data||{};
-    const el=document.getElementById('pnl-stats');
-    el.innerHTML=
-      '<div class="stat '+(p.total_pnl>=0?'pos':'neg')+'"><div class="val">$'+pnlFmt(p.total_pnl)+'</div><div class="lbl">Total P&L</div></div>'+
-      '<div class="stat '+(p.total_realized_pnl>=0?'pos':'neg')+'"><div class="val">$'+pnlFmt(p.total_realized_pnl)+'</div><div class="lbl">Realized</div></div>'+
-      '<div class="stat '+(p.total_unrealized_pnl>=0?'pos':'neg')+'"><div class="val">$'+pnlFmt(p.total_unrealized_pnl)+'</div><div class="lbl">Unrealized</div></div>'+
-      '<div class="stat"><div class="val">'+(p.win_rate*100).toFixed(1)+'%</div><div class="lbl">Win Rate ('+p.win_count+'W/'+p.loss_count+'L)</div></div>'+
-      (p.best_trade?'<div class="stat pos"><div class="val">$'+pnlFmt(p.best_trade.pnl)+'</div><div class="lbl">Best: '+p.best_trade.pair+'</div></div>':'')+
-      (p.worst_trade?'<div class="stat neg"><div class="val">$'+pnlFmt(p.worst_trade.pnl)+'</div><div class="lbl">Worst: '+p.worst_trade.pair+'</div></div>':'');
-  });
-}
-
-function loadPositions(){
-  api('rpc/positions').then(d=>{
-    const rows=d.data||[];
-    const tb=document.getElementById('positions');
-    if(!rows.length){tb.innerHTML='<tr><td colspan="9" class="empty">No open positions</td></tr>';return}
-    tb.innerHTML=rows.map(r=>{
-      const pnlPct=parseFloat(r.pnl_pct||0);
-      const unrealized=parseFloat(r.unrealized_pnl||0);
-      return '<tr>'+
-        '<td>'+r.pair_name+'</td>'+
-        '<td>'+dirBadge(r.is_long)+'</td>'+
-        '<td>$'+parseFloat(r.collateral_usdc).toFixed(2)+'</td>'+
-        '<td>'+parseFloat(r.leverage).toFixed(1)+'x</td>'+
-        '<td>'+priceFmt(r.open_price)+'</td>'+
-        '<td>'+priceFmt(r.current_price)+'</td>'+
-        '<td>'+priceFmt(r.liquidation_price)+'</td>'+
-        '<td class="'+pnlClass(pnlPct)+'">'+pnlFmt(pnlPct)+'%</td>'+
-        '<td class="'+pnlClass(unrealized)+'">$'+pnlFmt(unrealized)+'</td>'+
-      '</tr>'}).join('');
-  });
-}
-
-function loadTradeHistory(){
-  api('rpc/trade_history').then(d=>{
-    const rows=d.data||[];
-    const tb=document.getElementById('trade-history');
-    if(!rows.length){tb.innerHTML='<tr><td colspan="9" class="empty">No trades yet</td></tr>';return}
-    tb.innerHTML=rows.map(r=>{
-      const rpnl=parseFloat(r.realized_pnl||0);
-      const rpct=parseFloat(r.pnl_pct||0);
-      return '<tr>'+
-        '<td>'+r.pair_name+'</td>'+
-        '<td>'+dirBadge(r.is_long)+'</td>'+
-        '<td>'+(r.collateral_usdc!=null?'$'+parseFloat(r.collateral_usdc).toFixed(2):'—')+'</td>'+
-        '<td>'+(r.leverage!=null?parseFloat(r.leverage).toFixed(1)+'x':'—')+'</td>'+
-        '<td>'+priceFmt(r.open_price)+'</td>'+
-        '<td>'+priceFmt(r.close_price)+'</td>'+
-        '<td class="'+pnlClass(rpnl)+'">$'+pnlFmt(rpnl)+'</td>'+
-        '<td class="'+pnlClass(rpct)+'">'+pnlFmt(rpct)+'%</td>'+
-        '<td>'+(r.closed_at||'')+'</td>'+
-      '</tr>'}).join('');
-  });
-}
-
-function loadDecisions(){
-  api('rpc/history',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit:30})}).then(d=>{
-    const rows=d.data||[];
-    const tb=document.getElementById('decisions');
-    if(!rows.length){tb.innerHTML='<tr><td colspan="6" class="empty">No decisions yet</td></tr>';return}
-    tb.innerHTML=rows.map(r=>'<tr>'+
-      '<td>'+r.id+'</td>'+
-      '<td>'+badge(r.decision,r.decision)+'</td>'+
-      '<td>'+(r.pair_name||'—')+'</td>'+
-      '<td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(r.reason||'—')+'</td>'+
-      '<td>'+badge(r.status,r.status)+'</td>'+
-      '<td>'+(r.created_at||'')+'</td>'+
-    '</tr>').join('');
-  });
-}
-
-function loadWorker(){
-  api('rpc/status').then(d=>{
-    const s=d.data||{};
-    const running=s.worker_running;
-    const el=document.getElementById('worker-status');
-    el.innerHTML='<span class="dot '+(running?'dot-on':'dot-off')+'"></span>Worker '+(running?'running':'stopped')+
-      (s.last_pulse_at?' &middot; Last pulse: '+s.last_pulse_at:'')+
-      (s.usdc_approved==='true'?' &middot; USDC: Approved':' &middot; <span style="color:#f85149">USDC: Not Approved</span>');
-  });
-}
-
-function ctrl(action){
-  api('rpc/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action})}).then(d=>{
-    toast(action+' OK',d.success!==false);
-    loadWorker();
-    if(action==='trigger')setTimeout(()=>{loadDecisions();loadStats();loadPositions()},3000);
-  });
-}
-
-function refreshPrices(){
-  api('rpc/refresh',{method:'POST'}).then(d=>{
-    toast('Prices refreshed',d.success!==false);
-    loadPositions();loadPnl();
-  });
-}
-
-function syncPositions(){
-  api('rpc/sync_positions',{method:'POST'}).then(d=>{
-    const r=d.data||{};
-    toast('Synced: '+r.synced+' trades (+'+(r.added||0)+' new, '+(r.closed||0)+' closed)',d.success!==false);
-    loadPositions();loadPnl();loadStats();
-  });
-}
-
-loadStats();loadPnl();loadPositions();loadTradeHistory();loadDecisions();loadWorker();
-setInterval(()=>{loadStats();loadPnl();loadPositions();loadTradeHistory();loadDecisions();loadWorker()},15000);
-</script>
-</body>
-</html>"""
-
-
-@app.route("/")
-def dashboard():
-    return Response(DASHBOARD_HTML, content_type="text/html")
+PORT = int(os.environ.get("MODULE_PORT", os.environ.get("PERPS_TRADER_PORT", "9105")))
+register_dashboard(app, PerpsTraderDashboard, module_url=f"http://127.0.0.1:{PORT}")
 
 
 # ---------------------------------------------------------------------------
