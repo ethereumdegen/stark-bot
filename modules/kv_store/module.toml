@@ -1,6 +1,6 @@
 [module]
 name = "kv_store"
-version = "0.3.2"
+version = "0.3.6"
 author = "starkbot"
 description = "Persistent key/value store for agent state tracking (counters, flags, etc.)"
 
