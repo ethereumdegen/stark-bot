@@ -231,13 +231,23 @@ impl super::Module for DynamicModule {
     }
 
     fn has_dashboard(&self) -> bool {
-        self.manifest.service.has_dashboard || self.manifest.service.dashboard_style.is_some()
+        self.manifest.service.has_dashboard
+            || self.manifest.service.dashboard_style.is_some()
+            || self.manifest.service.dashboard_styles.is_some()
     }
 
     fn dashboard_style(&self) -> Option<String> {
-        self.manifest.service.dashboard_style.clone().or_else(|| {
-            if self.manifest.service.has_dashboard { Some("html".to_string()) } else { None }
-        })
+        // Return the first style from the resolved list
+        let styles = self.manifest.service.resolved_dashboard_styles();
+        if styles.is_empty() {
+            None
+        } else {
+            Some(styles[0].clone())
+        }
+    }
+
+    fn dashboard_styles(&self) -> Vec<String> {
+        self.manifest.service.resolved_dashboard_styles()
     }
 
     fn create_tools(&self) -> Vec<Arc<dyn Tool>> {

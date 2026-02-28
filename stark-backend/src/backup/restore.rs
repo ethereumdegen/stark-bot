@@ -674,7 +674,7 @@ pub async fn restore_all(
             log::warn!("[Restore] Failed to disable existing agent settings for restore: {}", e);
         }
         for entry in &backup_data.agent_settings {
-            let payment_mode = if entry.payment_mode.is_empty() { "x402" } else { &entry.payment_mode };
+            let payment_mode = if entry.payment_mode.is_empty() { "credits" } else { &entry.payment_mode };
             match db.save_agent_settings(
                 entry.endpoint_name.as_deref(),
                 &entry.endpoint,

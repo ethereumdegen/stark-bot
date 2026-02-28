@@ -837,7 +837,7 @@ async fn gateway_modules_list(
             name: m.name().to_string(),
             description: m.description().to_string(),
             version: m.version().to_string(),
-            has_tui: m.dashboard_style().as_deref() == Some("tui"),
+            has_tui: m.dashboard_styles().iter().any(|s| s == "tui"),
         })
         .collect();
 

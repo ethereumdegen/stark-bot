@@ -18,6 +18,7 @@ use crate::ai::multi_agent::types::{all_subtype_configs_unfiltered, AgentSubtype
 use crate::channels::dispatcher::MessageDispatcher;
 use crate::channels::types::NormalizedMessage;
 use crate::config::runtime_agents_dir;
+use crate::gateway::protocol::{EventType, GatewayEvent};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -88,6 +89,16 @@ fn spawn_hook_session(
         config.key, event_name
     );
 
+    // Broadcast hook.fired event
+    dispatcher.broadcaster().broadcast(GatewayEvent::new(
+        EventType::HookFired,
+        serde_json::json!({
+            "agent_key": config.key,
+            "event": event_name,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+        }),
+    ));
+
     let dispatcher_clone = Arc::clone(dispatcher);
     let key_clone = config.key.clone();
     let event_clone = event_name.to_string();
@@ -98,20 +109,40 @@ fn spawn_hook_session(
             dispatcher_clone.dispatch_safe(normalized),
         )
         .await;
-        match result {
+
+        let (status, error_msg) = match &result {
             Ok(r) if r.error.is_some() => {
-                log::warn!("[PERSONA_HOOK:{}:{}] Failed: {:?}", key_clone, event_clone, r.error);
+                let err = format!("{:?}", r.error);
+                log::warn!("[PERSONA_HOOK:{}:{}] Failed: {}", key_clone, event_clone, err);
+                ("failed", Some(err))
             }
             Err(_) => {
                 log::warn!(
                     "[PERSONA_HOOK:{}:{}] Timed out after {}s",
                     key_clone, event_clone, HOOK_TIMEOUT_SECS
                 );
+                ("timeout", Some(format!("Timed out after {}s", HOOK_TIMEOUT_SECS)))
             }
             _ => {
                 log::info!("[PERSONA_HOOK:{}:{}] Completed successfully", key_clone, event_clone);
+                ("success", None)
             }
+        };
+
+        // Broadcast hook.completed event
+        let mut data = serde_json::json!({
+            "agent_key": key_clone,
+            "event": event_clone,
+            "status": status,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+        });
+        if let Some(err) = error_msg {
+            data["error"] = serde_json::Value::String(err);
         }
+        dispatcher_clone.broadcaster().broadcast(GatewayEvent::new(
+            EventType::HookCompleted,
+            data,
+        ));
     });
 }
 

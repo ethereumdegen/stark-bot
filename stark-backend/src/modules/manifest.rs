@@ -58,6 +58,10 @@ pub struct ServiceConfig {
     /// Dashboard style: "html" for traditional HTML dashboards, "tui" for Rich ANSI dashboards.
     #[serde(default)]
     pub dashboard_style: Option<String>,
+    /// Multiple dashboard styles (e.g. ["tui", "html"] for dual-mode modules).
+    /// Takes priority over `dashboard_style` when present.
+    #[serde(default)]
+    pub dashboard_styles: Option<Vec<String>>,
     #[serde(default = "default_health_endpoint")]
     pub health_endpoint: String,
     /// RPC endpoint for backup export (e.g. "/rpc/backup/export"). POST, returns JSON.
@@ -72,6 +76,23 @@ pub struct ServiceConfig {
     /// Extra environment variables the service needs.
     #[serde(default)]
     pub env_vars: HashMap<String, EnvVarSpec>,
+}
+
+impl ServiceConfig {
+    /// Resolve the canonical list of dashboard styles for this module.
+    /// Priority: `dashboard_styles` (plural) > `dashboard_style` (singular) > `has_dashboard` flag.
+    pub fn resolved_dashboard_styles(&self) -> Vec<String> {
+        if let Some(ref styles) = self.dashboard_styles {
+            return styles.clone();
+        }
+        if let Some(ref style) = self.dashboard_style {
+            return vec![style.clone()];
+        }
+        if self.has_dashboard {
+            return vec!["html".to_string()];
+        }
+        vec![]
+    }
 }
 
 fn default_health_endpoint() -> String {
@@ -474,6 +495,64 @@ content_file = "skill.md"
         let skill = manifest.skill.unwrap();
         assert_eq!(skill.content_file.as_deref(), Some("skill.md"));
         assert!(skill.skill_dir.is_none());
+    }
+
+    #[test]
+    fn test_resolved_dashboard_styles() {
+        // dashboard_styles (plural) takes priority
+        let toml = r#"
+[module]
+name = "dual"
+version = "1.0.0"
+description = "Dual mode module"
+
+[service]
+default_port = 9200
+dashboard_styles = ["tui", "html"]
+"#;
+        let manifest = ModuleManifest::from_str(toml).unwrap();
+        assert_eq!(manifest.service.resolved_dashboard_styles(), vec!["tui", "html"]);
+
+        // Falls back to singular dashboard_style
+        let toml2 = r#"
+[module]
+name = "tui_only"
+version = "1.0.0"
+description = "TUI only"
+
+[service]
+default_port = 9200
+dashboard_style = "tui"
+"#;
+        let manifest2 = ModuleManifest::from_str(toml2).unwrap();
+        assert_eq!(manifest2.service.resolved_dashboard_styles(), vec!["tui"]);
+
+        // Falls back to has_dashboard → ["html"]
+        let toml3 = r#"
+[module]
+name = "html_only"
+version = "1.0.0"
+description = "HTML only"
+
+[service]
+default_port = 9200
+has_dashboard = true
+"#;
+        let manifest3 = ModuleManifest::from_str(toml3).unwrap();
+        assert_eq!(manifest3.service.resolved_dashboard_styles(), vec!["html"]);
+
+        // No dashboard → empty
+        let toml4 = r#"
+[module]
+name = "no_dash"
+version = "1.0.0"
+description = "No dashboard"
+
+[service]
+default_port = 9200
+"#;
+        let manifest4 = ModuleManifest::from_str(toml4).unwrap();
+        assert!(manifest4.service.resolved_dashboard_styles().is_empty());
     }
 
     #[test]

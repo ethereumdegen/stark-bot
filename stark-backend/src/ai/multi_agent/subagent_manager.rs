@@ -390,7 +390,7 @@ impl SubAgentManager {
         };
 
         // Create AI client with wallet provider for x402 payments
-        let client = match AiClient::from_settings_with_wallet_provider(&effective_settings, wallet_provider.clone()) {
+        let client = match AiClient::from_settings_with_wallet_provider(&effective_settings, wallet_provider.clone(), None) {
             Ok(c) => c.with_broadcaster(Arc::clone(&broadcaster), context.parent_channel_id),
             Err(e) => return Err(format!("Failed to create AI client: {}", e)),
         };

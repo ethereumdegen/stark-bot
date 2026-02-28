@@ -427,6 +427,8 @@ pub struct ToolContext {
     pub current_subagent_depth: Option<u32>,
     /// Hybrid search engine for combined FTS5 + vector + graph memory search
     pub hybrid_search: Option<Arc<crate::memory::HybridSearchEngine>>,
+    /// Credits session client for Bearer-token-based balance checks
+    pub credits_session: Option<Arc<crate::credits_session::CreditsSessionClient>>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -492,6 +494,7 @@ impl Default for ToolContext {
             current_subagent_id: None,
             current_subagent_depth: None,
             hybrid_search: None,
+            credits_session: None,
         }
     }
 }
@@ -765,6 +768,11 @@ impl ToolContext {
         self.registers.set("wallet_address", serde_json::json!(wallet_address), "wallet_provider");
 
         self.wallet_provider = Some(wallet_provider);
+        self
+    }
+
+    pub fn with_credits_session(mut self, session: Arc<crate::credits_session::CreditsSessionClient>) -> Self {
+        self.credits_session = Some(session);
         self
     }
 

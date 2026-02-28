@@ -1,12 +1,10 @@
-//! x402-aware HTTP client with ERC-8128 credits support
+//! Credits-aware HTTP client for inference-super-router
 //!
-//! When an endpoint returns 402 with `x-erc8128-credits: true`, the client
-//! will first attempt to authenticate via ERC-8128 signed headers (using the
-//! bot's wallet identity). If the bot has credits, the request is served without
-//! on-chain payment. If no credits remain, it falls through to normal x402 payment.
+//! For defirelay endpoints, payment is ALWAYS via credits (session-based Bearer
+//! tokens or ERC-8128 signed headers). The client NEVER falls through to x402
+//! on-chain payment — if credits are exhausted, the request fails with an error.
 //!
-//! Endpoints that advertise ERC-8128 credits support are cached so subsequent
-//! requests proactively include ERC-8128 headers on the first attempt.
+//! For custom endpoints, no payment protocol is used (direct API key auth).
 
 use reqwest::{header, Client, Response};
 use serde::Serialize;
@@ -15,18 +13,18 @@ use std::sync::{Arc, Mutex};
 
 use super::signer::X402Signer;
 use super::types::{PaymentRequired, X402PaymentInfo};
+use crate::credits_session::CreditsSessionClient;
 use crate::erc8128::Erc8128Signer;
 use crate::wallet::WalletProvider;
 
-/// Payment mode controlling how the X402 client handles payment negotiation
+/// Payment mode controlling how the client handles payment
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PaymentMode {
-    /// Legacy behavior: try ERC-8128 credits, fall back to x402
-    Auto,
-    /// ERC-8128 credits only — error if no credits available (no x402 fallback)
-    CreditsOnly,
-    /// x402 only — skip ERC-8128 entirely, go straight to x402 on 402
-    X402Only,
+    /// Credits only — session-based Bearer tokens + ERC-8128 signed headers.
+    /// NEVER falls through to x402 on-chain payment.
+    Credits,
+    /// Custom endpoint — no payment protocol (direct API key auth)
+    CustomEndpoint,
 }
 
 /// Result of a request that may have required payment
@@ -36,7 +34,7 @@ pub struct X402Response {
 }
 
 /// HTTP client that automatically handles x402 payment flow
-/// and ERC-8128 credits discovery/usage.
+/// and session-based credits.
 pub struct X402Client {
     client: Client,
     signer: Arc<X402Signer>,
@@ -46,6 +44,8 @@ pub struct X402Client {
     erc8128_credits_hosts: Arc<Mutex<HashSet<String>>>,
     /// Payment mode controlling credit vs x402 negotiation
     payment_mode: PaymentMode,
+    /// Optional session client for Bearer-token credits (reduces Privy signing to ~1/hour)
+    credits_session: Option<Arc<CreditsSessionClient>>,
 }
 
 impl X402Client {
@@ -62,13 +62,20 @@ impl X402Client {
             wallet_provider,
             erc8128_signer,
             erc8128_credits_hosts: Arc::new(Mutex::new(HashSet::new())),
-            payment_mode: PaymentMode::Auto,
+            payment_mode: PaymentMode::Credits,
+            credits_session: None,
         })
     }
 
     /// Set the payment mode (builder pattern)
     pub fn with_payment_mode(mut self, mode: PaymentMode) -> Self {
         self.payment_mode = mode;
+        self
+    }
+
+    /// Set the credits session client (builder pattern)
+    pub fn with_credits_session(mut self, session: Arc<CreditsSessionClient>) -> Self {
+        self.credits_session = Some(session);
         self
     }
 
@@ -92,13 +99,19 @@ impl X402Client {
             wallet_provider: wp,
             erc8128_signer,
             erc8128_credits_hosts: Arc::new(Mutex::new(HashSet::new())),
-            payment_mode: PaymentMode::Auto,
+            payment_mode: PaymentMode::Credits,
+            credits_session: None,
         })
     }
 
     /// Get the wallet address
     pub fn wallet_address(&self) -> String {
         self.signer.address()
+    }
+
+    /// Whether a credits session client is attached.
+    pub fn has_credits_session(&self) -> bool {
+        self.credits_session.is_some()
     }
 
     /// Check if a host is known to support ERC-8128 credits.
@@ -147,55 +160,61 @@ impl X402Client {
         Ok(req)
     }
 
-    /// Make a POST request with automatic x402 payment handling
-    /// and ERC-8128 credits support.
+    /// Make a POST request with credits-based payment (session Bearer or ERC-8128).
     ///
-    /// Returns both the response and payment info if a payment was made.
+    /// For `Credits` mode: tries session token first, then ERC-8128 signed headers.
+    /// NEVER falls through to x402 on-chain payment — returns error if credits fail.
+    ///
+    /// For `CustomEndpoint` mode: sends a plain request with no payment protocol.
     pub async fn post_with_payment<T: Serialize>(
         &self,
         url: &str,
         body: &T,
     ) -> Result<X402Response, String> {
-        log::info!("[X402] Making POST request to {} (mode={:?})", url, self.payment_mode);
+        log::info!("[Credits] Making POST request to {} (mode={:?})", url, self.payment_mode);
 
-        // Serialize body upfront (needed for ERC-8128 Content-Digest)
-        let body_bytes = serde_json::to_vec(body)
-            .map_err(|e| format!("Failed to serialize request body: {}", e))?;
-
-        // ── X402Only mode: skip all ERC-8128 logic ──
-        if self.payment_mode == PaymentMode::X402Only {
-            let initial_response = self
+        // ── CustomEndpoint mode: no payment protocol ──
+        if self.payment_mode == PaymentMode::CustomEndpoint {
+            let response = self
                 .client
                 .post(url)
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(body_bytes.clone())
+                .json(body)
                 .send()
                 .await
                 .map_err(|e| format!("Request failed: {}", e))?;
 
-            if initial_response.status().as_u16() != 402 {
-                return Ok(X402Response {
-                    response: initial_response,
-                    payment: None,
-                });
-            }
-
-            return self
-                .handle_402_with_x402(initial_response, url, &body_bytes)
-                .await;
+            return Ok(X402Response {
+                response,
+                payment: None,
+            });
         }
 
-        // ── Proactive ERC-8128 path: if we know this host supports credits,
-        //    OR if payment mode is CreditsOnly (must always sign) ──
-        if self.payment_mode == PaymentMode::CreditsOnly || self.is_erc8128_credits_host(url) {
-            log::info!("[X402] Proactively sending ERC-8128 headers (cached credits host)");
+        // ── Credits mode ──
+        // Serialize body upfront (needed for ERC-8128 Content-Digest)
+        let body_bytes = serde_json::to_vec(body)
+            .map_err(|e| format!("Failed to serialize request body: {}", e))?;
+
+        // 1. Session-based credits path (preferred when available)
+        if let Some(ref session) = self.credits_session {
+            match self.try_credits_session(session, url, &body_bytes).await {
+                Ok(response) => return Ok(response),
+                Err(e) => {
+                    log::warn!("[Credits] Session path failed: {}, trying ERC-8128 fallback", e);
+                }
+            }
+        }
+
+        // 2. Proactive ERC-8128 path (known credits host)
+        if self.is_erc8128_credits_host(url) {
+            log::info!("[Credits] Proactively sending ERC-8128 headers (cached credits host)");
 
             match self.build_erc8128_post_request(url, &body_bytes).await {
                 Ok(req) => {
                     match req.body(body_bytes.clone()).send().await {
                         Ok(response) if response.status().as_u16() != 402 => {
                             log::info!(
-                                "[X402] ERC-8128 credits accepted (proactive), status: {}",
+                                "[Credits] ERC-8128 credits accepted (proactive), status: {}",
                                 response.status()
                             );
                             return Ok(X402Response {
@@ -203,39 +222,21 @@ impl X402Client {
                                 payment: None,
                             });
                         }
-                        Ok(response_402) => {
-                            if self.payment_mode == PaymentMode::CreditsOnly {
-                                return Err("ERC-8128 credits exhausted and payment mode is CreditsOnly (no x402 fallback)".to_string());
-                            }
-                            log::info!(
-                                "[X402] ERC-8128 credits not accepted (maybe exhausted), falling through to x402"
-                            );
-                            // Fall through to x402 with this 402 response
-                            return self
-                                .handle_402_with_x402(response_402, url, &body_bytes)
-                                .await;
+                        Ok(_) => {
+                            return Err("Insufficient credits (ERC-8128 proactive got 402). Top up your credits balance.".to_string());
                         }
                         Err(e) => {
-                            if self.payment_mode == PaymentMode::CreditsOnly {
-                                return Err(format!("ERC-8128 proactive request failed and payment mode is CreditsOnly: {}", e));
-                            }
-                            log::warn!(
-                                "[X402] ERC-8128 proactive request failed: {}, falling through",
-                                e
-                            );
+                            log::warn!("[Credits] ERC-8128 proactive request failed: {}", e);
                         }
                     }
                 }
                 Err(e) => {
-                    if self.payment_mode == PaymentMode::CreditsOnly {
-                        return Err(format!("ERC-8128 signing failed and payment mode is CreditsOnly: {}", e));
-                    }
-                    log::warn!("[X402] ERC-8128 signing failed: {}, falling through", e);
+                    log::warn!("[Credits] ERC-8128 signing failed: {}", e);
                 }
             }
         }
 
-        // ── Standard path: initial request without payment or ERC-8128 ──
+        // 3. Initial request without payment headers (discovers ERC-8128 support)
         let initial_response = self
             .client
             .post(url)
@@ -252,19 +253,18 @@ impl X402Client {
             });
         }
 
-        // ── Got 402: check for ERC-8128 credits discovery ──
+        // 4. Got 402: try ERC-8128 credits discovery
         if has_erc8128_credits_header(&initial_response) {
             self.mark_erc8128_credits_host(url);
 
-            // Try ERC-8128 signed retry before x402 payment
-            log::info!("[X402] Discovered ERC-8128 credits, trying signed retry");
+            log::info!("[Credits] Discovered ERC-8128 credits, trying signed retry");
 
             match self.build_erc8128_post_request(url, &body_bytes).await {
                 Ok(req) => {
                     match req.body(body_bytes.clone()).send().await {
                         Ok(response) if response.status().as_u16() != 402 => {
                             log::info!(
-                                "[X402] ERC-8128 credits accepted (discovered), status: {}",
+                                "[Credits] ERC-8128 credits accepted (discovered), status: {}",
                                 response.status()
                             );
                             return Ok(X402Response {
@@ -272,189 +272,107 @@ impl X402Client {
                                 payment: None,
                             });
                         }
-                        Ok(response_402) => {
-                            if self.payment_mode == PaymentMode::CreditsOnly {
-                                return Err("ERC-8128 credits not available and payment mode is CreditsOnly (no x402 fallback)".to_string());
-                            }
-                            log::info!(
-                                "[X402] ERC-8128 signed request still got 402 (no credits?), falling through to x402"
-                            );
-                            return self
-                                .handle_402_with_x402(response_402, url, &body_bytes)
-                                .await;
+                        Ok(_) => {
+                            return Err("Insufficient credits (ERC-8128 discovered but got 402). Top up your credits balance.".to_string());
                         }
                         Err(e) => {
-                            if self.payment_mode == PaymentMode::CreditsOnly {
-                                return Err(format!("ERC-8128 retry failed and payment mode is CreditsOnly: {}", e));
-                            }
-                            log::warn!(
-                                "[X402] ERC-8128 retry request failed: {}, falling through to x402",
-                                e
-                            );
+                            return Err(format!("Credits request failed: {}", e));
                         }
                     }
                 }
                 Err(e) => {
-                    if self.payment_mode == PaymentMode::CreditsOnly {
-                        return Err(format!("ERC-8128 signing failed and payment mode is CreditsOnly: {}", e));
-                    }
-                    log::warn!(
-                        "[X402] ERC-8128 signing failed: {}, falling through to x402",
-                        e
-                    );
+                    return Err(format!("ERC-8128 signing failed: {}", e));
                 }
             }
         }
 
-        // ── No ERC-8128 or it failed: standard x402 payment ──
-        if self.payment_mode == PaymentMode::CreditsOnly {
-            return Err("Received 402 but no ERC-8128 credits available and payment mode is CreditsOnly".to_string());
-        }
-        self.handle_402_with_x402(initial_response, url, &body_bytes)
-            .await
+        // No credits support detected on this endpoint — fail
+        Err("Endpoint returned 402 but does not support credits (no x-erc8128-credits header). Cannot proceed without credits.".to_string())
     }
 
-    /// Make a GET request with automatic x402 payment handling
-    /// Returns both the response and payment info if a payment was made
+    /// Try the session-based credits path: send Bearer token, retry on 401.
+    async fn try_credits_session(
+        &self,
+        session: &CreditsSessionClient,
+        url: &str,
+        body_bytes: &[u8],
+    ) -> Result<X402Response, String> {
+        let token = session.get_token().await?;
+
+        log::info!("[X402] Sending request with Bearer session token");
+        let response = self
+            .client
+            .post(url)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::AUTHORIZATION, format!("Bearer {}", token))
+            .body(body_bytes.to_vec())
+            .send()
+            .await
+            .map_err(|e| format!("Session request failed: {}", e))?;
+
+        let status = response.status().as_u16();
+
+        if status == 401 {
+            // Session expired or invalid — invalidate and retry once
+            log::info!("[X402] Bearer token rejected (401), invalidating and retrying");
+            session.invalidate().await;
+
+            let new_token = session.get_token().await?;
+            let retry_response = self
+                .client
+                .post(url)
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, format!("Bearer {}", new_token))
+                .body(body_bytes.to_vec())
+                .send()
+                .await
+                .map_err(|e| format!("Session retry request failed: {}", e))?;
+
+            let retry_status = retry_response.status().as_u16();
+            if retry_status == 401 {
+                return Err("Session re-establishment failed (401 on retry)".to_string());
+            }
+            if retry_status == 402 {
+                return Err("Insufficient credits (402 after session auth)".to_string());
+            }
+
+            log::info!("[X402] Session retry succeeded, status: {}", retry_status);
+            return Ok(X402Response {
+                response: retry_response,
+                payment: None,
+            });
+        }
+
+        if status == 402 {
+            return Err("Insufficient credits (402 with session auth)".to_string());
+        }
+
+        log::info!("[X402] Credits session accepted, status: {}", status);
+        Ok(X402Response {
+            response,
+            payment: None,
+        })
+    }
+
+    /// Make a GET request (no payment handling for GET requests)
     pub async fn get_with_payment(
         &self,
         url: &str,
     ) -> Result<X402Response, String> {
-        log::info!("[X402] Making GET request to {}", url);
+        log::info!("[Credits] Making GET request to {}", url);
 
-        // First request without payment
-        let initial_response = self.client
+        let response = self.client
             .get(url)
             .send()
             .await
             .map_err(|e| format!("Request failed: {}", e))?;
 
-        self.handle_402_response(initial_response, || {
-            self.client.get(url)
-        }).await
-    }
-
-    /// Handle a 402 response with standard x402 payment flow.
-    /// Called after ERC-8128 credits path has been tried or skipped.
-    async fn handle_402_with_x402(
-        &self,
-        response_402: Response,
-        url: &str,
-        _body_bytes: &[u8],
-    ) -> Result<X402Response, String> {
-        // Re-use the existing handle_402_response logic
-        self.handle_402_response(response_402, || {
-            self.client
-                .post(url)
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(_body_bytes.to_vec())
-        })
-        .await
-    }
-
-    /// Handle 402 response and retry with payment if needed
-    async fn handle_402_response<F>(
-        &self,
-        initial_response: Response,
-        build_request: F,
-    ) -> Result<X402Response, String>
-    where
-        F: Fn() -> reqwest::RequestBuilder,
-    {
-        // Check if payment is required
-        if initial_response.status().as_u16() != 402 {
-            log::info!("[X402] No payment required, status: {}", initial_response.status());
-            return Ok(X402Response {
-                response: initial_response,
-                payment: None,
-            });
-        }
-
-        log::info!("[X402] Received 402 Payment Required");
-
-        // Get payment requirements from header
-        let payment_header = initial_response
-            .headers()
-            .get("payment-required")
-            .or_else(|| initial_response.headers().get("PAYMENT-REQUIRED"))
-            .ok_or_else(|| "402 response missing payment-required header".to_string())?
-            .to_str()
-            .map_err(|e| format!("Invalid payment-required header: {}", e))?;
-
-        let payment_required = PaymentRequired::from_base64(payment_header)?;
-
-        log::info!(
-            "[X402] Payment requirements: {} {} to {}",
-            payment_required.accepts.first().map(|a| a.max_amount_required.as_str()).unwrap_or("?"),
-            payment_required.accepts.first().map(|a| a.asset.as_str()).unwrap_or("?"),
-            payment_required.accepts.first().map(|a| a.pay_to_address.as_str()).unwrap_or("?")
-        );
-
-        // Get the first (and typically only) payment option
-        let requirements = payment_required.accepts.first()
-            .ok_or_else(|| "No payment options in 402 response".to_string())?;
-
-        // Check payment limit before signing
-        super::payment_limits::check_payment_limit(
-            &requirements.asset,
-            &requirements.max_amount_required,
-        )?;
-
-        // Create payment info before signing
-        let payment_info = X402PaymentInfo::from_requirements(requirements);
-
-        // Sign the payment using V2 format (required by Kimi/AI relay)
-        let payment_payload = self.signer.sign_payment_v2(requirements).await?;
-        let payment_header_value = payment_payload.to_base64()?;
-
-        log::info!(
-            "[X402] Signed payment for {} {} to {}, retrying request",
-            payment_info.amount_formatted,
-            payment_info.asset,
-            payment_info.pay_to
-        );
-
-        // Retry with payment
-        let paid_response = build_request()
-            .header("X-PAYMENT", payment_header_value)
-            .send()
-            .await
-            .map_err(|e| format!("Paid request failed: {}", e))?;
-
-        log::info!("[X402] Payment sent, response status: {}", paid_response.status());
-
-        // Try to extract transaction hash from response headers
-        // x402 servers may return it in various headers
-        let tx_hash = paid_response
-            .headers()
-            .get("x-payment-transaction")
-            .or_else(|| paid_response.headers().get("X-Payment-Transaction"))
-            .or_else(|| paid_response.headers().get("x-transaction-hash"))
-            .or_else(|| paid_response.headers().get("X-Transaction-Hash"))
-            .or_else(|| paid_response.headers().get("x-payment-tx"))
-            .or_else(|| paid_response.headers().get("X-Payment-Tx"))
-            .and_then(|h| h.to_str().ok())
-            .map(|s| s.to_string());
-
-        // Update payment info with tx_hash if available
-        let payment_info = if let Some(hash) = tx_hash {
-            log::info!("[X402] Received transaction hash: {}", hash);
-            payment_info.with_tx_hash(hash)
-        } else if paid_response.status().is_success() {
-            // Payment succeeded but no tx_hash in headers - mark as confirmed anyway
-            log::info!("[X402] Payment confirmed (no tx_hash in response headers)");
-            payment_info.mark_confirmed()
-        } else {
-            // Payment may have failed
-            log::warn!("[X402] Payment response status: {}, keeping as pending", paid_response.status());
-            payment_info
-        };
-
         Ok(X402Response {
-            response: paid_response,
-            payment: Some(payment_info),
+            response,
+            payment: None,
         })
     }
+
 }
 
 impl X402Client {

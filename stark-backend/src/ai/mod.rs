@@ -187,6 +187,7 @@ impl AiClient {
     pub fn from_settings_with_wallet_provider(
         settings: &AgentSettings,
         wallet_provider: Option<std::sync::Arc<dyn crate::wallet::WalletProvider>>,
+        credits_session: Option<std::sync::Arc<crate::credits_session::CreditsSessionClient>>,
     ) -> Result<Self, String> {
         use crate::x402::{is_x402_endpoint, PaymentMode};
 
@@ -210,9 +211,9 @@ impl AiClient {
             "none" => {
                 return Err("AI is disabled (payment_mode=none). Select a model in your instance settings to enable chat.".to_string());
             }
-            "credits" => Some(PaymentMode::CreditsOnly),
-            "x402" => Some(PaymentMode::X402Only),
-            _ => Some(PaymentMode::Auto),
+            "custom" => Some(PaymentMode::CustomEndpoint),
+            // "credits" and any other value default to Credits
+            _ => Some(PaymentMode::Credits),
         };
 
         // Use ClaudeClient for Claude archetype (native Anthropic API with x-api-key header)
@@ -233,6 +234,7 @@ impl AiClient {
             wallet_provider,
             Some(settings.max_response_tokens as u32),
             payment_mode,
+            credits_session,
         )?;
         Ok(AiClient::OpenAI(client))
     }

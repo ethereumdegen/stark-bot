@@ -89,6 +89,9 @@ pub enum EventType {
     RolloutStatusChange, // Rollout lifecycle status changed
     // Module TUI events
     ModuleTuiInvalidate, // Module TUI dashboard needs re-render
+    // Persona hook events
+    HookFired,     // A persona hook session was spawned
+    HookCompleted, // A persona hook session completed (success, failure, or timeout)
 }
 
 impl EventType {
@@ -157,6 +160,8 @@ impl EventType {
             Self::SpanEmitted => "telemetry.span_emitted",
             Self::RolloutStatusChange => "telemetry.rollout_status",
             Self::ModuleTuiInvalidate => "module.tui_invalidate",
+            Self::HookFired => "hook.fired",
+            Self::HookCompleted => "hook.completed",
         }
     }
 
@@ -225,6 +230,8 @@ impl EventType {
             "telemetry.span_emitted" => Some(EventType::SpanEmitted),
             "telemetry.rollout_status" => Some(EventType::RolloutStatusChange),
             "module.tui_invalidate" => Some(EventType::ModuleTuiInvalidate),
+            "hook.fired" => Some(EventType::HookFired),
+            "hook.completed" => Some(EventType::HookCompleted),
             _ => None,
         }
     }

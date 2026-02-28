@@ -30,6 +30,7 @@ mod memory;
 mod siwa;
 mod wallet;
 mod x402;
+mod credits_session;
 mod erc8128;
 mod eip8004;
 mod hooks;
@@ -91,6 +92,8 @@ pub struct AppState {
     pub internal_token: String,
     /// In-memory cache for active session metadata (shared with dispatcher for admin invalidation)
     pub active_cache: Arc<ActiveSessionCache>,
+    /// Credits session client for Bearer-token auth (reduces Privy signing to ~1/hour)
+    pub credits_session: Option<Arc<credits_session::CreditsSessionClient>>,
 }
 
 /// Auto-retrieve backup from keystore on fresh instance
@@ -958,6 +961,30 @@ async fn main() -> std::io::Result<()> {
     // Flash mode: ECIES encryption key is now derived on-demand via
     // wallet_provider.get_encryption_key() — no startup derivation needed.
 
+    // Create credits session client for Bearer-token auth (reduces signing to ~1/hour)
+    let credits_session: Option<Arc<credits_session::CreditsSessionClient>> = if let Some(ref wp) = wallet_provider {
+        // Determine the inference endpoint base URL from active settings
+        let base_url = db.get_active_agent_settings()
+            .ok()
+            .flatten()
+            .and_then(|s| {
+                if s.endpoint.contains("defirelay.com") {
+                    s.endpoint.find("/api/")
+                        .or_else(|| s.endpoint.find("/chat"))
+                        .map(|idx| s.endpoint[..idx].to_string())
+                        .or_else(|| Some(s.endpoint.trim_end_matches('/').to_string()))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| "https://inference.defirelay.com".to_string());
+
+        log::info!("Credits session client initialized (base_url: {}, wallet: {})", base_url, wp.get_address());
+        Some(Arc::new(credits_session::CreditsSessionClient::new(wp.clone(), &base_url)))
+    } else {
+        None
+    };
+
     // Initialize Gateway with tool registry, wallet provider, tx_queue, and skill registry for channels
     log::info!("Initializing Gateway");
     let gateway = Arc::new(Gateway::new_with_tools_wallet_and_tx_queue(
@@ -1063,6 +1090,9 @@ async fn main() -> std::io::Result<()> {
         if let Some(ref store) = dispatcher_builder.notes_store() {
             store.set_disk_quota(dq.clone());
         }
+    }
+    if let Some(ref cs) = credits_session {
+        dispatcher_builder = dispatcher_builder.with_credits_session(cs.clone());
     }
     let dispatcher = Arc::new(dispatcher_builder);
 
@@ -1305,6 +1335,7 @@ async fn main() -> std::io::Result<()> {
     let tx_q = tx_queue.clone();
     let safe_mode_rl = safe_mode_rate_limiter.clone();
     let wallet_prov = wallet_provider.clone();
+    let credits_session = credits_session.clone();
     let disk_q = disk_quota.clone();
     let mod_workers = module_workers.clone();
     let hybrid_search_engine = hybrid_search_engine.clone();
@@ -1347,6 +1378,7 @@ async fn main() -> std::io::Result<()> {
                 remote_embedding_generator: Some(Arc::clone(&remote_embedding_generator)),
                 internal_token: internal_token.clone(),
                 active_cache: disp.active_cache().clone(),
+                credits_session: credits_session.clone(),
             }))
             .app_data(web::Data::new(Arc::clone(&sched)))
             // WebSocket data for /ws route

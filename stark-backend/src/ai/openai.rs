@@ -5,6 +5,7 @@ use crate::gateway::events::EventBroadcaster;
 use crate::gateway::protocol::GatewayEvent;
 use crate::tools::ToolDefinition;
 use crate::wallet::WalletProvider;
+use crate::credits_session::CreditsSessionClient;
 use crate::x402::{X402Client, X402PaymentInfo, is_x402_endpoint};
 use futures_util::StreamExt;
 use reqwest::{header, Client};
@@ -22,7 +23,7 @@ pub struct OpenAIClient {
     max_tokens: u32,
     x402_client: Option<Arc<X402Client>>,
     /// Payment type hint sent in the request body for routers that support it
-    /// Maps from PaymentMode: Auto→"auto", CreditsOnly→"credits", X402Only→"x402"
+    /// Maps from PaymentMode: Credits→"credits", CustomEndpoint→None
     payment_type: Option<String>,
     /// Optional broadcaster for emitting retry events
     broadcaster: Option<Arc<EventBroadcaster>>,
@@ -178,6 +179,7 @@ impl OpenAIClient {
         wallet_provider: Option<Arc<dyn WalletProvider>>,
         max_tokens: Option<u32>,
         payment_mode: Option<crate::x402::PaymentMode>,
+        credits_session: Option<Arc<CreditsSessionClient>>,
     ) -> Result<Self, String> {
         let endpoint_url = endpoint
             .unwrap_or("https://api.openai.com/v1/chat/completions")
@@ -196,22 +198,19 @@ impl OpenAIClient {
             auth_headers.insert(header::AUTHORIZATION, auth_value);
         }
 
-        // Create x402 client if wallet provider is provided and endpoint uses x402
-        let mode = payment_mode.unwrap_or(crate::x402::PaymentMode::Auto);
+        // Create credits client if wallet provider is provided and endpoint uses credits
+        let mode = payment_mode.unwrap_or(crate::x402::PaymentMode::Credits);
         let x402_client = if is_x402_endpoint(&endpoint_url) {
             if let Some(provider) = wallet_provider {
-                match X402Client::new(provider).map(|c| c.with_payment_mode(mode)) {
-                    Ok(c) => {
-                        log::info!("[AI] x402 enabled for endpoint {} with wallet {} (mode={:?})", endpoint_url, c.wallet_address(), mode);
-                        Some(Arc::new(c))
-                    }
-                    Err(e) => {
-                        log::warn!("[AI] Failed to create x402 client: {}", e);
-                        None
-                    }
+                let mut client = X402Client::new(provider)?.with_payment_mode(mode);
+                if let Some(session) = credits_session {
+                    client = client.with_credits_session(session);
                 }
+                log::info!("[AI] Credits client for endpoint {} with wallet {} (mode={:?}, session={})",
+                    endpoint_url, client.wallet_address(), mode, client.has_credits_session());
+                Some(Arc::new(client))
             } else {
-                log::warn!("[AI] x402 endpoint {} requires wallet_provider", endpoint_url);
+                log::warn!("[AI] Credits endpoint {} requires wallet_provider", endpoint_url);
                 None
             }
         } else {
@@ -220,9 +219,8 @@ impl OpenAIClient {
 
         // Map PaymentMode to the payment_type string for the request body
         let payment_type_str = match mode {
-            crate::x402::PaymentMode::CreditsOnly => Some("credits".to_string()),
-            crate::x402::PaymentMode::X402Only => Some("x402".to_string()),
-            crate::x402::PaymentMode::Auto => None, // "auto" is the default, omit it
+            crate::x402::PaymentMode::Credits => Some("credits".to_string()),
+            crate::x402::PaymentMode::CustomEndpoint => None,
         };
 
         // Determine model: use provided model, or infer from endpoint URL

@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Play,
   Pause,
+  Clock,
 } from 'lucide-react';
 import { useGateway } from '@/hooks/useGateway';
 import {
@@ -591,6 +592,18 @@ export default function Workstream() {
             </div>
           ))}
         </div>
+      </div>
+
+      {/* ─── Scheduling Link ──────────────────────────────────────────────── */}
+      <div className="shrink-0 flex justify-center py-2">
+        <button
+          onClick={() => navigate('/scheduling')}
+          className="flex items-center gap-2 px-5 py-2 rounded-lg bg-slate-800/60 border border-slate-700/40
+            text-slate-400 hover:text-white hover:bg-slate-700/60 hover:border-slate-600/60 transition-colors text-sm font-medium"
+        >
+          <Clock className="w-4 h-4" />
+          Scheduling
+        </button>
       </div>
 
       {/* ─── Create Kanban Task Modal ──────────────────────────────────────── */}

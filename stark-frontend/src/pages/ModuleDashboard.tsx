@@ -15,6 +15,7 @@ interface ModuleInfo {
   service_port: number;
   has_dashboard: boolean;
   dashboard_style: string | null;
+  dashboard_styles: string[];
 }
 
 export default function ModuleDashboard() {
@@ -39,6 +40,13 @@ export default function ModuleDashboard() {
       setIsLoading(false);
     }
   };
+
+  // Web frontend always prefers HTML when available; TUI only as fallback
+  const styles = module?.dashboard_styles ?? [];
+  const hasHtml = styles.includes('html');
+  const hasTui = styles.includes('tui');
+  const useHtml = hasHtml;
+  const useTui = !hasHtml && hasTui;
 
   if (isLoading) {
     return (
@@ -66,7 +74,7 @@ export default function ModuleDashboard() {
             {formatModuleName(name!)} Dashboard
           </h1>
         </div>
-        {module?.has_dashboard && module.dashboard_style !== 'tui' && (
+        {module?.has_dashboard && useHtml && (
           <a
             href={`/api/modules/${encodeURIComponent(name!)}/proxy/`}
             target="_blank"
@@ -80,7 +88,7 @@ export default function ModuleDashboard() {
       </div>
 
       {module?.has_dashboard ? (
-        module.dashboard_style === 'tui' ? (
+        useTui ? (
           <div className="flex-1 rounded-lg overflow-hidden border border-slate-700 bg-[#0f172a]">
             <Suspense
               fallback={

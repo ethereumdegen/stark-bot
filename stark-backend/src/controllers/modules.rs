@@ -111,6 +111,7 @@ struct ModuleInfo {
     has_tools: bool,
     has_dashboard: bool,
     dashboard_style: Option<String>,
+    dashboard_styles: Vec<String>,
     has_skill: bool,
     has_ext_endpoints: bool,
     ext_endpoint_count: usize,
@@ -193,6 +194,7 @@ async fn list_modules(data: web::Data<AppState>, _req: HttpRequest) -> HttpRespo
             has_tools: module.has_tools(),
             has_dashboard: module.has_dashboard(),
             dashboard_style: module.dashboard_style(),
+            dashboard_styles: module.dashboard_styles(),
             has_skill: module.has_skill(),
             has_ext_endpoints: !ext_endpoints.is_empty(),
             ext_endpoint_count: ext_endpoints.len(),
@@ -538,8 +540,11 @@ async fn module_proxy(
         }));
     }
 
-    // For TUI-only modules, only allow the TUI endpoint
-    if module.dashboard_style().as_deref() == Some("tui") && !sub_path.starts_with("rpc/dashboard/tui") {
+    // For TUI-only modules (has TUI but not HTML), only allow the TUI endpoint
+    let styles = module.dashboard_styles();
+    let has_tui = styles.iter().any(|s| s == "tui");
+    let has_html = styles.iter().any(|s| s == "html");
+    if has_tui && !has_html && !sub_path.starts_with("rpc/dashboard/tui") {
         return HttpResponse::NotFound().json(serde_json::json!({
             "error": format!("Module '{}' only supports TUI dashboard (use /rpc/dashboard/tui)", name)
         }));
@@ -806,9 +811,10 @@ async fn fetch_remote(
                         .map(|u| format!("@{}", u))
                         .unwrap_or_else(|| module_info.author.wallet_address.clone());
 
-                    // Parse has_dashboard from manifest (true if explicit flag or dashboard_style is set)
+                    // Parse has_dashboard from manifest (true if explicit flag, dashboard_style, or dashboard_styles is set)
                     let has_dashboard = manifest_toml.contains("has_dashboard = true")
-                        || manifest_toml.contains("dashboard_style");
+                        || manifest_toml.contains("dashboard_style")
+                        || manifest_toml.contains("dashboard_styles");
 
                     match data.db.install_module_full(
                         &name_underscore,
@@ -1024,7 +1030,9 @@ async fn upload_module(
 
     let manifest = &parsed.manifest;
     let has_tools = !manifest.tools.is_empty();
-    let has_dashboard = manifest.service.has_dashboard || manifest.service.dashboard_style.is_some();
+    let has_dashboard = manifest.service.has_dashboard
+        || manifest.service.dashboard_style.is_some()
+        || manifest.service.dashboard_styles.is_some();
     let author = manifest.module.author.as_deref();
     let manifest_path = module_dir.join("module.toml");
 

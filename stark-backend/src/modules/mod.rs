@@ -87,6 +87,11 @@ pub trait Module: Send + Sync {
     fn dashboard_style(&self) -> Option<String> {
         if self.has_dashboard() { Some("html".to_string()) } else { None }
     }
+    /// All supported dashboard styles (e.g. ["tui", "html"] for dual-mode).
+    /// Default derives from `dashboard_style()`.
+    fn dashboard_styles(&self) -> Vec<String> {
+        self.dashboard_style().into_iter().collect()
+    }
 
     /// Return tool instances to register with the bot
     fn create_tools(&self) -> Vec<Arc<dyn Tool>>;

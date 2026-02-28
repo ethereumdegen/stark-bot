@@ -1,14 +1,14 @@
 import { useState, useEffect, FormEvent } from 'react';
-import { Save, Settings, Ban, CreditCard, Coins, Globe, Info, ExternalLink } from 'lucide-react';
+import { Save, Settings, Ban, CreditCard, Globe, Info, ExternalLink } from 'lucide-react';
 import Card, { CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import UnicodeSpinner from '@/components/ui/UnicodeSpinner';
 import { getAgentSettings, updateAgentSettings, getBotSettings, updateBotSettings, getAiEndpointPresets, AiEndpointPreset, getCreditBalance } from '@/lib/api';
-import { useWallet } from '@/hooks/useWallet';
+
 
 type ModelArchetype = 'kimi' | 'llama' | 'claude' | 'openai' | 'minimax';
-type PaymentMode = 'none' | 'credits' | 'x402' | 'custom';
+type PaymentMode = 'none' | 'credits' | 'custom';
 
 interface SettingsData {
   endpoint_name?: string | null;
@@ -25,12 +25,10 @@ interface SettingsData {
 const MODE_CARDS: { mode: PaymentMode; title: string; subtitle: string; icon: typeof Ban }[] = [
   { mode: 'none', title: 'None', subtitle: 'AI disabled', icon: Ban },
   { mode: 'credits', title: 'DefiRelay Credits', subtitle: 'ERC-8128 credits', icon: CreditCard },
-  { mode: 'x402', title: 'DefiRelay x402', subtitle: 'Pay-per-call USDC', icon: Coins },
   { mode: 'custom', title: 'Custom', subtitle: 'Your own endpoint', icon: Globe },
 ];
 
 export default function AgentSettings() {
-  const { usdcBalance } = useWallet();
   const [presets, setPresets] = useState<AiEndpointPreset[]>([]);
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('none');
   const [endpointOption, setEndpointOption] = useState<string>('minimax');
@@ -68,7 +66,7 @@ export default function AgentSettings() {
 
   // Lock archetype for preset endpoints
   useEffect(() => {
-    if (paymentMode === 'credits' || paymentMode === 'x402') {
+    if (paymentMode === 'credits') {
       const preset = presets.find(p => p.id === endpointOption);
       if (preset) {
         setModelArchetype(preset.model_archetype as ModelArchetype);
@@ -83,14 +81,14 @@ export default function AgentSettings() {
       const data = await getAgentSettings() as SettingsData;
 
       // Detect payment_mode from API response
-      if (data.payment_mode && ['none', 'credits', 'x402', 'custom'].includes(data.payment_mode)) {
+      if (data.payment_mode && ['none', 'credits', 'custom'].includes(data.payment_mode)) {
         setPaymentMode(data.payment_mode as PaymentMode);
       } else if (data.enabled === false) {
         setPaymentMode('none');
       } else if (data.endpoint && !data.endpoint.includes('defirelay.com')) {
         setPaymentMode('custom');
       } else {
-        setPaymentMode('x402');
+        setPaymentMode('credits');
       }
 
       // Match dropdown by endpoint_name
@@ -183,7 +181,7 @@ export default function AgentSettings() {
       return;
     }
 
-    const selectedPreset = (mode === 'credits' || mode === 'x402')
+    const selectedPreset = mode === 'credits'
       ? presets.find(p => p.id === selectedEndpointId)
       : null;
 
@@ -268,14 +266,11 @@ export default function AgentSettings() {
                 ? 'bg-slate-700/30 border border-slate-600/50'
                 : paymentMode === 'credits'
                 ? 'bg-green-500/10 border border-green-500/30'
-                : paymentMode === 'x402'
-                ? 'bg-blue-500/10 border border-blue-500/30'
                 : 'bg-amber-500/10 border border-amber-500/30'
             }`}>
               <Info className={`w-4 h-4 mt-0.5 flex-shrink-0 ${
                 paymentMode === 'none' ? 'text-slate-400' :
                 paymentMode === 'credits' ? 'text-green-400' :
-                paymentMode === 'x402' ? 'text-blue-400' :
                 'text-amber-400'
               }`} />
               <div className="text-sm">
@@ -293,15 +288,6 @@ export default function AgentSettings() {
                     )}
                   </span>
                 )}
-                {paymentMode === 'x402' && (
-                  <span className="text-blue-300">
-                    {usdcBalance !== null ? (
-                      <>USDC balance on Base: <span className="font-mono font-semibold text-white">{parseFloat(usdcBalance).toFixed(2)} USDC</span>. Each API call is paid directly via x402.</>
-                    ) : (
-                      'Loading USDC balance...'
-                    )}
-                  </span>
-                )}
                 {paymentMode === 'custom' && (
                   <span className="text-amber-300">
                     Get an API key and chat completions endpoint from{' '}
@@ -313,7 +299,7 @@ export default function AgentSettings() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               {MODE_CARDS.map(({ mode, title, subtitle, icon: Icon }) => (
                 <button
                   key={mode}
@@ -357,7 +343,7 @@ export default function AgentSettings() {
             </Card>
           )}
 
-          {(paymentMode === 'credits' || paymentMode === 'x402') && (
+          {paymentMode === 'credits' && (
             <Card>
               <CardHeader>
                 <CardTitle>DefiRelay Endpoint</CardTitle>
@@ -385,7 +371,7 @@ export default function AgentSettings() {
                         const cost = (selected.x402_cost / 1_000_000).toFixed(4);
                         return (
                           <p className="text-xs text-yellow-400 mt-1">
-                            {paymentMode === 'credits' ? 'ERC-8128 credits' : 'x402 payment'}: {cost} USDC per API call
+                            ERC-8128 credits: {cost} USDC per API call
                           </p>
                         );
                       } else if (selected?.x402_cost === 0) {
@@ -398,14 +384,6 @@ export default function AgentSettings() {
                       return null;
                     })()}
                   </div>
-
-                  {paymentMode === 'x402' && usdcBalance !== null && (
-                    <div className="flex items-center gap-2 px-3 py-2 bg-slate-700/30 rounded-lg">
-                      <Coins className="w-4 h-4 text-blue-400" />
-                      <span className="text-sm text-slate-300">USDC Balance (Base):</span>
-                      <span className="text-sm font-mono text-white">{parseFloat(usdcBalance).toFixed(2)}</span>
-                    </div>
-                  )}
 
                   {paymentMode === 'credits' && creditBalance !== null && (
                     <div className="flex items-center gap-2 px-3 py-2 bg-slate-700/30 rounded-lg">

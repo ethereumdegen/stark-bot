@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Wifi, WifiOff, Server, HardDrive, ScrollText, Trash2, ChevronDown, ChevronRight, AlertTriangle, Clock } from 'lucide-react';
+import { Wifi, WifiOff, Server, HardDrive, ScrollText, Trash2, ChevronDown, ChevronRight, AlertTriangle, Clock, Anchor } from 'lucide-react';
 import Card, { CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import { useGateway } from '@/hooks/useGateway';
@@ -44,6 +44,7 @@ const categoryConfig: Record<string, { color: string; label: string }> = {
   'exec': { color: 'text-lime-400 bg-lime-500/20 border-lime-500/30', label: 'Exec' },
   'confirmation': { color: 'text-amber-400 bg-amber-500/20 border-amber-500/30', label: 'Confirm' },
   'telemetry': { color: 'text-slate-400 bg-slate-500/20 border-slate-500/30', label: 'Telemetry' },
+  'hook': { color: 'text-fuchsia-400 bg-fuchsia-500/20 border-fuchsia-500/30', label: 'Hook' },
 };
 
 const NOISE_EVENTS = new Set([
@@ -128,6 +129,13 @@ function summarize(event: string, data: Record<string, unknown>): string {
         return `${(data.tasks as unknown[])?.length || 0} tasks, current: ${data.current_task_id || 'none'}`;
       case 'task.status_change':
         return `Task ${data.task_id || '?'}: ${data.status || '?'} — ${truncate(String(data.description || ''), 100)}`;
+      case 'hook.fired':
+        return `${data.agent_key || '?'} → ${data.event || '?'}`;
+      case 'hook.completed': {
+        const s = String(data.status || '?');
+        const err = data.error ? ` — ${truncate(String(data.error), 100)}` : '';
+        return `${data.agent_key || '?'} → ${data.event || '?'} [${s}]${err}`;
+      }
       default:
         return genericSummary(data);
     }
@@ -239,6 +247,8 @@ export default function Debug() {
     if (filter === 'error') return isError(log.event) || isWarning(log.event);
     return log.event.startsWith(filter + '.');
   });
+
+  const hookLogs = logs.filter(l => l.event.startsWith('hook.'));
 
   const filters = ['all', 'channel', 'agent', 'tool', 'execution', 'error'];
   const errorCount = logs.filter(l => isError(l.event)).length;
@@ -511,6 +521,96 @@ export default function Debug() {
             </span>
           )}
         </div>
+      </div>
+
+      {/* ── Hook Events ──────────────────────────────────────────── */}
+      <div className="mt-8">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            <Anchor className="w-5 h-5 text-fuchsia-400" />
+            Hook Events
+            {hookLogs.length > 0 && (
+              <span className="text-sm font-normal text-slate-500 ml-1">({hookLogs.length})</span>
+            )}
+          </h2>
+        </div>
+
+        <Card>
+          <CardContent className="p-0">
+            {hookLogs.length > 0 ? (
+              <div className="max-h-[40vh] overflow-y-auto font-mono text-sm divide-y divide-slate-700/50">
+                {hookLogs.map((log) => {
+                  const isFired = log.event === 'hook.fired';
+                  const status = String(log.data.status || '');
+                  const isFailure = status === 'failed' || status === 'timeout';
+                  return (
+                    <div
+                      key={log.id}
+                      className={clsx(
+                        'px-4 py-2.5 flex items-center gap-3',
+                        isFailure && 'bg-red-500/5',
+                      )}
+                    >
+                      {/* status indicator */}
+                      <span className={clsx(
+                        'w-2 h-2 rounded-full shrink-0',
+                        isFired ? 'bg-fuchsia-400 animate-pulse' :
+                        status === 'success' ? 'bg-emerald-400' :
+                        status === 'timeout' ? 'bg-amber-400' :
+                        'bg-red-400',
+                      )} />
+
+                      {/* timestamp */}
+                      <span className="text-xs text-slate-500 whitespace-nowrap">
+                        {formatTime(log.timestamp)}
+                      </span>
+
+                      {/* event badge */}
+                      <span className={clsx(
+                        'px-2 py-0.5 text-xs font-medium rounded border whitespace-nowrap',
+                        isFired
+                          ? 'text-fuchsia-400 bg-fuchsia-500/20 border-fuchsia-500/30'
+                          : status === 'success'
+                            ? 'text-emerald-400 bg-emerald-500/20 border-emerald-500/30'
+                            : 'text-red-400 bg-red-500/20 border-red-500/30',
+                      )}>
+                        {isFired ? 'fired' : status}
+                      </span>
+
+                      {/* agent key */}
+                      <span className="text-xs text-slate-300 font-medium">
+                        {String(log.data.agent_key ?? '?')}
+                      </span>
+
+                      {/* arrow + event name */}
+                      <span className="text-slate-600 text-xs">&rarr;</span>
+                      <span className="text-xs text-slate-400">
+                        {String(log.data.event ?? '?')}
+                      </span>
+
+                      {/* error message if present */}
+                      {log.data.error != null && (
+                        <span className="text-xs text-red-400 truncate ml-auto max-w-[40%]">
+                          {truncate(String(log.data.error), 120)}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center h-32">
+                <Anchor className="w-8 h-8 text-slate-600 mb-2" />
+                <p className="text-slate-500 text-sm">
+                  {connected
+                    ? 'No hook events yet. Events appear when persona hooks fire.'
+                    : 'Connect to Gateway to see hook events.'
+                  }
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

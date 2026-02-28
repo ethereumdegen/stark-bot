@@ -79,6 +79,8 @@ pub struct MessageDispatcher {
     session_lanes: Arc<SessionLaneManager>,
     /// In-memory cache for active session metadata + agent context (reduces SQLite writes)
     active_cache: Arc<ActiveSessionCache>,
+    /// Credits session client for Bearer-token auth
+    credits_session: Option<Arc<crate::credits_session::CreditsSessionClient>>,
     /// Mock AI client for integration tests (bypasses real AI API)
     #[cfg(test)]
     mock_ai_client: Option<crate::ai::MockAiClient>,
@@ -209,6 +211,7 @@ impl MessageDispatcher {
             watchdog_config: WatchdogConfig::default(),
             session_lanes: SessionLaneManager::new(),
             active_cache,
+            credits_session: None,
             #[cfg(test)]
             mock_ai_client: None,
         }
@@ -232,6 +235,12 @@ impl MessageDispatcher {
     /// Set the tool validator registry for pre-execution validation
     pub fn with_validator_registry(mut self, validator_registry: Arc<crate::tool_validators::ValidatorRegistry>) -> Self {
         self.validator_registry = Some(validator_registry);
+        self
+    }
+
+    /// Set the credits session client for Bearer-token auth
+    pub fn with_credits_session(mut self, session: Arc<crate::credits_session::CreditsSessionClient>) -> Self {
+        self.credits_session = Some(session);
         self
     }
 
@@ -315,6 +324,7 @@ impl MessageDispatcher {
             watchdog_config: WatchdogConfig::default(),
             session_lanes: SessionLaneManager::new(),
             active_cache,
+            credits_session: None,
             #[cfg(test)]
             mock_ai_client: None,
         }
@@ -343,6 +353,11 @@ impl MessageDispatcher {
     /// Get the ActiveSessionCache
     pub fn active_cache(&self) -> &Arc<ActiveSessionCache> {
         &self.active_cache
+    }
+
+    /// Get the EventBroadcaster
+    pub fn broadcaster(&self) -> &Arc<EventBroadcaster> {
+        &self.broadcaster
     }
 
     /// Panic-safe dispatch wrapper.
@@ -733,7 +748,7 @@ impl MessageDispatcher {
         let client = if let Some(ref mock) = self.mock_ai_client {
             AiClient::Mock(mock.clone())
         } else {
-            match AiClient::from_settings_with_wallet_provider(&settings, self.wallet_provider.clone()) {
+            match AiClient::from_settings_with_wallet_provider(&settings, self.wallet_provider.clone(), self.credits_session.clone()) {
                 Ok(c) => c.with_broadcaster(Arc::clone(&self.broadcaster), message.channel_id),
                 Err(e) => {
                     let error = format!("Failed to create AI client: {}", e);
@@ -758,7 +773,7 @@ impl MessageDispatcher {
             }
         };
         #[cfg(not(test))]
-        let client = match AiClient::from_settings_with_wallet_provider(&settings, self.wallet_provider.clone()) {
+        let client = match AiClient::from_settings_with_wallet_provider(&settings, self.wallet_provider.clone(), self.credits_session.clone()) {
             Ok(c) => c.with_broadcaster(Arc::clone(&self.broadcaster), message.channel_id),
             Err(e) => {
                 let error = format!("Failed to create AI client: {}", e);
@@ -1152,6 +1167,11 @@ impl MessageDispatcher {
         if let Some(ref wallet_provider) = self.wallet_provider {
             tool_context = tool_context.with_wallet_provider(wallet_provider.clone());
             log::debug!("[DISPATCH] WalletProvider attached to tool context ({})", wallet_provider.mode_name());
+        }
+
+        // Add CreditsSessionClient for Bearer-token balance checks
+        if let Some(ref cs) = self.credits_session {
+            tool_context = tool_context.with_credits_session(cs.clone());
         }
 
         // Add HybridSearchEngine for hybrid memory search (FTS + vector + graph)
@@ -1704,7 +1724,7 @@ impl MessageDispatcher {
                     };
                     effective_archetype_id = AiClient::infer_archetype(&override_settings);
                     match AiClient::from_settings_with_wallet_provider(
-                        &override_settings, self.wallet_provider.clone()
+                        &override_settings, self.wallet_provider.clone(), self.credits_session.clone()
                     ) {
                         Ok(c) => {
                             override_client = Some(
