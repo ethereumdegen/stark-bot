@@ -1,11 +1,11 @@
-# 🛠️ Stark-Bot: Skill Development Guide
+# SKILL Stark-Bot: Skill Development Guide
 **Expand the capabilities of your Starknet agent.**
 
 Skills are modular plugins that allow Stark-Bot to interact with new protocols, external APIs, or custom on-chain logic.
 
 ---
 
-## 📂 1. Skill Structure
+## FOLDER 1. Skill Structure
 Each skill lives in its own directory within `/skills`:
 ```text
 /skills/your-skill-name/
@@ -14,7 +14,7 @@ Each skill lives in its own directory within `/skills`:
 └── README.md       # Documentation for your skill
 ```
 
-## ⚙️ 2. The Manifest (`manifest.json`)
+## CONFIG 2. The Manifest (`manifest.json`)
 Define what your skill needs to function:
 ```json
 {
@@ -29,7 +29,7 @@ Define what your skill needs to function:
 }
 ```
 
-## 🧠 3. Implementing Logic (`index.ts`)
+## LOGIC 3. Implementing Logic (`index.ts`)
 Your skill must export an `init` and an `execute` function:
 ```typescript
 import { StarkNetProvider, Logger } from '../../src/core';
@@ -41,7 +41,7 @@ export async function execute(context: any, params: any) {
 }
 ```
 
-## 🚀 4. Activation
+## START 4. Activation
 To enable your skill:
 1. Place the folder in `/skills`.
 2. Add the skill name to your `config/settings.json`:
@@ -52,3 +52,4 @@ To enable your skill:
 
 ---
 **Need help?** Check the `FUTURE_UPGRADES.md` for upcoming API changes.
+
