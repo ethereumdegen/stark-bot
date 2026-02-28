@@ -430,10 +430,10 @@ stark-bot/
 2. Create a feature branch
 3. Make your changes
 4. Submit a PR
+5. Ready to expand the bot? Read our [Skill Development Guide](STARK_BOT_SKILLS.md).
 
 ---
 
-Ready to expand the bot? Read our [Skill Development Guide](STARK_BOT_SKILLS.md).
 
 ## License
 
