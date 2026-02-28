@@ -2,7 +2,7 @@
 name: business_operations_assistant by discord @deadisdeadd
 description: "Transforms StarkBot into an autonomous business operations assistant for crypto teams/DAOs/founders — email triage & drafting, calendar scheduling, simple CRM note-taking, invoice reminders, task delegation, daily ops reports. Runs via heartbeat for background automation."
 version: 1.0.0
-author: yourhandle (hackathon submission – Business Operations track)
+author: discord @deadisdeadd
 requires_tools: [run_skill_script, memory_store, memory_retrieve, web_fetch, schedule_task, send_email, post_to_channel]
 requires_binaries: [curl, jq]  # for API calls if email provider used
 scripts: []  # can add bash/ python later for Gmail/Outlook integration; pure agentic for now
