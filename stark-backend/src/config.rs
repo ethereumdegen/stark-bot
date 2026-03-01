@@ -118,6 +118,11 @@ pub fn bot_config_path() -> std::path::PathBuf {
     bot_config_dir().join("bot_config.ron")
 }
 
+/// Get the runtime agent_preset.ron path (written by Flash control plane)
+pub fn agent_preset_path() -> std::path::PathBuf {
+    bot_config_dir().join("agent_preset.ron")
+}
+
 /// Get the seed bot_config.ron path (repo root config/)
 pub fn bot_config_seed_path() -> std::path::PathBuf {
     repo_root().join("config").join("bot_config.ron")

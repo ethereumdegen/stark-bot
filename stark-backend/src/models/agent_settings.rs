@@ -33,7 +33,7 @@ impl Default for AgentSettings {
         Self {
             id: 0,
             endpoint_name: Some("minimax".to_string()),
-            endpoint: "https://inference.defirelay.com/minimax/api/v1/chat/completions".to_string(),
+            endpoint: "https://inference.defirelay.com/api/v1/chat/completions".to_string(),
             model_archetype: "minimax".to_string(),
             model: Some("MiniMax-M2.5".to_string()),
             max_response_tokens: 40000,

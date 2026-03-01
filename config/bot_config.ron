@@ -10,7 +10,7 @@ BotConfig(
     ),
     hyperpacks: [
         HyperPack(path: Git(
-            url: "https://github.com/ethereumdegen/starkbot-core-hyperpack.git",
+            url: "https://github.com/ethereumdegen/starkbot-basic-hyperpack.git",
             commit: None,
         )),
     ],

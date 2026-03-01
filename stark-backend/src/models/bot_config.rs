@@ -164,11 +164,106 @@ impl Default for HeartbeatFileConfig {
     }
 }
 
+/// Default registry for hyperpacks fetched via agent_preset (Flash control plane).
+const DEFAULT_HYPERPACK_REGISTRY: &str = "https://hyperpacks.org";
+
+/// Agent preset configuration pushed from the Flash control plane.
+///
+/// Stored as `config/agent_preset.ron` and merged into [`BotConfig`] at load time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentPreset {
+    pub name: Option<String>,
+    #[serde(default)]
+    pub hyperpacks: Vec<AgentPresetHyperpack>,
+    /// API key for authenticated hyperpack downloads (fetched from flash control plane)
+    #[serde(default)]
+    pub api_key: Option<String>,
+}
+
+/// A hyperpack entry inside an [`AgentPreset`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentPresetHyperpack {
+    pub id: String,
+    pub name: String,
+    pub slug: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+}
+
+impl AgentPreset {
+    /// Deserialize from the control-plane JSON and persist as RON.
+    pub fn save_from_json(json: &serde_json::Value) -> Result<(), String> {
+        let preset: AgentPreset = serde_json::from_value(json.clone())
+            .map_err(|e| format!("Failed to deserialize agent_preset JSON: {}", e))?;
+
+        let path = crate::config::agent_preset_path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create config dir: {}", e))?;
+        }
+
+        let pretty = ron::ser::PrettyConfig::default();
+        let content = ron::ser::to_string_pretty(&preset, pretty)
+            .map_err(|e| format!("Failed to serialize agent_preset as RON: {}", e))?;
+        std::fs::write(&path, content)
+            .map_err(|e| format!("Failed to write agent_preset.ron: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Load from `agent_preset.ron` if it exists.
+    pub fn load() -> Option<Self> {
+        let path = crate::config::agent_preset_path();
+        let content = std::fs::read_to_string(&path).ok()?;
+        match ron::from_str::<AgentPreset>(&content) {
+            Ok(preset) => Some(preset),
+            Err(e) => {
+                log::warn!("Failed to parse agent_preset.ron: {} — ignoring", e);
+                None
+            }
+        }
+    }
+
+    /// Serialize this preset to RON and write to `agent_preset.ron`.
+    pub fn save(&self) -> Result<(), String> {
+        let path = crate::config::agent_preset_path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create config dir: {}", e))?;
+        }
+        let pretty = ron::ser::PrettyConfig::default();
+        let content = ron::ser::to_string_pretty(self, pretty)
+            .map_err(|e| format!("Failed to serialize agent_preset as RON: {}", e))?;
+        std::fs::write(&path, content)
+            .map_err(|e| format!("Failed to write agent_preset.ron: {}", e))?;
+        Ok(())
+    }
+
+    /// Convert preset hyperpacks to [`HyperPack`] entries using the default registry.
+    pub fn to_hyperpacks(&self) -> Vec<HyperPack> {
+        self.hyperpacks
+            .iter()
+            .map(|hp| HyperPack {
+                path: HyperPackPath::WebServer {
+                    host: DEFAULT_HYPERPACK_REGISTRY.to_string(),
+                    hyperpack_name: hp.slug.clone(),
+                    version: hp.version.clone(),
+                },
+            })
+            .collect()
+    }
+}
+
 impl BotConfig {
     /// Load from the runtime config path, falling back to `Default` on any error.
+    ///
+    /// If `agent_preset.ron` exists, its hyperpacks are appended (deduplicated)
+    /// and its name (if set) overrides `bot_name`.
     pub fn load() -> Self {
         let path = crate::config::bot_config_path();
-        match std::fs::read_to_string(&path) {
+        let mut config = match std::fs::read_to_string(&path) {
             Ok(content) => {
                 match ron::from_str::<BotConfig>(&content) {
                     Ok(config) => config,
@@ -182,7 +277,48 @@ impl BotConfig {
                 log::debug!("Could not read bot_config.ron ({}), using defaults", e);
                 Self::default()
             }
+        };
+
+        // Merge agent_preset if present
+        if let Some(preset) = AgentPreset::load() {
+            if let Some(ref name) = preset.name {
+                if !name.is_empty() {
+                    log::info!("AgentPreset overriding bot_name to {:?}", name);
+                    config.bot_name = name.clone();
+                }
+            }
+
+            let preset_packs = preset.to_hyperpacks();
+            if !preset_packs.is_empty() {
+                // Collect existing WebServer hyperpack_names for dedup
+                let existing: std::collections::HashSet<String> = config
+                    .hyperpacks
+                    .iter()
+                    .filter_map(|hp| match &hp.path {
+                        HyperPackPath::WebServer { hyperpack_name, .. } => {
+                            Some(hyperpack_name.clone())
+                        }
+                        _ => None,
+                    })
+                    .collect();
+
+                let mut added = 0usize;
+                for pack in preset_packs {
+                    if let HyperPackPath::WebServer { ref hyperpack_name, .. } = pack.path {
+                        if existing.contains(hyperpack_name) {
+                            continue;
+                        }
+                    }
+                    config.hyperpacks.push(pack);
+                    added += 1;
+                }
+                if added > 0 {
+                    log::info!("AgentPreset merged {} hyperpack(s) into config", added);
+                }
+            }
         }
+
+        config
     }
 
     /// Serialize to pretty RON and write to the runtime config path.

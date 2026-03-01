@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::RwLock;
 
 const DEFAULT_INFERENCE_ROUTER_URL: &str = "https://inference.defirelay.com";
 
-static AI_ENDPOINTS: OnceLock<HashMap<String, AiEndpointPreset>> = OnceLock::new();
+static AI_ENDPOINTS: RwLock<Option<HashMap<String, AiEndpointPreset>>> = RwLock::new(None);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiEndpointPreset {
@@ -31,11 +31,33 @@ struct RouterEndpoint {
 
 /// Fetch endpoint catalog from inference-super-router, fall back to hardcoded default.
 pub async fn load_ai_endpoints() {
+    let endpoints = fetch_ai_endpoints().await;
+    let mut lock = AI_ENDPOINTS.write().unwrap();
+    *lock = Some(endpoints);
+}
+
+/// Refresh endpoint catalog from the router. Returns the fresh list.
+pub async fn refresh_ai_endpoints() -> Vec<(String, AiEndpointPreset)> {
+    let endpoints = fetch_ai_endpoints().await;
+    let mut list: Vec<_> = endpoints
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    list.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut lock = AI_ENDPOINTS.write().unwrap();
+    *lock = Some(endpoints);
+
+    list
+}
+
+/// Fetch endpoints from router, falling back to defaults on failure.
+async fn fetch_ai_endpoints() -> HashMap<String, AiEndpointPreset> {
     let router_url = std::env::var("INFERENCE_ROUTER_URL")
         .unwrap_or_else(|_| DEFAULT_INFERENCE_ROUTER_URL.to_string());
     let url = format!("{}/endpoints", router_url.trim_end_matches('/'));
 
-    let endpoints = match fetch_from_router(&url).await {
+    match fetch_from_router(&url).await {
         Ok(eps) => {
             log::info!(
                 "Loaded {} AI endpoint presets from inference router ({}): {:?}",
@@ -52,10 +74,6 @@ pub async fn load_ai_endpoints() {
             );
             default_endpoints()
         }
-    };
-
-    if AI_ENDPOINTS.set(endpoints).is_err() {
-        log::warn!("AI endpoints already initialized");
     }
 }
 
@@ -103,7 +121,7 @@ fn default_endpoints() -> HashMap<String, AiEndpointPreset> {
         "minimax".to_string(),
         AiEndpointPreset {
             display_name: "MiniMax M2.5".to_string(),
-            endpoint: "https://inference.defirelay.com/minimax/api/v1/chat/completions".to_string(),
+            endpoint: "https://inference.defirelay.com/api/v1/chat/completions".to_string(),
             model_archetype: "minimax".to_string(),
             model: Some("MiniMax-M2.5".to_string()),
             x402_cost: Some(1000),
@@ -113,12 +131,18 @@ fn default_endpoints() -> HashMap<String, AiEndpointPreset> {
 }
 
 pub fn get_ai_endpoint(key: &str) -> Option<AiEndpointPreset> {
-    AI_ENDPOINTS.get().and_then(|endpoints| endpoints.get(key).cloned())
+    AI_ENDPOINTS
+        .read()
+        .unwrap()
+        .as_ref()
+        .and_then(|endpoints| endpoints.get(key).cloned())
 }
 
 pub fn list_ai_endpoints() -> Vec<(String, AiEndpointPreset)> {
     AI_ENDPOINTS
-        .get()
+        .read()
+        .unwrap()
+        .as_ref()
         .map(|endpoints| {
             let mut list: Vec<_> = endpoints
                 .iter()

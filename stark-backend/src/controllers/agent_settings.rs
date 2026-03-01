@@ -423,7 +423,9 @@ pub async fn get_ai_endpoint_presets(
         return resp;
     }
 
-    let presets: Vec<serde_json::Value> = ai_endpoint_config::list_ai_endpoints()
+    // Refresh from inference router each time the page is loaded
+    let presets: Vec<serde_json::Value> = ai_endpoint_config::refresh_ai_endpoints()
+        .await
         .into_iter()
         .map(|(id, preset)| {
             serde_json::json!({

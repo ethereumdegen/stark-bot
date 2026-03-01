@@ -215,6 +215,42 @@ impl FlashWalletProvider {
         })
     }
 
+    /// Fetch the hyperpacks.org API key from the Flash control plane.
+    ///
+    /// Calls `GET {keystore_url}/api/hyperpacks-fetch-key` with the same
+    /// instance auth headers used by tenantinfo.
+    pub async fn fetch_hyperpacks_api_key(&self) -> Result<String, String> {
+        let url = format!("{}/api/hyperpacks-fetch-key", self.keystore_url);
+        let token = self.instance_token.read().await.clone();
+
+        let response = self.http_client
+            .get(&url)
+            .timeout(std::time::Duration::from_secs(15))
+            .header("X-Tenant-ID", &self.tenant_id)
+            .header("X-Instance-Token", &token)
+            .send()
+            .await
+            .map_err(|e| format!("hyperpacks-fetch-key request failed: {}", e))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!("hyperpacks-fetch-key error ({}): {}", status, body));
+        }
+
+        #[derive(Deserialize)]
+        struct ApiKeyResponse {
+            api_key: String,
+        }
+
+        let data: ApiKeyResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse hyperpacks-fetch-key response: {}", e))?;
+
+        Ok(data.api_key)
+    }
+
     /// Parse an Ethereum signature from hex string
     fn parse_signature(sig_hex: &str) -> Result<Signature, String> {
         let sig_hex = sig_hex.strip_prefix("0x").unwrap_or(sig_hex);

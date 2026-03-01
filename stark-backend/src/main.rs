@@ -333,6 +333,10 @@ async fn load_hyperpacks(broadcaster: &std::sync::Arc<gateway::events::EventBroa
         return;
     }
 
+    // Load API key from agent preset (if available, for authenticated downloads)
+    let api_key = crate::models::bot_config::AgentPreset::load()
+        .and_then(|p| p.api_key);
+
     let base_dir = hyperpacks_dir();
     if let Err(e) = std::fs::create_dir_all(&base_dir) {
         log::error!("[Hyperpacks] Failed to create hyperpacks dir: {}", e);
@@ -379,7 +383,7 @@ async fn load_hyperpacks(broadcaster: &std::sync::Arc<gateway::events::EventBroa
                 fetch_hyperpack_git(url, commit.as_deref(), &dest).await
             }
             HyperPackPath::WebServer { host, hyperpack_name, version } => {
-                fetch_hyperpack_registry(host, hyperpack_name, version.as_deref(), &dest).await
+                fetch_hyperpack_registry(host, hyperpack_name, version.as_deref(), &dest, api_key.as_deref()).await
             }
         };
 
@@ -472,13 +476,21 @@ async fn fetch_hyperpack_registry(
     name: &str,
     version: Option<&str>,
     dest: &std::path::Path,
+    api_key: Option<&str>,
 ) -> Result<(), String> {
     let version_segment = version.unwrap_or("latest");
     let url = format!("{}/api/v1/packs/{}/{}/download", host.trim_end_matches('/'), name, version_segment);
 
     log::info!("[Hyperpacks] Downloading {} @ {} from {}", name, version_segment, url);
 
-    let response = reqwest::get(&url)
+    let client = crate::http::shared_client();
+    let mut request = client.get(&url);
+    if let Some(key) = api_key {
+        request = request.header("Authorization", format!("Bearer {}", key));
+    }
+
+    let response = request
+        .send()
         .await
         .map_err(|e| format!("HTTP request to {} failed: {}", url, e))?;
 
@@ -1385,6 +1397,27 @@ async fn main() -> std::io::Result<()> {
         log::info!("Flash mode: initializing FlashWalletProvider (Privy embedded wallet)...");
         match wallet::FlashWalletProvider::new().await {
             Ok(provider) => {
+                // Extract and save agent_preset before the Arc cast erases the concrete type
+                if let Some(preset_json) = provider.agent_preset().cloned() {
+                    match models::bot_config::AgentPreset::save_from_json(&preset_json) {
+                        Ok(()) => log::info!("Saved agent_preset.ron from control plane"),
+                        Err(e) => log::warn!("Failed to save agent_preset: {}", e),
+                    }
+
+                    // Fetch hyperpacks API key from flash control plane and inject into preset
+                    match provider.fetch_hyperpacks_api_key().await {
+                        Ok(key) => {
+                            if let Some(mut preset) = models::bot_config::AgentPreset::load() {
+                                preset.api_key = Some(key);
+                                match preset.save() {
+                                    Ok(()) => log::info!("Injected hyperpacks API key into agent_preset.ron"),
+                                    Err(e) => log::warn!("Failed to save API key to agent_preset: {}", e),
+                                }
+                            }
+                        }
+                        Err(e) => log::warn!("Could not fetch hyperpacks API key: {}", e),
+                    }
+                }
                 log::info!("Flash wallet provider initialized: {} (mode: {})",
                     provider.get_address(), provider.mode_name());
                 Some(Arc::new(provider) as Arc<dyn wallet::WalletProvider>)
