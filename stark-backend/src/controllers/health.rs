@@ -31,7 +31,7 @@ async fn get_config_status(state: web::Data<AppState>) -> impl Responder {
         None => (None, None),
     };
 
-    let guest_dashboard = state.db.get_bot_settings().map(|s| s.guest_dashboard_enabled).unwrap_or(false);
+    let guest_dashboard = crate::models::BotConfig::load().guest_dashboard_enabled;
 
     HttpResponse::Ok().json(serde_json::json!({
         "login_configured": state.config.login_admin_public_address.is_some(),

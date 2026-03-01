@@ -124,10 +124,10 @@ impl MessageDispatcher {
         wallet_provider: Option<Arc<dyn crate::wallet::WalletProvider>>,
         skill_registry: Option<Arc<crate::skills::SkillRegistry>>,
     ) -> Self {
-        let memory_config = MemoryConfig::from_env();
+        let memory_config = MemoryConfig::default();
 
         // Create NoteStore for Obsidian-compatible notes
-        let notes_config = NotesConfig::from_env();
+        let notes_config = NotesConfig::default();
         let notes_dir = std::path::PathBuf::from(notes_config.notes_dir.clone());
         let notes_store = match NoteStore::new(notes_dir, &notes_config.notes_db_path()) {
             Ok(store) => {
@@ -167,13 +167,14 @@ impl MessageDispatcher {
             .with_memory_config(memory_config.clone())
             .with_active_cache(active_cache.clone());
 
-        // Apply compaction thresholds from bot settings (if available)
-        if let Ok(bot_settings) = db.get_bot_settings() {
+        // Apply compaction thresholds from bot_config.ron
+        {
             use crate::context::ThreeTierCompactionConfig;
+            let bot_cfg = crate::models::BotConfig::load();
             let compaction_cfg = ThreeTierCompactionConfig {
-                background_threshold: bot_settings.compaction_background_threshold,
-                aggressive_threshold: bot_settings.compaction_aggressive_threshold,
-                emergency_threshold: bot_settings.compaction_emergency_threshold,
+                background_threshold: bot_cfg.compaction.background_threshold,
+                aggressive_threshold: bot_cfg.compaction.aggressive_threshold,
+                emergency_threshold: bot_cfg.compaction.emergency_threshold,
                 ..ThreeTierCompactionConfig::default()
             };
             context_manager = context_manager.with_compaction_config(compaction_cfg);
@@ -277,10 +278,10 @@ impl MessageDispatcher {
     pub fn new_without_tools(db: Arc<Database>, broadcaster: Arc<EventBroadcaster>) -> Self {
         // Create a minimal execution tracker for legacy use
         let execution_tracker = Arc::new(ExecutionTracker::new(broadcaster.clone()));
-        let memory_config = MemoryConfig::from_env();
+        let memory_config = MemoryConfig::default();
 
         // Create NoteStore
-        let notes_config = NotesConfig::from_env();
+        let notes_config = NotesConfig::default();
         let notes_dir = std::path::PathBuf::from(notes_config.notes_dir.clone());
         let notes_store = NoteStore::new(notes_dir, &notes_config.notes_db_path())
             .ok()
@@ -689,7 +690,7 @@ impl MessageDispatcher {
         }
 
         // Get active agent settings from database — if none are enabled, AI is disabled
-        let settings = match self.db.get_active_agent_settings() {
+        let mut settings = match self.db.get_active_agent_settings() {
             Ok(Some(settings)) => settings,
             Ok(None) => {
                 let error = "No AI model configured. Select a model in your instance settings to enable chat.".to_string();
@@ -729,6 +730,13 @@ impl MessageDispatcher {
                 return DispatchResult::error(error);
             }
         };
+
+        // Override token limits from bot_config.ron (authoritative source)
+        {
+            let bot_cfg = crate::models::BotConfig::load();
+            settings.max_response_tokens = bot_cfg.max_response_tokens;
+            settings.max_context_tokens = bot_cfg.max_context_tokens;
+        }
 
         // Infer archetype from settings
         let archetype_id = AiClient::infer_archetype(&settings);
@@ -1251,14 +1259,15 @@ impl MessageDispatcher {
                 );
             }
 
-            // Add rogue_mode_enabled for partner mode transaction confirmation
+            // Add rogue_mode_enabled from bot_config.ron
+            let bot_cfg = crate::models::BotConfig::load();
             tool_context.extra.insert(
                 "rogue_mode_enabled".to_string(),
-                serde_json::json!(bot_settings.rogue_mode_enabled),
+                serde_json::json!(bot_cfg.operating_mode.is_rogue()),
             );
 
-            // Configure HTTP proxy for tool requests if set
-            if let Some(ref url) = bot_settings.proxy_url {
+            // Configure HTTP proxy for tool requests from bot_config.ron
+            if let Some(ref url) = bot_cfg.services.http_proxy_url {
                 if !url.is_empty() {
                     tool_context = tool_context.with_proxy_url(url.clone());
                 }

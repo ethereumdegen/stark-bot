@@ -53,6 +53,7 @@ fn intrinsic_path(name: &str) -> Option<PathBuf> {
     match name {
         "soul.md" => Some(crate::config::soul_document_path()),
         "guidelines.md" => Some(crate::config::guidelines_document_path()),
+        "bot_config.ron" => Some(crate::config::bot_config_path()),
         _ => None,
     }
 }
@@ -68,6 +69,12 @@ const INTRINSIC_FILES: &[IntrinsicFile] = &[
     IntrinsicFile {
         name: "guidelines.md",
         description: "Operational and business guidelines",
+        writable: true,
+        deletable: false,
+    },
+    IntrinsicFile {
+        name: "bot_config.ron",
+        description: "Bot configuration (name, mode, heartbeat, hyperpacks)",
         writable: true,
         deletable: false,
     },

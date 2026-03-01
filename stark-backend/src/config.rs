@@ -9,24 +9,12 @@ pub mod env_vars {
     pub const BURNER_WALLET_PRIVATE_KEY: &str = "BURNER_WALLET_BOT_PRIVATE_KEY";
     pub const PORT: &str = "PORT";
     pub const DATABASE_URL: &str = "DATABASE_URL";
-    pub const WORKSPACE_DIR: &str = "STARK_WORKSPACE_DIR";
-    pub const SKILLS_DIR: &str = "STARK_SKILLS_DIR";
-    pub const RUNTIME_SKILLS_DIR: &str = "STARK_RUNTIME_SKILLS_DIR";
-    pub const NOTES_DIR: &str = "STARK_NOTES_DIR";
-    pub const NOTES_REINDEX_INTERVAL_SECS: &str = "STARK_NOTES_REINDEX_INTERVAL_SECS";
-    pub const SOUL_DIR: &str = "STARK_SOUL_DIR";
-    pub const PUBLIC_DIR: &str = "STARK_PUBLIC_DIR";
-    /// Explicit override for the bot's own public URL (e.g. "https://mybot.example.com")
+    /// Explicit override for the bot's own public URL (e.g. "https://mybot.example.com").
+    /// In Flash mode, the control plane sets this during provisioning.
     pub const PUBLIC_URL: &str = "STARK_PUBLIC_URL";
-    // Disk quota (0 = disabled)
-    pub const DISK_QUOTA_MB: &str = "STARK_DISK_QUOTA_MB";
-    // QMD Memory configuration (simplified file-based memory system)
-    pub const MEMORY_DIR: &str = "STARK_MEMORY_DIR";
-    pub const MEMORY_REINDEX_INTERVAL_SECS: &str = "STARK_MEMORY_REINDEX_INTERVAL_SECS";
-    // Legacy: still used by context manager
-    pub const MEMORY_ENABLE_PRE_COMPACTION_FLUSH: &str = "STARK_MEMORY_ENABLE_PRE_COMPACTION_FLUSH";
-    pub const MEMORY_ENABLE_CROSS_SESSION: &str = "STARK_MEMORY_ENABLE_CROSS_SESSION";
-    pub const MEMORY_CROSS_SESSION_LIMIT: &str = "STARK_MEMORY_CROSS_SESSION_LIMIT";
+    /// Set to "false" or "0" to skip auto-restoring from keystore on boot.
+    /// Default: true (auto-sync enabled).
+    pub const AUTO_SYNC_FROM_KEYSTORE: &str = "AUTO_SYNC_FROM_KEYSTORE";
 }
 
 /// Default values
@@ -54,35 +42,19 @@ pub fn repo_root() -> PathBuf {
     backend_dir().parent().expect("backend_dir has no parent").to_path_buf()
 }
 
-/// Resolve a default sub-directory relative to the repo root.
-/// If the env var is set, use that as-is; otherwise join the default name onto repo_root().
-fn resolve_dir(env_var: &str, default_name: &str) -> String {
-    env::var(env_var).unwrap_or_else(|_| {
-        repo_root().join(default_name).to_string_lossy().to_string()
-    })
-}
-
-/// Resolve a default sub-directory relative to the backend directory.
-/// Use for dirs that live inside stark-backend/ (e.g. memory).
-fn resolve_backend_dir(env_var: &str, default_name: &str) -> String {
-    env::var(env_var).unwrap_or_else(|_| {
-        backend_dir().join(default_name).to_string_lossy().to_string()
-    })
-}
-
-/// Get the workspace directory from environment or default
+/// Get the workspace directory
 pub fn workspace_dir() -> String {
-    resolve_backend_dir(env_vars::WORKSPACE_DIR, defaults::WORKSPACE_DIR)
+    backend_dir().join(defaults::WORKSPACE_DIR).to_string_lossy().to_string()
 }
 
 /// Get the bundled skills directory (repo_root/skills/ — read-only source)
 pub fn bundled_skills_dir() -> String {
-    resolve_dir(env_vars::SKILLS_DIR, defaults::SKILLS_DIR)
+    repo_root().join(defaults::SKILLS_DIR).to_string_lossy().to_string()
 }
 
 /// Get the runtime skills directory (stark-backend/skills/ — mutable working copy)
 pub fn runtime_skills_dir() -> String {
-    resolve_backend_dir(env_vars::RUNTIME_SKILLS_DIR, defaults::SKILLS_DIR)
+    backend_dir().join(defaults::SKILLS_DIR).to_string_lossy().to_string()
 }
 
 /// Deprecated alias — use bundled_skills_dir() or runtime_skills_dir()
@@ -97,9 +69,6 @@ pub fn bundled_modules_dir() -> PathBuf {
 
 /// Get the runtime modules directory (stark-backend/modules/ — mutable working copy)
 pub fn runtime_modules_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("STARKBOT_MODULES_DIR") {
-        return PathBuf::from(dir);
-    }
     backend_dir().join("modules")
 }
 
@@ -113,259 +82,14 @@ pub fn runtime_agents_dir() -> PathBuf {
     backend_dir().join("agents")
 }
 
-/// Extract the version from an agent directory's agent.md frontmatter.
-fn extract_version_from_agent_dir(dir: &Path) -> Option<String> {
-    let agent_md = dir.join("agent.md");
-    let content = std::fs::read_to_string(&agent_md).ok()?;
-    if !content.starts_with("---") {
-        return None;
-    }
-    for line in content.lines().skip(1) {
-        if line.trim() == "---" {
-            break;
-        }
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("version:") {
-            let version = rest.trim().trim_matches('"').trim_matches('\'').to_string();
-            if !version.is_empty() {
-                return Some(version);
-            }
-        }
-    }
-    None
-}
-
-/// Seed runtime agents directory from bundled agents.
-/// Copies agent folders from bundled_agents_dir() to runtime_agents_dir()
-/// only if the runtime copy is missing or has an older semver version.
-pub fn seed_agents() -> std::io::Result<()> {
-    let bundled = bundled_agents_dir();
-    let runtime = runtime_agents_dir();
-
-    if !bundled.exists() {
-        log::info!("Bundled agents directory {:?} does not exist, skipping seed", bundled);
-        return Ok(());
-    }
-
-    std::fs::create_dir_all(&runtime)?;
-
-    let entries = std::fs::read_dir(&bundled)?;
-    for entry in entries {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(e) => {
-                log::warn!("Failed to read bundled agent entry: {}", e);
-                continue;
-            }
-        };
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy().to_string();
-
-        let file_type = match entry.file_type() {
-            Ok(ft) => ft,
-            Err(e) => {
-                log::warn!("Failed to get file type for '{}': {}", name_str, e);
-                continue;
-            }
-        };
-        if !file_type.is_dir() || file_type.is_symlink() {
-            continue;
-        }
-        if name_str.starts_with('.') || name_str.starts_with('_') {
-            continue;
-        }
-
-        // Must have agent.md to be a valid agent
-        if !entry.path().join("agent.md").exists() {
-            continue;
-        }
-
-        let runtime_agent = runtime.join(&name);
-
-        let should_copy = if runtime_agent.exists() {
-            let bundled_version = extract_version_from_agent_dir(&entry.path());
-            let runtime_version = extract_version_from_agent_dir(&runtime_agent);
-
-            match (bundled_version, runtime_version) {
-                (Some(bv), Some(rv)) => {
-                    if semver_is_newer(&bv, &rv) {
-                        log::info!(
-                            "Upgrading agent '{}' from v{} to v{} (bundled is newer)",
-                            name_str, rv, bv
-                        );
-                        true
-                    } else {
-                        false
-                    }
-                }
-                (Some(bv), None) => {
-                    log::info!(
-                        "Upgrading agent '{}' (bundled has v{}, runtime has no version)",
-                        name_str, bv
-                    );
-                    true
-                }
-                _ => false,
-            }
-        } else {
-            log::info!("Seeding agent '{}' from bundled", name_str);
-            true
-        };
-
-        if should_copy {
-            if runtime_agent.exists() {
-                let tmp_name = format!(".{}.seed_tmp", name_str);
-                let tmp_dir = runtime.join(&tmp_name);
-                if tmp_dir.exists() {
-                    let _ = std::fs::remove_dir_all(&tmp_dir);
-                }
-                match copy_dir_recursive(&entry.path(), &tmp_dir) {
-                    Ok(()) => {
-                        if let Err(e) = std::fs::remove_dir_all(&runtime_agent) {
-                            log::error!("Failed to remove old agent '{}': {}", name_str, e);
-                            let _ = std::fs::remove_dir_all(&tmp_dir);
-                            continue;
-                        }
-                        if let Err(e) = std::fs::rename(&tmp_dir, &runtime_agent) {
-                            log::error!("Failed to rename temp dir for agent '{}': {}", name_str, e);
-                            continue;
-                        }
-                    }
-                    Err(e) => {
-                        log::error!("Failed to copy bundled agent '{}': {}", name_str, e);
-                        let _ = std::fs::remove_dir_all(&tmp_dir);
-                        continue;
-                    }
-                }
-            } else {
-                if let Err(e) = copy_dir_recursive(&entry.path(), &runtime_agent) {
-                    log::error!("Failed to seed agent '{}': {}", name_str, e);
-                    let _ = std::fs::remove_dir_all(&runtime_agent);
-                    continue;
-                }
-            }
-        }
-    }
-
-    log::info!("Agent seeding complete (runtime dir: {:?})", runtime);
-    Ok(())
-}
-
-/// Seed runtime agents directory from module agent folders.
-/// Scans runtime_modules_dir() for modules containing `agent/agent.md`,
-/// and copies them to runtime_agents_dir() using version-gated logic.
-pub fn seed_module_agents() -> std::io::Result<()> {
-    let modules_dir = runtime_modules_dir();
-    let runtime = runtime_agents_dir();
-
-    if !modules_dir.exists() {
-        return Ok(());
-    }
-
-    std::fs::create_dir_all(&runtime)?;
-
-    let entries = std::fs::read_dir(&modules_dir)?;
-    for entry in entries {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        let file_type = match entry.file_type() {
-            Ok(ft) => ft,
-            Err(_) => continue,
-        };
-        if !file_type.is_dir() || file_type.is_symlink() {
-            continue;
-        }
-
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy().to_string();
-
-        // Check for agent/ subdirectory with agent.md
-        let agent_src = entry.path().join("agent");
-        if !agent_src.join("agent.md").exists() {
-            continue;
-        }
-
-        let runtime_agent = runtime.join(&name);
-
-        let should_copy = if runtime_agent.exists() {
-            let bundled_version = extract_version_from_agent_dir(&agent_src);
-            let runtime_version = extract_version_from_agent_dir(&runtime_agent);
-
-            match (bundled_version, runtime_version) {
-                (Some(bv), Some(rv)) => {
-                    if semver_is_newer(&bv, &rv) {
-                        log::info!(
-                            "Upgrading module agent '{}' from v{} to v{}", name_str, rv, bv
-                        );
-                        true
-                    } else {
-                        false
-                    }
-                }
-                (Some(bv), None) => {
-                    log::info!(
-                        "Upgrading module agent '{}' (module has v{}, runtime has no version)",
-                        name_str, bv
-                    );
-                    true
-                }
-                _ => false,
-            }
-        } else {
-            log::info!("Seeding module agent '{}' from module dir", name_str);
-            true
-        };
-
-        if should_copy {
-            if runtime_agent.exists() {
-                let tmp_name = format!(".{}.seed_tmp", name_str);
-                let tmp_dir = runtime.join(&tmp_name);
-                if tmp_dir.exists() {
-                    let _ = std::fs::remove_dir_all(&tmp_dir);
-                }
-                match copy_dir_recursive(&agent_src, &tmp_dir) {
-                    Ok(()) => {
-                        if let Err(e) = std::fs::remove_dir_all(&runtime_agent) {
-                            log::error!("Failed to remove old module agent '{}': {}", name_str, e);
-                            let _ = std::fs::remove_dir_all(&tmp_dir);
-                            continue;
-                        }
-                        if let Err(e) = std::fs::rename(&tmp_dir, &runtime_agent) {
-                            log::error!("Failed to rename temp dir for module agent '{}': {}", name_str, e);
-                            continue;
-                        }
-                    }
-                    Err(e) => {
-                        log::error!("Failed to copy module agent '{}': {}", name_str, e);
-                        let _ = std::fs::remove_dir_all(&tmp_dir);
-                        continue;
-                    }
-                }
-            } else {
-                if let Err(e) = copy_dir_recursive(&agent_src, &runtime_agent) {
-                    log::error!("Failed to seed module agent '{}': {}", name_str, e);
-                    let _ = std::fs::remove_dir_all(&runtime_agent);
-                    continue;
-                }
-            }
-        }
-    }
-
-    log::info!("Module agent seeding complete");
-    Ok(())
-}
-
-/// Get the notes directory from environment or default
+/// Get the notes directory
 pub fn notes_dir() -> String {
-    resolve_backend_dir(env_vars::NOTES_DIR, defaults::NOTES_DIR)
+    backend_dir().join(defaults::NOTES_DIR).to_string_lossy().to_string()
 }
 
-/// Get the public files directory from environment or default
+/// Get the public files directory
 pub fn public_dir() -> String {
-    resolve_backend_dir(env_vars::PUBLIC_DIR, defaults::PUBLIC_DIR)
+    backend_dir().join(defaults::PUBLIC_DIR).to_string_lossy().to_string()
 }
 
 /// Get the bot's own public URL (for constructing absolute URLs to /public/ files, etc.)
@@ -384,17 +108,29 @@ pub fn self_url() -> String {
     format!("http://localhost:{}", port)
 }
 
-/// Get the soul directory from environment or default
+/// Get the bot config directory (inside stark-backend)
+pub fn bot_config_dir() -> std::path::PathBuf {
+    backend_dir().join("config")
+}
+
+/// Get the runtime bot_config.ron path
+pub fn bot_config_path() -> std::path::PathBuf {
+    bot_config_dir().join("bot_config.ron")
+}
+
+/// Get the seed bot_config.ron path (repo root config/)
+pub fn bot_config_seed_path() -> std::path::PathBuf {
+    repo_root().join("config").join("bot_config.ron")
+}
+
+/// Get the soul directory
 pub fn soul_dir() -> String {
-    resolve_backend_dir(env_vars::SOUL_DIR, defaults::SOUL_DIR)
+    backend_dir().join(defaults::SOUL_DIR).to_string_lossy().to_string()
 }
 
 /// Get the disk quota in megabytes (0 = disabled)
 pub fn disk_quota_mb() -> u64 {
-    env::var(env_vars::DISK_QUOTA_MB)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(defaults::DISK_QUOTA_MB)
+    defaults::DISK_QUOTA_MB
 }
 
 /// Get the burner wallet private key from environment (for tools)
@@ -469,7 +205,7 @@ pub struct MemoryConfig {
 impl Default for MemoryConfig {
     fn default() -> Self {
         Self {
-            memory_dir: resolve_backend_dir(env_vars::MEMORY_DIR, defaults::MEMORY_DIR),
+            memory_dir: backend_dir().join(defaults::MEMORY_DIR).to_string_lossy().to_string(),
             reindex_interval_secs: 300,
             enable_pre_compaction_flush: true,
             enable_cross_session_memory: true,
@@ -479,26 +215,6 @@ impl Default for MemoryConfig {
 }
 
 impl MemoryConfig {
-    pub fn from_env() -> Self {
-        Self {
-            memory_dir: resolve_backend_dir(env_vars::MEMORY_DIR, defaults::MEMORY_DIR),
-            reindex_interval_secs: env::var(env_vars::MEMORY_REINDEX_INTERVAL_SECS)
-                .unwrap_or_else(|_| "300".to_string())
-                .parse()
-                .unwrap_or(300),
-            enable_pre_compaction_flush: env::var(env_vars::MEMORY_ENABLE_PRE_COMPACTION_FLUSH)
-                .map(|v| v == "true" || v == "1")
-                .unwrap_or(true),
-            enable_cross_session_memory: env::var(env_vars::MEMORY_ENABLE_CROSS_SESSION)
-                .map(|v| v == "true" || v == "1")
-                .unwrap_or(true),
-            cross_session_memory_limit: env::var(env_vars::MEMORY_CROSS_SESSION_LIMIT)
-                .unwrap_or_else(|_| "5".to_string())
-                .parse()
-                .unwrap_or(5),
-        }
-    }
-
     /// Get the path to the memory FTS database
     pub fn memory_db_path(&self) -> String {
         format!("{}/.memory.db", self.memory_dir)
@@ -507,7 +223,7 @@ impl MemoryConfig {
 
 /// Get the memory configuration
 pub fn memory_config() -> MemoryConfig {
-    MemoryConfig::from_env()
+    MemoryConfig::default()
 }
 
 /// Configuration for Notes system (Obsidian-compatible markdown notes with FTS5)
@@ -522,23 +238,13 @@ pub struct NotesConfig {
 impl Default for NotesConfig {
     fn default() -> Self {
         Self {
-            notes_dir: resolve_backend_dir(env_vars::NOTES_DIR, defaults::NOTES_DIR),
+            notes_dir: backend_dir().join(defaults::NOTES_DIR).to_string_lossy().to_string(),
             reindex_interval_secs: 300,
         }
     }
 }
 
 impl NotesConfig {
-    pub fn from_env() -> Self {
-        Self {
-            notes_dir: resolve_backend_dir(env_vars::NOTES_DIR, defaults::NOTES_DIR),
-            reindex_interval_secs: std::env::var(env_vars::NOTES_REINDEX_INTERVAL_SECS)
-                .unwrap_or_else(|_| "300".to_string())
-                .parse()
-                .unwrap_or(300),
-        }
-    }
-
     /// Get the path to the notes FTS database
     pub fn notes_db_path(&self) -> String {
         format!("{}/.notes.db", self.notes_dir)
@@ -547,7 +253,7 @@ impl NotesConfig {
 
 /// Get the notes configuration
 pub fn notes_config() -> NotesConfig {
-    NotesConfig::from_env()
+    NotesConfig::default()
 }
 
 /// Get the path to SOUL.md in the soul directory
@@ -612,42 +318,6 @@ pub fn semver_is_newer(a: &str, b: &str) -> bool {
     }
 }
 
-/// Extract the version from a skill directory's frontmatter.
-/// Checks {dirname}.md first (matching loader priority), then SKILL.md.
-fn extract_version_from_skill_dir(dir: &Path) -> Option<String> {
-    // Match loader priority: {name}.md first, then SKILL.md
-    let name_md = dir.file_name()
-        .map(|n| dir.join(format!("{}.md", n.to_string_lossy())));
-    let skill_md = dir.join("SKILL.md");
-
-    let md_path = if let Some(ref p) = name_md {
-        if p.exists() { p.clone() } else if skill_md.exists() { skill_md } else { return None; }
-    } else if skill_md.exists() {
-        skill_md
-    } else {
-        return None;
-    };
-
-    let content = std::fs::read_to_string(&md_path).ok()?;
-    // Quick parse: find "version:" in YAML frontmatter
-    if !content.starts_with("---") {
-        return None;
-    }
-    for line in content.lines().skip(1) {
-        if line.trim() == "---" {
-            break;
-        }
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("version:") {
-            let version = rest.trim().trim_matches('"').trim_matches('\'').to_string();
-            if !version.is_empty() {
-                return Some(version);
-            }
-        }
-    }
-    None
-}
-
 /// Recursively copy a directory and all its contents (skips symlinks)
 pub fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
@@ -667,123 +337,6 @@ pub fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
             std::fs::copy(&src_path, &dst_path)?;
         }
     }
-    Ok(())
-}
-
-/// Seed runtime skills directory from bundled skills.
-/// Copies skill folders from bundled_skills_dir() to runtime_skills_dir()
-/// only if the runtime copy is missing or has an older semver version.
-pub fn seed_skills() -> std::io::Result<()> {
-    let bundled = PathBuf::from(bundled_skills_dir());
-    let runtime = PathBuf::from(runtime_skills_dir());
-
-    if !bundled.exists() {
-        log::info!("Bundled skills directory {:?} does not exist, skipping seed", bundled);
-        return Ok(());
-    }
-
-    std::fs::create_dir_all(&runtime)?;
-
-    let entries = std::fs::read_dir(&bundled)?;
-    for entry in entries {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(e) => {
-                log::warn!("Failed to read bundled skill entry: {}", e);
-                continue;
-            }
-        };
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy().to_string();
-
-        // Skip non-directories, inactive, managed, and _-prefixed directories
-        let file_type = match entry.file_type() {
-            Ok(ft) => ft,
-            Err(e) => {
-                log::warn!("Failed to get file type for '{}': {}", name_str, e);
-                continue;
-            }
-        };
-        if !file_type.is_dir() || file_type.is_symlink() {
-            continue;
-        }
-        if name_str == "inactive" || name_str == "managed" || name_str.starts_with('_') {
-            continue;
-        }
-
-        let runtime_skill = runtime.join(&name);
-
-        let should_copy = if runtime_skill.exists() {
-            // Check if bundled version is newer
-            let bundled_version = extract_version_from_skill_dir(&entry.path());
-            let runtime_version = extract_version_from_skill_dir(&runtime_skill);
-
-            match (bundled_version, runtime_version) {
-                (Some(bv), Some(rv)) => {
-                    if semver_is_newer(&bv, &rv) {
-                        log::info!(
-                            "Upgrading skill '{}' from v{} to v{} (bundled is newer)",
-                            name_str, rv, bv
-                        );
-                        true
-                    } else {
-                        false
-                    }
-                }
-                (Some(bv), None) => {
-                    // Bundled has version, runtime doesn't — treat as upgrade
-                    log::info!(
-                        "Upgrading skill '{}' (bundled has v{}, runtime has no version)",
-                        name_str, bv
-                    );
-                    true
-                }
-                _ => false,
-            }
-        } else {
-            log::info!("Seeding skill '{}' from bundled", name_str);
-            true
-        };
-
-        if should_copy {
-            // Atomic upgrade: copy to temp dir, then rename
-            if runtime_skill.exists() {
-                let tmp_name = format!(".{}.seed_tmp", name_str);
-                let tmp_dir = runtime.join(&tmp_name);
-                // Clean up any leftover temp dir from a previous failed attempt
-                if tmp_dir.exists() {
-                    let _ = std::fs::remove_dir_all(&tmp_dir);
-                }
-                match copy_dir_recursive(&entry.path(), &tmp_dir) {
-                    Ok(()) => {
-                        if let Err(e) = std::fs::remove_dir_all(&runtime_skill) {
-                            log::error!("Failed to remove old skill '{}': {}", name_str, e);
-                            let _ = std::fs::remove_dir_all(&tmp_dir);
-                            continue;
-                        }
-                        if let Err(e) = std::fs::rename(&tmp_dir, &runtime_skill) {
-                            log::error!("Failed to rename temp dir for skill '{}': {}", name_str, e);
-                            continue;
-                        }
-                    }
-                    Err(e) => {
-                        log::error!("Failed to copy bundled skill '{}': {}", name_str, e);
-                        let _ = std::fs::remove_dir_all(&tmp_dir);
-                        continue;
-                    }
-                }
-            } else {
-                // Fresh copy — no existing runtime dir to protect
-                if let Err(e) = copy_dir_recursive(&entry.path(), &runtime_skill) {
-                    log::error!("Failed to seed skill '{}': {}", name_str, e);
-                    let _ = std::fs::remove_dir_all(&runtime_skill);
-                    continue;
-                }
-            }
-        }
-    }
-
-    log::info!("Skill seeding complete (runtime dir: {:?})", runtime);
     Ok(())
 }
 
@@ -810,217 +363,6 @@ fn extract_version_from_module_toml(dir: &Path) -> Option<String> {
         }
     }
     None
-}
-
-/// Seed runtime modules directory from bundled modules.
-/// Copies module folders from bundled_modules_dir() to runtime_modules_dir()
-/// only if the runtime copy is missing or has an older semver version.
-pub fn seed_modules() -> std::io::Result<()> {
-    let bundled = bundled_modules_dir();
-    let runtime = runtime_modules_dir();
-
-    if !bundled.exists() {
-        log::info!("Bundled modules directory {:?} does not exist, skipping seed", bundled);
-        return Ok(());
-    }
-
-    std::fs::create_dir_all(&runtime)?;
-
-    // Always sync starkbot_sdk — it's a shared library (no module.toml) that other
-    // modules depend on. Must be kept in sync so runtime copies get the latest code.
-    let bundled_sdk = bundled.join("starkbot_sdk");
-    let runtime_sdk = runtime.join("starkbot_sdk");
-    if bundled_sdk.exists() {
-        let should_sync = if runtime_sdk.exists() {
-            // Compare pyproject.toml version to detect changes
-            let bundled_ver = std::fs::read_to_string(bundled_sdk.join("pyproject.toml"))
-                .ok()
-                .and_then(|c| {
-                    c.lines()
-                        .find(|l| l.trim().starts_with("version"))
-                        .and_then(|l| l.split('"').nth(1))
-                        .map(|s| s.to_string())
-                });
-            let runtime_ver = std::fs::read_to_string(runtime_sdk.join("pyproject.toml"))
-                .ok()
-                .and_then(|c| {
-                    c.lines()
-                        .find(|l| l.trim().starts_with("version"))
-                        .and_then(|l| l.split('"').nth(1))
-                        .map(|s| s.to_string())
-                });
-            match (bundled_ver, runtime_ver) {
-                (Some(bv), Some(rv)) if bv != rv => {
-                    log::info!("Upgrading starkbot_sdk from v{} to v{}", rv, bv);
-                    true
-                }
-                (Some(_), None) => true,
-                _ => false,
-            }
-        } else {
-            log::info!("Seeding starkbot_sdk from bundled");
-            true
-        };
-        if should_sync {
-            if runtime_sdk.exists() {
-                let _ = std::fs::remove_dir_all(&runtime_sdk);
-            }
-            copy_dir_recursive(&bundled_sdk, &runtime_sdk)?;
-        }
-    }
-
-    let entries = std::fs::read_dir(&bundled)?;
-    for entry in entries {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(e) => {
-                log::warn!("Failed to read bundled module entry: {}", e);
-                continue;
-            }
-        };
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy().to_string();
-
-        // Skip non-directories, symlinks, and _-prefixed directories
-        let file_type = match entry.file_type() {
-            Ok(ft) => ft,
-            Err(e) => {
-                log::warn!("Failed to get file type for '{}': {}", name_str, e);
-                continue;
-            }
-        };
-        if !file_type.is_dir() || file_type.is_symlink() {
-            continue;
-        }
-        if name_str.starts_with('_') {
-            continue;
-        }
-
-        // Must have a module.toml to be a valid module
-        if !entry.path().join("module.toml").exists() {
-            continue;
-        }
-
-        let runtime_module = runtime.join(&name);
-
-        let should_copy = if runtime_module.exists() {
-            // Check if the runtime copy is manifest-only (only module.toml, no service files).
-            // This happens when installed from StarkHub without a binary archive.
-            // In that case, overwrite with the full bundled copy.
-            let is_manifest_only = runtime_module.join("module.toml").exists()
-                && !runtime_module.join("service.js").exists()
-                && !runtime_module.join("service.py").exists()
-                && !runtime_module.join("bin").exists();
-
-            if is_manifest_only {
-                log::info!(
-                    "Replacing manifest-only module '{}' with full bundled copy",
-                    name_str
-                );
-                true
-            } else {
-                let bundled_version = extract_version_from_module_toml(&entry.path());
-                let runtime_version = extract_version_from_module_toml(&runtime_module);
-
-                match (bundled_version, runtime_version) {
-                    (Some(bv), Some(rv)) => {
-                        if semver_is_newer(&bv, &rv) {
-                            log::info!(
-                                "Upgrading module '{}' from v{} to v{} (bundled is newer)",
-                                name_str, rv, bv
-                            );
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                    (Some(bv), None) => {
-                        log::info!(
-                            "Upgrading module '{}' (bundled has v{}, runtime has no version)",
-                            name_str, bv
-                        );
-                        true
-                    }
-                    _ => false,
-                }
-            }
-        } else {
-            log::info!("Seeding module '{}' from bundled", name_str);
-            true
-        };
-
-        if should_copy {
-            if runtime_module.exists() {
-                // Atomic upgrade: copy to temp dir, then rename
-                let tmp_name = format!(".{}.seed_tmp", name_str);
-                let tmp_dir = runtime.join(&tmp_name);
-                if tmp_dir.exists() {
-                    let _ = std::fs::remove_dir_all(&tmp_dir);
-                }
-                match copy_dir_recursive(&entry.path(), &tmp_dir) {
-                    Ok(()) => {
-                        if let Err(e) = std::fs::remove_dir_all(&runtime_module) {
-                            log::error!("Failed to remove old module '{}': {}", name_str, e);
-                            let _ = std::fs::remove_dir_all(&tmp_dir);
-                            continue;
-                        }
-                        if let Err(e) = std::fs::rename(&tmp_dir, &runtime_module) {
-                            log::error!("Failed to rename temp dir for module '{}': {}", name_str, e);
-                            continue;
-                        }
-                    }
-                    Err(e) => {
-                        log::error!("Failed to copy bundled module '{}': {}", name_str, e);
-                        let _ = std::fs::remove_dir_all(&tmp_dir);
-                        continue;
-                    }
-                }
-            } else {
-                if let Err(e) = copy_dir_recursive(&entry.path(), &runtime_module) {
-                    log::error!("Failed to seed module '{}': {}", name_str, e);
-                    let _ = std::fs::remove_dir_all(&runtime_module);
-                    continue;
-                }
-            }
-        }
-    }
-
-    // Second pass: copy shared library directories (e.g. starkbot_sdk) that modules
-    // depend on but which don't have a module.toml themselves.
-    let entries2 = std::fs::read_dir(&bundled)?;
-    for entry in entries2 {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy().to_string();
-
-        let file_type = match entry.file_type() {
-            Ok(ft) => ft,
-            Err(_) => continue,
-        };
-        if !file_type.is_dir() || file_type.is_symlink() || name_str.starts_with('_') || name_str.starts_with('.') {
-            continue;
-        }
-
-        // Skip actual modules (already handled above)
-        if entry.path().join("module.toml").exists() {
-            continue;
-        }
-
-        let runtime_lib = runtime.join(&name);
-        if !runtime_lib.exists() {
-            log::info!("Seeding shared library '{}' from bundled modules", name_str);
-            if let Err(e) = copy_dir_recursive(&entry.path(), &runtime_lib) {
-                log::error!("Failed to seed shared library '{}': {}", name_str, e);
-                let _ = std::fs::remove_dir_all(&runtime_lib);
-            }
-        }
-    }
-
-    log::info!("Module seeding complete (runtime dir: {:?})", runtime);
-    Ok(())
 }
 
 /// Initialize the workspace, notes, and soul directories
@@ -1084,6 +426,27 @@ pub fn initialize_workspace() -> std::io::Result<()> {
         }
     } else {
         log::info!("Using existing guidelines document at {:?}", guidelines_document);
+    }
+
+    // Create bot config directory and seed bot_config.ron if it doesn't exist
+    let bot_cfg_dir = bot_config_dir();
+    std::fs::create_dir_all(&bot_cfg_dir)?;
+
+    let bot_cfg_path = bot_config_path();
+    if !bot_cfg_path.exists() {
+        let seed = bot_config_seed_path();
+        if seed.exists() {
+            log::info!(
+                "Initializing bot_config.ron from {:?} to {:?}",
+                seed,
+                bot_cfg_path
+            );
+            std::fs::copy(&seed, &bot_cfg_path)?;
+        } else {
+            log::debug!("Seed bot_config.ron not found at {:?}, skipping", seed);
+        }
+    } else {
+        log::info!("Using existing bot_config.ron at {:?}", bot_cfg_path);
     }
 
     Ok(())

@@ -36,21 +36,15 @@ struct TenantInfoResponse {
     display_name: Option<String>,
     #[allow(dead_code)]
     status: Option<String>,
+    pub agent_preset: Option<serde_json::Value>,
 }
 
-/// Response from /api/keystore/wallet (legacy fallback)
-#[derive(Debug, Deserialize)]
-struct KeystoreWalletResponse {
-    wallet_id: String,
-    admin_address: String,
-    domain: Option<String>,
-}
-
-/// Common fields extracted from either response
+/// Fields extracted from /api/tenantinfo response
 struct InitInfo {
     wallet_id: String,
     admin_address: String,
     domain: Option<String>,
+    agent_preset: Option<serde_json::Value>,
 }
 
 /// Request body for sign-message endpoint
@@ -116,6 +110,8 @@ pub struct FlashWalletProvider {
     encryption_key_hex: tokio::sync::OnceCell<String>,
     /// Instance's public domain from control plane (e.g. "starkbot-abc.starkbot.cloud")
     domain: Option<String>,
+    /// Agent preset configuration from control plane (JSONB)
+    agent_preset: Option<serde_json::Value>,
 }
 
 impl FlashWalletProvider {
@@ -139,7 +135,6 @@ impl FlashWalletProvider {
         let instance_token = Arc::new(RwLock::new(instance_token));
 
         // Fetch instance info from control plane
-        // Prefer /api/tenantinfo, fall back to /api/keystore/wallet for older control planes
         let token = instance_token.read().await.clone();
         let info = Self::fetch_init_info(&http_client, &keystore_url, &tenant_id, &token).await?;
 
@@ -167,6 +162,7 @@ impl FlashWalletProvider {
             http_client,
             encryption_key_hex: tokio::sync::OnceCell::new(),
             domain: info.domain,
+            agent_preset: info.agent_preset,
         })
     }
 
@@ -175,70 +171,47 @@ impl FlashWalletProvider {
         self.domain.as_deref()
     }
 
-    /// Fetch init info from control plane.
-    /// Tries /api/tenantinfo first, falls back to /api/keystore/wallet.
+    /// Get the agent preset configuration from the control plane (if set)
+    pub fn agent_preset(&self) -> Option<&serde_json::Value> {
+        self.agent_preset.as_ref()
+    }
+
+    /// Fetch init info from control plane via /api/tenantinfo.
     async fn fetch_init_info(
         http_client: &reqwest::Client,
         keystore_url: &str,
         tenant_id: &str,
         token: &str,
     ) -> Result<InitInfo, String> {
-        // Try /api/tenantinfo first
-        let tenantinfo_url = format!("{}/api/tenantinfo", keystore_url);
-        log::info!("Fetching instance info from {}", tenantinfo_url);
+        let url = format!("{}/api/tenantinfo", keystore_url);
+        log::info!("Fetching instance info from {}", url);
 
         let response = http_client
-            .get(&tenantinfo_url)
-            .timeout(std::time::Duration::from_secs(30))
-            .header("X-Tenant-ID", tenant_id)
-            .header("X-Instance-Token", token)
-            .send()
-            .await;
-
-        if let Ok(resp) = response {
-            if resp.status().is_success() {
-                if let Ok(data) = resp.json::<TenantInfoResponse>().await {
-                    log::info!("Got tenant info from /api/tenantinfo");
-                    return Ok(InitInfo {
-                        wallet_id: data.wallet_id,
-                        admin_address: data.admin_address,
-                        domain: data.domain,
-                    });
-                }
-            }
-            log::warn!("Failed to use /api/tenantinfo, falling back to /api/keystore/wallet");
-        } else {
-            log::warn!("Failed to reach /api/tenantinfo, falling back to /api/keystore/wallet");
-        }
-
-        // Fallback: /api/keystore/wallet
-        let wallet_url = format!("{}/api/keystore/wallet", keystore_url);
-        log::info!("Fetching wallet info from {}", wallet_url);
-
-        let response = http_client
-            .get(&wallet_url)
+            .get(&url)
             .timeout(std::time::Duration::from_secs(30))
             .header("X-Tenant-ID", tenant_id)
             .header("X-Instance-Token", token)
             .send()
             .await
-            .map_err(|e| format!("Flash keystore request failed: {}", e))?;
+            .map_err(|e| format!("Flash tenantinfo request failed: {}", e))?;
 
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            return Err(format!("Flash keystore error ({}): {}", status, body));
+            return Err(format!("Flash tenantinfo error ({}): {}", status, body));
         }
 
-        let data: KeystoreWalletResponse = response
+        let data: TenantInfoResponse = response
             .json()
             .await
-            .map_err(|e| format!("Failed to parse keystore response: {}", e))?;
+            .map_err(|e| format!("Failed to parse tenantinfo response: {}", e))?;
 
+        log::info!("Got tenant info from /api/tenantinfo");
         Ok(InitInfo {
             wallet_id: data.wallet_id,
             admin_address: data.admin_address,
             domain: data.domain,
+            agent_preset: data.agent_preset,
         })
     }
 

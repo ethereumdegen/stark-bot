@@ -107,14 +107,28 @@ pub struct AppState {
 /// 2. Local database appears fresh (no API keys, no impulse nodes beyond trunk)
 ///
 /// Retry logic: 3 attempts with exponential backoff (2s, 4s, 8s)
-async fn auto_retrieve_from_keystore(
+async fn load_keystore_state_from_cloud(
     db: &std::sync::Arc<db::Database>,
     wallet_provider: &std::sync::Arc<dyn wallet::WalletProvider>,
+    broadcaster: &std::sync::Arc<gateway::events::EventBroadcaster>,
 ) {
     const MAX_RETRIES: u32 = 3;
     const INITIAL_BACKOFF_SECS: u64 = 2;
 
     let wallet_address = wallet_provider.get_address().to_lowercase();
+
+    // Helper to broadcast a system event to live logs
+    let emit = |status: &str, message: &str| {
+        broadcaster.broadcast(gateway::protocol::GatewayEvent::new(
+            format!("system.keystore_{}", status),
+            serde_json::json!({
+                "status": status,
+                "message": message,
+                "wallet": &wallet_address,
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            }),
+        ));
+    };
 
     // Check if we've already done auto-retrieval for this wallet
     match db.has_keystore_auto_retrieved(&wallet_address) {
@@ -149,10 +163,12 @@ async fn auto_retrieve_from_keystore(
             None,
             None,
         );
+        emit("skipped", "Local state already exists, skipping cloud restore");
         return;
     }
 
     log::info!("[Keystore] Fresh instance detected, attempting auto-retrieval for {}", wallet_address);
+    emit("started", "Fresh instance detected, attempting cloud backup restore...");
 
     // Retry loop with exponential backoff
     let mut last_error = String::new();
@@ -203,24 +219,28 @@ async fn auto_retrieve_from_keystore(
                         };
                         match backup::restore::restore_all(db, &mut backup_data, None, None, None).await {
                             Ok(restore_result) => {
-                                log::info!("[Keystore] Auto-sync: {}", restore_result.summary());
+                                let summary = restore_result.summary();
+                                log::info!("[Keystore] Auto-sync: {}", summary);
                                 let _ = db.record_auto_sync_result(
                                     &wallet_address,
                                     "success",
-                                    &restore_result.summary(),
+                                    &summary,
                                     Some(restore_result.api_keys as i32),
                                     Some(restore_result.impulse_nodes as i32),
                                 );
+                                emit("success", &format!("Cloud backup restored: {}", summary));
                             }
                             Err(e) => {
                                 log::error!("[Keystore] Failed to restore backup: {}", e);
+                                let msg = format!("Restore failed: {}", e);
                                 let _ = db.record_auto_sync_result(
                                     &wallet_address,
                                     "error",
-                                    &format!("Restore failed: {}", e),
+                                    &msg,
                                     None,
                                     None,
                                 );
+                                emit("error", &msg);
                             }
                         }
                         let _ = db.mark_keystore_auto_retrieved(&wallet_address);
@@ -236,6 +256,7 @@ async fn auto_retrieve_from_keystore(
                             None,
                             None,
                         );
+                        emit("no_backup", "No cloud backup data found");
                         return;
                     }
                 } else if let Some(error) = &resp.error {
@@ -249,6 +270,7 @@ async fn auto_retrieve_from_keystore(
                             None,
                             None,
                         );
+                        emit("no_backup", "No cloud backup found — starting fresh");
                         return;
                     }
                     last_error = error.clone();
@@ -272,9 +294,461 @@ async fn auto_retrieve_from_keystore(
         ("error", format!("Auto-sync failed: {}", last_error))
     };
     let _ = db.record_auto_sync_result(&wallet_address, status, &message, None, None);
+    emit(status, &message);
 }
 
+/// Return the directory where hyperpacks are stored on disk.
+fn hyperpacks_dir() -> std::path::PathBuf {
+    crate::config::backend_dir().join("hyperpacks")
+}
 
+/// Derive a directory name for a hyperpack from its path config.
+fn hyperpack_dir_name(path: &crate::models::bot_config::HyperPackPath) -> String {
+    use crate::models::bot_config::HyperPackPath;
+    match path {
+        HyperPackPath::Git { url, .. } => {
+            // Use the repo name from the URL (strip .git suffix)
+            let name = url.rsplit('/').next().unwrap_or("unknown");
+            name.trim_end_matches(".git").to_string()
+        }
+        HyperPackPath::WebServer { hyperpack_name, .. } => hyperpack_name.clone(),
+    }
+}
+
+/// Load hyperpacks declared in `bot_config.ron`.
+///
+/// Downloads each hyperpack into `stark-backend/hyperpacks/<name>/`.
+/// Git sources are cloned; WebServer sources are fetched as zip archives
+/// and extracted.
+///
+/// Called once during the background boot sequence, after the keystore state
+/// has been restored (so any config synced from the cloud is already on disk).
+async fn load_hyperpacks(broadcaster: &std::sync::Arc<gateway::events::EventBroadcaster>) {
+    use crate::models::bot_config::HyperPackPath;
+
+    let config = crate::models::BotConfig::load();
+
+    if config.hyperpacks.is_empty() {
+        log::debug!("[Hyperpacks] No hyperpacks declared in bot_config.ron");
+        return;
+    }
+
+    let base_dir = hyperpacks_dir();
+    if let Err(e) = std::fs::create_dir_all(&base_dir) {
+        log::error!("[Hyperpacks] Failed to create hyperpacks dir: {}", e);
+        return;
+    }
+
+    log::info!(
+        "[Hyperpacks] Resolving {} hyperpack(s) from bot_config.ron → {}",
+        config.hyperpacks.len(),
+        base_dir.display()
+    );
+
+    broadcaster.broadcast(gateway::protocol::GatewayEvent::new(
+        "system.hyperpacks_resolving",
+        serde_json::json!({
+            "count": config.hyperpacks.len(),
+            "packs": config.hyperpacks.iter().map(|p| {
+                match &p.path {
+                    HyperPackPath::Git { url, commit } => serde_json::json!({
+                        "source": "git",
+                        "url": url,
+                        "commit": commit,
+                    }),
+                    HyperPackPath::WebServer { host, hyperpack_name, version } => serde_json::json!({
+                        "source": "registry",
+                        "host": host,
+                        "name": hyperpack_name,
+                        "version": version,
+                    }),
+                }
+            }).collect::<Vec<_>>(),
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+        }),
+    ));
+
+    let mut results: Vec<serde_json::Value> = Vec::new();
+
+    for pack in &config.hyperpacks {
+        let dir_name = hyperpack_dir_name(&pack.path);
+        let dest = base_dir.join(&dir_name);
+
+        let result = match &pack.path {
+            HyperPackPath::Git { url, commit } => {
+                fetch_hyperpack_git(url, commit.as_deref(), &dest).await
+            }
+            HyperPackPath::WebServer { host, hyperpack_name, version } => {
+                fetch_hyperpack_registry(host, hyperpack_name, version.as_deref(), &dest).await
+            }
+        };
+
+        match &result {
+            Ok(()) => {
+                log::info!("[Hyperpacks] {} — ready at {}", dir_name, dest.display());
+                results.push(serde_json::json!({ "name": dir_name, "status": "ok" }));
+            }
+            Err(e) => {
+                log::error!("[Hyperpacks] {} — failed: {}", dir_name, e);
+                results.push(serde_json::json!({ "name": dir_name, "status": "error", "error": e.to_string() }));
+            }
+        }
+    }
+
+    broadcaster.broadcast(gateway::protocol::GatewayEvent::new(
+        "system.hyperpacks_resolved",
+        serde_json::json!({
+            "count": config.hyperpacks.len(),
+            "results": results,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+        }),
+    ));
+
+    // Run install scripts for all successfully downloaded packs
+    install_hyperpacks(&base_dir, &config.hyperpacks, broadcaster).await;
+}
+
+/// Clone or update a git-sourced hyperpack.
+async fn fetch_hyperpack_git(
+    url: &str,
+    commit: Option<&str>,
+    dest: &std::path::Path,
+) -> Result<(), String> {
+    if dest.join(".git").exists() {
+        // Already cloned — fetch + reset to desired state
+        log::info!("[Hyperpacks] git pull existing clone at {}", dest.display());
+        let output = tokio::process::Command::new("git")
+            .args(["fetch", "--all"])
+            .current_dir(dest)
+            .output()
+            .await
+            .map_err(|e| format!("git fetch failed: {}", e))?;
+        if !output.status.success() {
+            return Err(format!("git fetch failed: {}", String::from_utf8_lossy(&output.stderr)));
+        }
+
+        let reset_target = commit.unwrap_or("origin/HEAD");
+        let output = tokio::process::Command::new("git")
+            .args(["reset", "--hard", reset_target])
+            .current_dir(dest)
+            .output()
+            .await
+            .map_err(|e| format!("git reset failed: {}", e))?;
+        if !output.status.success() {
+            return Err(format!("git reset to {} failed: {}", reset_target, String::from_utf8_lossy(&output.stderr)));
+        }
+    } else {
+        // Fresh clone
+        log::info!("[Hyperpacks] git clone {} → {}", url, dest.display());
+        let output = tokio::process::Command::new("git")
+            .args(["clone", url, &dest.to_string_lossy()])
+            .output()
+            .await
+            .map_err(|e| format!("git clone failed: {}", e))?;
+        if !output.status.success() {
+            return Err(format!("git clone failed: {}", String::from_utf8_lossy(&output.stderr)));
+        }
+
+        // Checkout specific commit if requested
+        if let Some(sha) = commit {
+            let output = tokio::process::Command::new("git")
+                .args(["checkout", sha])
+                .current_dir(dest)
+                .output()
+                .await
+                .map_err(|e| format!("git checkout failed: {}", e))?;
+            if !output.status.success() {
+                return Err(format!("git checkout {} failed: {}", sha, String::from_utf8_lossy(&output.stderr)));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Fetch a hyperpack from a registry (zip download), extract into dest.
+async fn fetch_hyperpack_registry(
+    host: &str,
+    name: &str,
+    version: Option<&str>,
+    dest: &std::path::Path,
+) -> Result<(), String> {
+    let version_segment = version.unwrap_or("latest");
+    let url = format!("{}/api/v1/packs/{}/{}/download", host.trim_end_matches('/'), name, version_segment);
+
+    log::info!("[Hyperpacks] Downloading {} @ {} from {}", name, version_segment, url);
+
+    let response = reqwest::get(&url)
+        .await
+        .map_err(|e| format!("HTTP request to {} failed: {}", url, e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Registry returned HTTP {} for {}", response.status(), url));
+    }
+
+    let bytes = response.bytes().await
+        .map_err(|e| format!("Failed to read response body: {}", e))?;
+
+    // Clean destination and recreate
+    if dest.exists() {
+        std::fs::remove_dir_all(dest)
+            .map_err(|e| format!("Failed to remove old hyperpack dir: {}", e))?;
+    }
+    std::fs::create_dir_all(dest)
+        .map_err(|e| format!("Failed to create hyperpack dir: {}", e))?;
+
+    // Try zip first, fall back to tarball
+    if bytes.len() >= 4 && bytes[0..4] == [0x50, 0x4B, 0x03, 0x04] {
+        // ZIP magic bytes
+        extract_zip(&bytes, dest)?;
+    } else {
+        // Assume gzipped tarball
+        extract_tarball(&bytes, dest)?;
+    }
+
+    Ok(())
+}
+
+/// Extract a zip archive into the destination directory.
+fn extract_zip(data: &[u8], dest: &std::path::Path) -> Result<(), String> {
+    use std::io::Read;
+    let cursor = std::io::Cursor::new(data);
+    let mut archive = zip::ZipArchive::new(cursor)
+        .map_err(|e| format!("Failed to open zip archive: {}", e))?;
+
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)
+            .map_err(|e| format!("Failed to read zip entry {}: {}", i, e))?;
+
+        let out_path = dest.join(file.mangled_name());
+
+        if file.is_dir() {
+            std::fs::create_dir_all(&out_path)
+                .map_err(|e| format!("Failed to create dir {}: {}", out_path.display(), e))?;
+        } else {
+            if let Some(parent) = out_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("Failed to create parent dir: {}", e))?;
+            }
+            let mut out_file = std::fs::File::create(&out_path)
+                .map_err(|e| format!("Failed to create file {}: {}", out_path.display(), e))?;
+            std::io::copy(&mut file, &mut out_file)
+                .map_err(|e| format!("Failed to write file {}: {}", out_path.display(), e))?;
+
+            // Preserve executable permissions on unix
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Some(mode) = file.unix_mode() {
+                    std::fs::set_permissions(&out_path, std::fs::Permissions::from_mode(mode)).ok();
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Extract a gzipped tarball into the destination directory.
+fn extract_tarball(data: &[u8], dest: &std::path::Path) -> Result<(), String> {
+    use std::io::Read;
+    let gz = flate2::read::GzDecoder::new(data);
+    let mut archive = tar::Archive::new(gz);
+    archive.unpack(dest)
+        .map_err(|e| format!("Failed to extract tarball: {}", e))?;
+    Ok(())
+}
+
+/// Copy a directory's children into a target directory (merging, not replacing).
+/// e.g. copy_subdir_contents("hyperpacks/foo/skills", "skills") copies each
+/// skill folder from the hyperpack into stark-backend/skills/.
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<u32, String> {
+    let mut count = 0u32;
+    if !src.is_dir() {
+        return Ok(0);
+    }
+    let entries = std::fs::read_dir(src)
+        .map_err(|e| format!("Failed to read {}: {}", src.display(), e))?;
+
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("read_dir entry error: {}", e))?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if src_path.is_dir() {
+            std::fs::create_dir_all(&dst_path)
+                .map_err(|e| format!("Failed to create {}: {}", dst_path.display(), e))?;
+            count += copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            if let Some(parent) = dst_path.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            std::fs::copy(&src_path, &dst_path)
+                .map_err(|e| format!("Failed to copy {} → {}: {}", src_path.display(), dst_path.display(), e))?;
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+/// Install all downloaded hyperpacks.
+///
+/// For each hyperpack:
+/// 1. Copy `skills/` contents → `stark-backend/skills/`
+/// 2. Copy `agents/` contents → `stark-backend/agents/`
+/// 3. Copy `modules/` contents → `stark-backend/modules/`
+/// 4. Run `install.sh` if present
+async fn install_hyperpacks(
+    base_dir: &std::path::Path,
+    packs: &[crate::models::HyperPack],
+    broadcaster: &std::sync::Arc<gateway::events::EventBroadcaster>,
+) {
+    let bd = crate::config::backend_dir();
+    let skills_dir = bd.join("skills");
+    let agents_dir = bd.join("agents");
+    let modules_dir = bd.join("modules");
+
+    let mut results: Vec<serde_json::Value> = Vec::new();
+
+    for pack in packs {
+        let dir_name = hyperpack_dir_name(&pack.path);
+        let pack_dir = base_dir.join(&dir_name);
+
+        if !pack_dir.exists() {
+            log::warn!("[Hyperpacks] {} — directory missing, skipping install", dir_name);
+            continue;
+        }
+
+        broadcaster.broadcast(gateway::protocol::GatewayEvent::new(
+            "system.hyperpack_installing",
+            serde_json::json!({
+                "name": dir_name,
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            }),
+        ));
+
+        let mut copied = serde_json::Map::new();
+
+        // Copy skills/, agents/, modules/ from the hyperpack into the main dirs
+        for (subdir, target) in [("skills", &skills_dir), ("agents", &agents_dir), ("modules", &modules_dir)] {
+            let src = pack_dir.join(subdir);
+            if src.is_dir() {
+                std::fs::create_dir_all(target).ok();
+                match copy_dir_recursive(&src, target) {
+                    Ok(n) => {
+                        log::info!("[Hyperpacks] {} — copied {} file(s) from {}/", dir_name, n, subdir);
+                        copied.insert(subdir.to_string(), serde_json::json!(n));
+                    }
+                    Err(e) => {
+                        log::error!("[Hyperpacks] {} — failed to copy {}/: {}", dir_name, subdir, e);
+                        copied.insert(subdir.to_string(), serde_json::json!({ "error": e }));
+                    }
+                }
+            }
+        }
+
+        // Run install.sh if present
+        let install_script = pack_dir.join("install.sh");
+        if install_script.exists() {
+            log::info!("[Hyperpacks] {} — running install.sh", dir_name);
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&install_script, std::fs::Permissions::from_mode(0o755)).ok();
+            }
+
+            let output = tokio::process::Command::new("bash")
+                .arg("install.sh")
+                .current_dir(&pack_dir)
+                .output()
+                .await;
+
+            match output {
+                Ok(out) => {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+
+                    if out.status.success() {
+                        log::info!("[Hyperpacks] {} — install.sh completed successfully", dir_name);
+                        if !stdout.is_empty() {
+                            log::info!("[Hyperpacks] {} stdout: {}", dir_name, stdout.trim());
+                        }
+                        results.push(serde_json::json!({
+                            "name": dir_name, "status": "ok", "copied": copied, "install_sh": "ok"
+                        }));
+                    } else {
+                        log::error!(
+                            "[Hyperpacks] {} — install.sh exited with code {:?}\nstdout: {}\nstderr: {}",
+                            dir_name, out.status.code(), stdout.trim(), stderr.trim()
+                        );
+                        results.push(serde_json::json!({
+                            "name": dir_name, "status": "error", "copied": copied,
+                            "install_sh": { "exit_code": out.status.code(), "stderr": stderr.trim().chars().take(500).collect::<String>() }
+                        }));
+                    }
+                }
+                Err(e) => {
+                    log::error!("[Hyperpacks] {} — failed to run install.sh: {}", dir_name, e);
+                    results.push(serde_json::json!({
+                        "name": dir_name, "status": "error", "copied": copied, "install_sh": { "error": e.to_string() }
+                    }));
+                }
+            }
+        } else {
+            log::debug!("[Hyperpacks] {} — no install.sh", dir_name);
+            results.push(serde_json::json!({
+                "name": dir_name, "status": "ok", "copied": copied
+            }));
+        }
+    }
+
+    broadcaster.broadcast(gateway::protocol::GatewayEvent::new(
+        "system.hyperpacks_installed",
+        serde_json::json!({
+            "count": results.len(),
+            "results": results,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+        }),
+    ));
+}
+
+/// Re-sync skills from disk after hyperpacks have been installed.
+async fn sync_skills(skill_registry: &std::sync::Arc<skills::SkillRegistry>) {
+    log::info!("[Hyperpacks] Re-syncing skills from disk");
+    match skill_registry.sync_to_db().await {
+        Ok(count) => log::info!("[Hyperpacks] Synced {} skills from disk", count),
+        Err(e) => log::error!("[Hyperpacks] Failed to sync skills: {}", e),
+    }
+}
+
+/// Re-sync agents from disk after hyperpacks have been installed.
+fn sync_agents() {
+    log::info!("[Hyperpacks] Re-syncing agents from disk");
+    agents::loader::reload_registry_from_disk();
+}
+
+/// Re-sync modules from disk after hyperpacks have been installed.
+/// Registers any new modules that appeared on disk into the DB.
+fn sync_modules(db: &std::sync::Arc<db::Database>) {
+    log::info!("[Hyperpacks] Re-syncing modules from disk");
+    let module_registry = modules::ModuleRegistry::new();
+    for module in module_registry.available_modules() {
+        let name = module.name();
+        if !db.is_module_installed(name).unwrap_or(true) {
+            match db.install_module(
+                name,
+                module.description(),
+                module.version(),
+                module.has_tools(),
+                module.has_dashboard(),
+            ) {
+                Ok(_) => log::info!("[Hyperpacks] Installed module '{}' from hyperpack", name),
+                Err(e) => log::warn!("[Hyperpacks] Failed to install module '{}': {}", name, e),
+            }
+        }
+    }
+}
 
 /// SPA fallback handler - serves index.html for client-side routing
 async fn spa_fallback() -> actix_web::Result<NamedFile> {
@@ -705,18 +1179,6 @@ async fn main() -> std::io::Result<()> {
     }
     log::info!("Public URL (self_url): {}", config::self_url());
 
-    // Seed runtime skills directory from bundled skills
-    log::info!("Seeding runtime skills from bundled");
-    if let Err(e) = config::seed_skills() {
-        log::error!("Failed to seed skills: {}", e);
-    }
-
-    // Seed runtime modules directory from bundled modules
-    log::info!("Seeding runtime modules from bundled");
-    if let Err(e) = config::seed_modules() {
-        log::error!("Failed to seed modules: {}", e);
-    }
-
     // Initialize disk quota manager
     let disk_quota_mb = config::disk_quota_mb();
     let disk_quota: Option<Arc<disk_quota::DiskQuotaManager>> = if disk_quota_mb > 0 {
@@ -777,14 +1239,7 @@ async fn main() -> std::io::Result<()> {
     }
 
     // Load agent subtypes from agents/ folders (disk-based, no DB).
-    // Seed bundled agents from config/agents/ → stark-backend/agents/ (version-gated).
     {
-        if let Err(e) = config::seed_agents() {
-            log::warn!("Failed to seed agents: {}", e);
-        }
-        if let Err(e) = config::seed_module_agents() {
-            log::warn!("Failed to seed module agents: {}", e);
-        }
         let agents_dir = config::runtime_agents_dir();
         std::fs::create_dir_all(&agents_dir).ok();
         let configs = agents::loader::load_agents_from_directory(&agents_dir)
@@ -793,11 +1248,11 @@ async fn main() -> std::io::Result<()> {
     }
 
     // Initialize keystore URL (must be before auto-retrieve)
-    // Priority: 1. bot_settings.keystore_url, 2. KEYSTORE_URL env var, 3. default
+    // Priority: 1. bot_config.ron keystore_server_url, 2. KEYSTORE_URL env var, 3. default
     let env_keystore_url = std::env::var("KEYSTORE_URL").ok().filter(|s| !s.is_empty());
-    let db_keystore_url = db.get_bot_settings().ok().and_then(|s| s.keystore_url).filter(|s| !s.is_empty());
+    let cfg_keystore_url = crate::models::BotConfig::load().services.keystore_server_url.filter(|s| !s.is_empty());
 
-    if let Some(url) = db_keystore_url.or(env_keystore_url) {
+    if let Some(url) = cfg_keystore_url.or(env_keystore_url) {
         log::info!("Using custom keystore URL: {}", url);
         keystore_client::KEYSTORE_CLIENT.set_base_url(&url).await;
     }
@@ -1010,9 +1465,8 @@ async fn main() -> std::io::Result<()> {
     log::info!("Registered {} tool validators", validator_registry.len());
 
     // Create embedding generator for hybrid search + association loop
-    let embeddings_server_url = db.get_bot_settings()
-        .ok()
-        .and_then(|s| s.embeddings_server_url)
+    let embeddings_server_url = crate::models::BotConfig::load()
+        .services.embeddings_server_url
         .unwrap_or_else(|| crate::models::DEFAULT_EMBEDDINGS_SERVER_URL.to_string());
     log::info!(
         "HybridSearchEngine: using remote embeddings server at {}",
@@ -1169,11 +1623,28 @@ async fn main() -> std::io::Result<()> {
         let db_bg = db.clone();
         let gateway_bg = gateway.clone();
         let wallet_provider_bg = wallet_provider.clone();
+        let broadcaster_bg = broadcaster.clone();
+        let skill_registry_bg = skill_registry.clone();
         tokio::spawn(async move {
             // Keystore auto-retrieve (works in both Standard and Flash mode via wallet provider)
-            if let Some(ref wp) = wallet_provider_bg {
-                auto_retrieve_from_keystore(&db_bg, wp).await;
+            let auto_sync = std::env::var(crate::config::env_vars::AUTO_SYNC_FROM_KEYSTORE)
+                .map(|v| v != "false" && v != "0")
+                .unwrap_or(true);
+            if auto_sync {
+                if let Some(ref wp) = wallet_provider_bg {
+                    load_keystore_state_from_cloud(&db_bg, wp, &broadcaster_bg).await;
+                }
+            } else {
+                log::info!("AUTO_SYNC_FROM_KEYSTORE=false — skipping keystore restore");
             }
+
+            // Resolve hyperpacks declared in bot_config.ron
+            load_hyperpacks(&broadcaster_bg).await;
+
+            // Re-sync skills, agents, and modules that hyperpacks may have installed
+            sync_skills(&skill_registry_bg).await;
+            sync_agents();
+            sync_modules(&db_bg);
 
             // Auto-create CLI gateway channel if CLI_GATEWAY_TOKEN env var is set
             // This enables direct CLI-to-instance communication without manual channel setup
@@ -1401,7 +1872,6 @@ async fn main() -> std::io::Result<()> {
             .configure(controllers::tools::config)
             .configure(controllers::skills::config)
             .configure(controllers::cron::config)
-            .configure(controllers::heartbeat::config)
             .configure(controllers::gmail::config)
             .configure(controllers::payments::config)
             .configure(controllers::eip8004::config)

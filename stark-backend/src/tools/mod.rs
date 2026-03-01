@@ -49,7 +49,7 @@ fn register_all_tools(registry: &mut ToolRegistry) {
     registry.register(Arc::new(builtin::ManageModulesTool::new()));
     registry.register(Arc::new(builtin::WorkstreamTool::new()));
     registry.register(Arc::new(builtin::InstallApiKeyTool::new()));
-    registry.register(Arc::new(builtin::HeartbeatConfigTool::new()));
+    registry.register(Arc::new(builtin::ModifyBotConfigTool::new()));
     registry.register(Arc::new(builtin::ImpulseMapManageTool::new()));
 
     // Special roles (enriched safe mode management)

@@ -1,5 +1,6 @@
 pub mod agent_settings;
 pub mod api_key;
+pub mod bot_config;
 pub mod bot_settings;
 pub mod channel;
 pub mod channel_settings;
@@ -32,8 +33,8 @@ pub use session::Session;
 pub use session_message::{AddMessageRequest, MessageRole, SessionMessage, SessionTranscriptResponse};
 pub use cron_job::{
     CreateCronJobRequest, CronJob, CronJobResponse, CronJobRun, HeartbeatConfig,
-    HeartbeatConfigResponse, JobStatus, ScheduleType, SessionMode, UpdateCronJobRequest,
-    UpdateHeartbeatConfigRequest,
+    JobStatus, ScheduleType, SessionMode, UpdateCronJobRequest,
 };
+pub use bot_config::{BotConfig, CompactionConfig, HeartbeatFileConfig, HyperPack, HyperPackPath, OperatingMode, ServicesConfig};
 pub use execution::{ExecutionTask, TaskMetrics, TaskStatus, TaskType};
 pub use special_role::{SpecialRole, SpecialRoleAssignment, SpecialRoleGrants, SpecialRoleRoleAssignment};

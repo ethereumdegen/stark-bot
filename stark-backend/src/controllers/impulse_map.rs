@@ -60,7 +60,7 @@ async fn get_graph(
 
 /// Get the full impulse map graph for guest users (no auth required, feature flag controlled)
 async fn get_graph_guest(data: web::Data<AppState>) -> impl Responder {
-    let guest_enabled = data.db.get_bot_settings().map(|s| s.guest_dashboard_enabled).unwrap_or(false);
+    let guest_enabled = crate::models::BotConfig::load().guest_dashboard_enabled;
     if !guest_enabled {
         return HttpResponse::Forbidden().json(serde_json::json!({
             "error": "Guest dashboard is not enabled"

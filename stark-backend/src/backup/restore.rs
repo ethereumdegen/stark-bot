@@ -34,6 +34,7 @@ pub struct RestoreResult {
     pub kanban_items: usize,
     pub bot_settings: bool,
     pub heartbeat_config: bool,
+    pub bot_config: bool,
     pub soul_document: bool,
     pub agent_identity: bool,
 }
@@ -59,6 +60,7 @@ impl RestoreResult {
         if self.kanban_items > 0 { parts.push(format!("{} kanban items", self.kanban_items)); }
         if self.bot_settings { parts.push("bot settings".to_string()); }
         if self.heartbeat_config { parts.push("heartbeat config".to_string()); }
+        if self.bot_config { parts.push("bot config".to_string()); }
         if self.soul_document { parts.push("soul document".to_string()); }
         if self.agent_identity { parts.push("agent identity".to_string()); }
 
@@ -323,6 +325,18 @@ pub async fn restore_all(
         }
     }
 
+    // ── 7b. Bot config (RON file) ────────────────────────────────────────
+    if let Some(bot_config_content) = &backup_data.bot_config {
+        let bc_path = crate::config::bot_config_path();
+        if let Some(parent) = bc_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match std::fs::write(&bc_path, bot_config_content) {
+            Ok(_) => { result.bot_config = true; log::info!("[Restore] Restored bot_config.ron from backup"); }
+            Err(e) => log::warn!("[Restore] Failed to restore bot_config.ron: {}", e),
+        }
+    }
+
     // ── 8. Soul document ────────────────────────────────────────────────
     if let Some(soul_content) = &backup_data.soul_document {
         let soul_path = crate::config::soul_document_path();
@@ -494,11 +508,6 @@ pub async fn restore_all(
             result.modules += 1;
         }
 
-        // Re-seed bundled modules (newer bundled versions take precedence)
-        if let Err(e) = crate::config::seed_modules() {
-            log::warn!("[Restore] Failed to re-seed bundled modules after restore: {}", e);
-        }
-
         // Auto-install restored modules
         let module_registry = crate::modules::ModuleRegistry::new();
         for module_entry in &backup_data.modules {
@@ -588,11 +597,6 @@ pub async fn restore_all(
                     Err(e) => log::warn!("[Restore] Failed to restore skill folder '{}': {}", skill_entry.name, e),
                 }
             }
-        }
-
-        // Re-seed bundled skills (newer bundled versions take precedence)
-        if let Err(e) = crate::config::seed_skills() {
-            log::warn!("[Restore] Failed to re-seed skills after restore: {}", e);
         }
 
         // Reload skill registry if available (syncs disk → DB)

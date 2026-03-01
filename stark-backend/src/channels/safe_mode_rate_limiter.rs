@@ -21,7 +21,7 @@ use std::time::Duration as StdDuration;
 use tokio::sync::oneshot;
 
 use crate::db::Database;
-use crate::models::{Channel, DEFAULT_SAFE_MODE_MAX_QUERIES_PER_10MIN};
+use crate::models::Channel;
 
 /// Minimum interval between safe mode channel creations (1 second)
 const MIN_CREATION_INTERVAL_MS: u64 = 1000;
@@ -119,11 +119,9 @@ impl SafeModeChannelRateLimiter {
         }
     }
 
-    /// Get the per-user query limit from bot settings
+    /// Get the per-user query limit from bot_config.ron
     fn get_user_query_limit(&self) -> i32 {
-        self.db.get_bot_settings()
-            .map(|s| s.safe_mode_max_queries_per_10min)
-            .unwrap_or(DEFAULT_SAFE_MODE_MAX_QUERIES_PER_10MIN)
+        crate::models::BotConfig::load().safe_mode_max_queries_per_10min
     }
 
     /// Queue a safe mode channel creation request

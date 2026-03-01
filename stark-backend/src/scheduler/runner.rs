@@ -3,11 +3,12 @@ use crate::channels::types::NormalizedMessage;
 use crate::db::Database;
 use crate::gateway::events::EventBroadcaster;
 use crate::gateway::protocol::GatewayEvent;
-use crate::models::{CronJob, HeartbeatConfig, ScheduleType};
+use crate::models::{BotConfig, CronJob, HeartbeatFileConfig, ScheduleType};
 use crate::wallet;
 use chrono::{DateTime, Duration, Local, NaiveTime, Utc, Weekday, Datelike, Timelike};
 use std::sync::Arc;
 use tokio::sync::oneshot;
+use tokio::sync::Mutex;
 use tokio::time::{interval, timeout, Duration as TokioDuration};
 
 /// Dedicated channel ID for heartbeat concurrency guard
@@ -63,6 +64,8 @@ pub struct Scheduler {
     /// Wallet provider for x402 payments in scheduled tasks (heartbeats, cron jobs)
     wallet_provider: Option<Arc<dyn wallet::WalletProvider>>,
     skill_registry: Option<Arc<crate::skills::SkillRegistry>>,
+    /// In-memory tracking of last heartbeat execution time (replaces DB tracking)
+    last_heartbeat_at: Arc<Mutex<Option<DateTime<Utc>>>>,
 }
 
 impl Scheduler {
@@ -83,6 +86,7 @@ impl Scheduler {
             config,
             wallet_provider,
             skill_registry,
+            last_heartbeat_at: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -340,6 +344,7 @@ impl Scheduler {
             config: self.config.clone(),
             wallet_provider: self.wallet_provider.clone(),
             skill_registry: self.skill_registry.clone(),
+            last_heartbeat_at: Arc::clone(&self.last_heartbeat_at),
         }
     }
 
@@ -591,56 +596,51 @@ impl Scheduler {
         Ok(())
     }
 
-    /// Process due heartbeats
-    /// Note: Only processes the MOST RECENT heartbeat config (highest ID) to avoid duplicates
+    /// Process due heartbeats — reads config from bot_config.ron
     /// IMPORTANT: Only ONE heartbeat can run at a time
     async fn process_heartbeats(&self) -> Result<(), String> {
-        let due_configs = self
-            .db
-            .list_due_heartbeat_configs()
-            .map_err(|e| format!("Failed to list due heartbeats: {}", e))?;
+        let bot_config = BotConfig::load();
+        let hb = &bot_config.heartbeat;
 
-        // Only process the most recent heartbeat config (highest ID)
-        // This prevents duplicate heartbeats if multiple configs exist
-        if let Some(config) = due_configs.into_iter().max_by_key(|c| c.id) {
-            // Check if within active hours
-            if !self.is_within_active_hours(&config) {
-                // Outside active hours - still update next_beat_at so frontend doesn't get stuck on "soon..."
-                let next_beat = Utc::now() + Duration::minutes(config.interval_minutes as i64);
-                let next_beat_str = next_beat.to_rfc3339();
-                if let Err(e) = self.db.update_heartbeat_next_beat(config.id, &next_beat_str) {
-                    log::error!("Failed to update heartbeat next_beat_at (outside active hours): {}", e);
-                }
-                log::debug!("[HEARTBEAT] Skipping - outside active hours, next check at {}", next_beat_str);
-                return Ok(());
-            }
-
-            // Skip execution if a heartbeat is already running, but still update next_beat_at
-            // so the frontend doesn't get stuck on "soon..." while waiting
-            if self.execution_tracker.get_execution_id(HEARTBEAT_CHANNEL_ID).is_some() {
-                // Update next_beat_at even when skipping so frontend shows correct countdown
-                let next_beat = Utc::now() + Duration::minutes(config.interval_minutes as i64);
-                let next_beat_str = next_beat.to_rfc3339();
-                if let Err(e) = self.db.update_heartbeat_next_beat(config.id, &next_beat_str) {
-                    log::error!("Failed to update heartbeat next_beat_at (already running): {}", e);
-                }
-                log::debug!("[HEARTBEAT] Skipping - heartbeat already running, next check at {}", next_beat_str);
-                return Ok(());
-            }
-
-            let scheduler = self.clone_inner();
-            tokio::spawn(async move {
-                if let Err(e) = scheduler.execute_heartbeat(&config).await {
-                    log::error!("Heartbeat failed: {}", e);
-                }
-            });
+        if !hb.enabled {
+            return Ok(());
         }
+
+        // Check if within active hours/days
+        if !self.is_within_active_hours_file(hb) {
+            log::debug!("[HEARTBEAT] Skipping - outside active hours");
+            return Ok(());
+        }
+
+        // Check if enough time has elapsed since last heartbeat
+        let now = Utc::now();
+        {
+            let last = self.last_heartbeat_at.lock().await;
+            if let Some(last_at) = *last {
+                if now < last_at + Duration::minutes(hb.interval_minutes as i64) {
+                    return Ok(());
+                }
+            }
+        }
+
+        // Skip if a heartbeat is already running
+        if self.execution_tracker.get_execution_id(HEARTBEAT_CHANNEL_ID).is_some() {
+            log::debug!("[HEARTBEAT] Skipping - heartbeat already running");
+            return Ok(());
+        }
+
+        let scheduler = self.clone_inner();
+        tokio::spawn(async move {
+            if let Err(e) = scheduler.execute_heartbeat_from_config().await {
+                log::error!("Heartbeat failed: {}", e);
+            }
+        });
 
         Ok(())
     }
 
-    /// Check if current time is within active hours for a heartbeat
-    fn is_within_active_hours(&self, config: &HeartbeatConfig) -> bool {
+    /// Check if current time is within active hours/days for the file-based heartbeat config
+    fn is_within_active_hours_file(&self, config: &HeartbeatFileConfig) -> bool {
         let now = Local::now();
 
         // Check active days
@@ -688,47 +688,34 @@ impl Scheduler {
         true
     }
 
-    /// Execute a heartbeat — runs all per-agent heartbeat sessions
-    async fn execute_heartbeat(&self, config: &HeartbeatConfig) -> Result<(), String> {
+    /// Execute a heartbeat cycle — reads config from RON, tracks state in memory
+    async fn execute_heartbeat_from_config(&self) -> Result<(), String> {
         let now = Utc::now();
-        let now_str = now.to_rfc3339();
 
-        log::info!("Executing heartbeat (config_id: {})", config.id);
+        log::info!("Executing heartbeat (RON-based)");
 
-        // IMPORTANT: Calculate and set next_beat_at BEFORE execution to prevent race conditions
-        let next_beat = now + Duration::minutes(config.interval_minutes as i64);
-        let next_beat_str = next_beat.to_rfc3339();
-        if let Err(e) = self.db.update_heartbeat_next_beat(config.id, &next_beat_str) {
-            log::error!("Failed to update heartbeat next_beat_at: {}", e);
+        // Record that we're starting NOW to prevent re-trigger during execution
+        {
+            let mut last = self.last_heartbeat_at.lock().await;
+            *last = Some(now);
         }
 
         // Broadcast heartbeat start event
         self.broadcaster.broadcast(GatewayEvent::custom(
             "heartbeat_started",
-            serde_json::json!({
-                "config_id": config.id,
-                "channel_id": config.channel_id,
-            }),
+            serde_json::json!({ "source": "bot_config" }),
         ));
 
         // Run per-agent heartbeats (scans agent folders for heartbeat.md)
         self.run_agent_heartbeats().await;
 
-        // Update last_beat_at (next_beat_at was already set at the start to prevent race conditions)
-        if let Err(e) = self.db.update_heartbeat_last_beat_only(config.id, &now_str) {
-            log::error!("Failed to update heartbeat last_beat_at: {}", e);
-        }
-
         // Broadcast heartbeat completion event
         self.broadcaster.broadcast(GatewayEvent::custom(
             "heartbeat_completed",
-            serde_json::json!({
-                "config_id": config.id,
-                "channel_id": config.channel_id,
-            }),
+            serde_json::json!({ "source": "bot_config" }),
         ));
 
-        log::info!("Heartbeat completed (config_id: {})", config.id);
+        log::info!("Heartbeat completed (RON-based)");
 
         Ok(())
     }
@@ -778,28 +765,27 @@ impl Scheduler {
 
     /// Trigger a heartbeat pulse (fire and forget, like a channel message)
     ///
-    /// Returns immediately after spawning the background task.
+    /// Reads config from bot_config.ron. Returns immediately after spawning the background task.
     /// Results are broadcast via WebSocket events.
-    pub fn run_heartbeat_now(self: &Arc<Self>, config_id: i64) -> Result<String, String> {
-        let config = self
-            .db
-            .get_heartbeat_config_by_id(config_id)
-            .map_err(|e| format!("Database error: {}", e))?
-            .ok_or_else(|| format!("Heartbeat config not found: {}", config_id))?;
+    pub fn run_heartbeat_now(self: &Arc<Self>) -> Result<String, String> {
+        let bot_config = BotConfig::load();
+        if !bot_config.heartbeat.enabled {
+            return Err("Heartbeat is disabled in bot_config.ron".to_string());
+        }
 
         let scheduler = Arc::clone(self);
 
         // Spawn the heartbeat in a background task
         tokio::spawn(async move {
-            log::info!("[HEARTBEAT] Starting pulse for config_id={}", config_id);
+            log::info!("[HEARTBEAT] Starting manual pulse");
 
             // Broadcast start event
             scheduler.broadcaster.broadcast(GatewayEvent::custom(
                 "heartbeat_pulse_started",
-                serde_json::json!({ "config_id": config_id }),
+                serde_json::json!({ "source": "manual" }),
             ));
 
-            let result = scheduler.execute_heartbeat(&config).await;
+            let result = scheduler.execute_heartbeat_from_config().await;
 
             let (success, error) = match result {
                 Ok(()) => {
@@ -816,7 +802,6 @@ impl Scheduler {
             scheduler.broadcaster.broadcast(GatewayEvent::custom(
                 "heartbeat_pulse_completed",
                 serde_json::json!({
-                    "config_id": config_id,
                     "success": success,
                     "error": error,
                 }),

@@ -41,36 +41,30 @@ impl Tool for ReadOperatingModeTool {
         self.definition.clone()
     }
 
-    async fn execute(&self, _params: Value, context: &ToolContext) -> ToolResult {
-        let db = match &context.database {
-            Some(db) => db,
-            None => return ToolResult::error("Database not available"),
+    async fn execute(&self, _params: Value, _context: &ToolContext) -> ToolResult {
+        use crate::models::bot_config::OperatingMode;
+
+        let config = crate::models::BotConfig::load();
+        let rogue_mode_enabled = config.operating_mode.is_rogue();
+
+        let mode = match config.operating_mode {
+            OperatingMode::Rogue => "rogue",
+            OperatingMode::Partner => "partner",
         };
 
-        match db.get_bot_settings() {
-            Ok(settings) => {
-                let mode = if settings.rogue_mode_enabled {
-                    "rogue"
-                } else {
-                    "partner"
-                };
-
-                ToolResult::success(format!(
-                    "Operating mode: {}\n\nRogue mode {}: {}",
-                    mode,
-                    if settings.rogue_mode_enabled { "ENABLED" } else { "DISABLED" },
-                    if settings.rogue_mode_enabled {
-                        "The bot can take autonomous actions without user confirmation."
-                    } else {
-                        "The bot operates in partner mode, requiring user confirmation for sensitive operations."
-                    }
-                ))
-                .with_metadata(json!({
-                    "mode": mode,
-                    "rogue_mode_enabled": settings.rogue_mode_enabled
-                }))
+        ToolResult::success(format!(
+            "Operating mode: {}\n\nRogue mode {}: {}",
+            mode,
+            if rogue_mode_enabled { "ENABLED" } else { "DISABLED" },
+            if rogue_mode_enabled {
+                "The bot can take autonomous actions without user confirmation."
+            } else {
+                "The bot operates in partner mode, requiring user confirmation for sensitive operations."
             }
-            Err(e) => ToolResult::error(format!("Failed to read bot settings: {}", e)),
-        }
+        ))
+        .with_metadata(json!({
+            "mode": mode,
+            "rogue_mode_enabled": rogue_mode_enabled
+        }))
     }
 }

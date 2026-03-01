@@ -154,7 +154,7 @@ impl ContextManager {
             max_context_tokens: DEFAULT_MAX_CONTEXT_TOKENS,
             reserve_tokens: DEFAULT_RESERVE_TOKENS,
             keep_recent_messages: DEFAULT_KEEP_RECENT_MESSAGES,
-            memory_config: MemoryConfig::from_env(),
+            memory_config: MemoryConfig::default(),
             sliding_window_config: SlidingWindowConfig::default(),
             compaction_config: ThreeTierCompactionConfig::default(),
             active_cache: None,

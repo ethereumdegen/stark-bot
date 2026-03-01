@@ -322,14 +322,6 @@ async fn reset_defaults(
         }
     }
 
-    // Re-seed from bundled
-    if let Err(e) = crate::config::seed_agents() {
-        log::error!("Failed to re-seed agents: {}", e);
-        return HttpResponse::InternalServerError().json(serde_json::json!({
-            "error": format!("Failed to re-seed agents: {}", e)
-        }));
-    }
-
     loader::reload_registry_from_disk();
 
     let count = types::all_subtype_configs_unfiltered().len();

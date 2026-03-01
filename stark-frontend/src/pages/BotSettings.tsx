@@ -1,21 +1,18 @@
 import { useState, useEffect, FormEvent } from 'react';
-import { Save, Bot, Server, Shield, Cloud, AlertTriangle, CheckCircle, Info, XCircle, Copy, Check, Wallet, Brain, Palette, Globe, Minimize2, Radio } from 'lucide-react';
+import { Save, Bot, Server, AlertTriangle, CheckCircle, Info, XCircle, Copy, Check, Wallet, Palette } from 'lucide-react';
 import Card, { CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import UnicodeSpinner from '@/components/ui/UnicodeSpinner';
-import OperatingModeCard from '@/components/OperatingModeCard';
 import {
   getBotSettings,
   updateBotSettings,
   getRpcProviders,
   getAutoSyncStatus,
   getConfigStatus,
-  getServicesHealth,
   BotSettings as BotSettingsType,
   RpcProvider,
   AutoSyncStatus,
-  ServicesHealth,
 } from '@/lib/api';
 
 export default function BotSettings() {
@@ -27,24 +24,11 @@ export default function BotSettings() {
   const [customRpcMainnet, setCustomRpcMainnet] = useState('');
   const [customRpcPolygon, setCustomRpcPolygon] = useState('');
   const [rpcProviders, setRpcProviders] = useState<RpcProvider[]>([]);
-  const [rogueModeEnabled, setRogueModeEnabled] = useState(false);
-  const [safeModeMaxQueries, setSafeModeMaxQueries] = useState(5);
-  const [keystoreUrl, setKeystoreUrl] = useState('');
-  const [chatSessionMemoryGeneration, setChatSessionMemoryGeneration] = useState(true);
-  const [guestDashboardEnabled, setGuestDashboardEnabled] = useState(false);
   const [autoSyncStatus, setAutoSyncStatus] = useState<AutoSyncStatus | null>(null);
   const [autoSyncDismissed, setAutoSyncDismissed] = useState(false);
   const [walletAddress, setWalletAddress] = useState<string>('');
   const [walletMode, setWalletMode] = useState<string>('');
   const [walletCopied, setWalletCopied] = useState(false);
-  const [proxyUrl, setProxyUrl] = useState('');
-  const [whisperServerUrl, setWhisperServerUrl] = useState('');
-  const [embeddingsServerUrl, setEmbeddingsServerUrl] = useState('');
-  const [servicesHealth, setServicesHealth] = useState<ServicesHealth | null>(null);
-  const [servicesHealthLoading, setServicesHealthLoading] = useState(false);
-  const [compactionBackgroundThreshold, setCompactionBackgroundThreshold] = useState(0.80);
-  const [compactionAggressiveThreshold, setCompactionAggressiveThreshold] = useState(0.85);
-  const [compactionEmergencyThreshold, setCompactionEmergencyThreshold] = useState(0.95);
   const [themeAccent, setThemeAccent] = useState(() => localStorage.getItem('theme-accent') || '');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -66,7 +50,6 @@ export default function BotSettings() {
     loadRpcProviders();
     loadAutoSyncStatus();
     loadWalletConfig();
-    loadServicesHealth();
   }, []);
 
   const loadWalletConfig = async () => {
@@ -105,18 +88,6 @@ export default function BotSettings() {
     }
   };
 
-  const loadServicesHealth = async () => {
-    setServicesHealthLoading(true);
-    try {
-      const health = await getServicesHealth();
-      setServicesHealth(health);
-    } catch (err) {
-      console.error('Failed to load services health:', err);
-    } finally {
-      setServicesHealthLoading(false);
-    }
-  };
-
   const loadSettings = async () => {
     try {
       const data = await getBotSettings();
@@ -124,17 +95,6 @@ export default function BotSettings() {
       setBotName(data.bot_name);
       setBotEmail(data.bot_email);
       setRpcProvider(data.rpc_provider || 'defirelay');
-      setRogueModeEnabled(data.rogue_mode_enabled || false);
-      setSafeModeMaxQueries(data.safe_mode_max_queries_per_10min || 5);
-      setKeystoreUrl(data.keystore_url || '');
-      setChatSessionMemoryGeneration(data.chat_session_memory_generation ?? true);
-      setGuestDashboardEnabled(data.guest_dashboard_enabled ?? false);
-      setProxyUrl(data.proxy_url || '');
-      setWhisperServerUrl(data.whisper_server_url || '');
-      setEmbeddingsServerUrl(data.embeddings_server_url || '');
-      setCompactionBackgroundThreshold(data.compaction_background_threshold ?? 0.80);
-      setCompactionAggressiveThreshold(data.compaction_aggressive_threshold ?? 0.85);
-      setCompactionEmergencyThreshold(data.compaction_emergency_threshold ?? 0.95);
       // Sync theme from backend (backend is source of truth, update localStorage to match)
       const serverTheme = data.theme_accent || '';
       setThemeAccent(serverTheme);
@@ -183,17 +143,7 @@ export default function BotSettings() {
         bot_email: botEmail,
         rpc_provider: rpcProvider,
         custom_rpc_endpoints: customEndpoints,
-        safe_mode_max_queries_per_10min: safeModeMaxQueries,
-        keystore_url: keystoreUrl,
-        chat_session_memory_generation: chatSessionMemoryGeneration,
-        guest_dashboard_enabled: guestDashboardEnabled,
         theme_accent: themeAccent || '',
-        proxy_url: proxyUrl,
-        whisper_server_url: whisperServerUrl,
-        embeddings_server_url: embeddingsServerUrl,
-        compaction_background_threshold: compactionBackgroundThreshold,
-        compaction_aggressive_threshold: compactionAggressiveThreshold,
-        compaction_emergency_threshold: compactionEmergencyThreshold,
       });
       setSettings(updated);
       setMessage({ type: 'success', text: 'Settings saved successfully' });
@@ -466,242 +416,6 @@ export default function BotSettings() {
           </CardContent>
         </Card>
 
-        {/* Safe Mode Rate Limiting Section */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Shield className="w-5 h-5 text-stark-400" />
-              Safe Mode Rate Limiting
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Input
-              label="Max Queries per User (per 10 minutes)"
-              type="number"
-              min={1}
-              max={100}
-              value={safeModeMaxQueries}
-              onChange={(e) => setSafeModeMaxQueries(parseInt(e.target.value) || 5)}
-            />
-            <p className="text-xs text-slate-500 -mt-2">
-              Maximum number of safe mode queries each user can make within a 10-minute window.
-              Applies to non-admin users on Discord, Twitter mentions, etc.
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Session Memory Section */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Brain className="w-5 h-5 text-stark-400" />
-              Session Memory
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <label className="flex items-center gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={chatSessionMemoryGeneration}
-                onChange={(e) => setChatSessionMemoryGeneration(e.target.checked)}
-                className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-stark-500 focus:ring-stark-500"
-              />
-              <span className="text-sm text-slate-300">
-                Log completed sessions to daily memory
-              </span>
-            </label>
-            <p className="text-xs text-slate-500">
-              When enabled, the user's input and the bot's final response are appended to the daily memory log
-              when a chat session completes. Safe mode sessions are logged under the safemode identity.
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Guest Dashboard Section */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Shield className="w-5 h-5 text-stark-400" />
-              Guest Dashboard
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <label className="flex items-center gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={guestDashboardEnabled}
-                onChange={(e) => setGuestDashboardEnabled(e.target.checked)}
-                className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-stark-500 focus:ring-stark-500"
-              />
-              <span className="text-sm text-slate-300">
-                Enable Guest Dashboard
-              </span>
-            </label>
-            <p className="text-xs text-slate-500">
-              Allow unauthenticated users to view the impulse map dashboard without logging in.
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Cloud Backup Configuration Section */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Cloud className="w-5 h-5 text-stark-400" />
-              Cloud Backup Configuration
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Input
-              label="Keystore Server URL"
-              value={keystoreUrl}
-              onChange={(e) => setKeystoreUrl(e.target.value)}
-              placeholder="https://keystore.defirelay.com"
-            />
-            <p className="text-xs text-slate-500 -mt-2">
-              Custom keystore server URL for cloud backups. Leave empty to use the default server
-              (https://keystore.defirelay.com). Requires x402 payment support.
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* HTTP Proxy Section */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Globe className="w-5 h-5 text-stark-400" />
-              HTTP Proxy
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Input
-              label="Proxy URL"
-              value={proxyUrl}
-              onChange={(e) => setProxyUrl(e.target.value)}
-              placeholder="http://proxy:8080"
-            />
-            <p className="text-xs text-slate-500 -mt-2">
-              Optional HTTP proxy URL for tool requests (e.g. http://proxy:8080).
-              Leave empty to connect directly. Does not affect AI model API calls.
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Infrastructure Services Section */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Radio className="w-5 h-5 text-stark-400" />
-              Infrastructure Services
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <label className="block text-sm font-medium text-slate-300">
-                  Whisper Server URL
-                </label>
-                {servicesHealthLoading ? (
-                  <span className="inline-block w-2.5 h-2.5 rounded-full bg-slate-500 animate-pulse" title="Checking..." />
-                ) : servicesHealth ? (
-                  <span
-                    className={`inline-block w-2.5 h-2.5 rounded-full ${servicesHealth.whisper.healthy ? 'bg-green-400' : 'bg-red-400'}`}
-                    title={servicesHealth.whisper.healthy ? 'Healthy' : 'Unreachable'}
-                  />
-                ) : null}
-              </div>
-              <Input
-                value={whisperServerUrl}
-                onChange={(e) => setWhisperServerUrl(e.target.value)}
-                placeholder="https://whisper.defirelay.com"
-              />
-              <p className="text-xs text-slate-500 mt-1">
-                Speech-to-text server for voice input. Leave empty to use the default server.
-              </p>
-            </div>
-
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <label className="block text-sm font-medium text-slate-300">
-                  Embeddings Server URL
-                </label>
-                {servicesHealthLoading ? (
-                  <span className="inline-block w-2.5 h-2.5 rounded-full bg-slate-500 animate-pulse" title="Checking..." />
-                ) : servicesHealth ? (
-                  <span
-                    className={`inline-block w-2.5 h-2.5 rounded-full ${servicesHealth.embeddings.healthy ? 'bg-green-400' : 'bg-red-400'}`}
-                    title={servicesHealth.embeddings.healthy ? 'Healthy' : 'Unreachable'}
-                  />
-                ) : null}
-              </div>
-              <Input
-                value={embeddingsServerUrl}
-                onChange={(e) => setEmbeddingsServerUrl(e.target.value)}
-                placeholder="https://embeddings.defirelay.com"
-              />
-              <p className="text-xs text-slate-500 mt-1">
-                Text embedding server for semantic memory search. Leave empty to use the default server.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Context Compaction Section */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Minimize2 className="w-5 h-5 text-stark-400" />
-              Context Compaction
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Input
-              label="Background Threshold (0.0 – 1.0)"
-              type="number"
-              min={0}
-              max={1}
-              step={0.01}
-              value={compactionBackgroundThreshold}
-              onChange={(e) => setCompactionBackgroundThreshold(parseFloat(e.target.value) || 0.80)}
-            />
-            <p className="text-xs text-slate-500 -mt-2">
-              Context usage ratio at which background compaction begins to summarize older messages. Default: 0.80
-            </p>
-
-            <Input
-              label="Aggressive Threshold (0.0 – 1.0)"
-              type="number"
-              min={0}
-              max={1}
-              step={0.01}
-              value={compactionAggressiveThreshold}
-              onChange={(e) => setCompactionAggressiveThreshold(parseFloat(e.target.value) || 0.85)}
-            />
-            <p className="text-xs text-slate-500 -mt-2">
-              Context usage ratio at which aggressive compaction kicks in to free up space. Default: 0.85
-            </p>
-
-            <Input
-              label="Emergency Threshold (0.0 – 1.0)"
-              type="number"
-              min={0}
-              max={1}
-              step={0.01}
-              value={compactionEmergencyThreshold}
-              onChange={(e) => setCompactionEmergencyThreshold(parseFloat(e.target.value) || 0.95)}
-            />
-            <p className="text-xs text-slate-500 -mt-2">
-              Context usage ratio at which emergency compaction drops non-essential context to prevent overflow. Default: 0.95
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Operating Mode Section */}
-        <OperatingModeCard
-          rogueModeEnabled={rogueModeEnabled}
-          onModeChange={setRogueModeEnabled}
-          onMessage={setMessage}
-        />
 
         <Button type="submit" isLoading={isSaving} className="w-fit">
           <Save className="w-4 h-4 mr-2" />

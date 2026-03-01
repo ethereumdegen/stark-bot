@@ -385,16 +385,7 @@ impl Tool for ManageModulesTool {
                     ));
                 }
 
-                // Extract to ~/.starkbot/modules/<slug>/
-                let modules_dir = std::env::var("STARKBOT_MODULES_DIR")
-                    .map(std::path::PathBuf::from)
-                    .unwrap_or_else(|_| {
-                        std::env::var("HOME")
-                            .map(std::path::PathBuf::from)
-                            .unwrap_or_else(|_| std::path::PathBuf::from("."))
-                            .join(".starkbot")
-                            .join("modules")
-                    });
+                let modules_dir = crate::config::runtime_modules_dir();
 
                 let module_dir = modules_dir.join(slug);
                 if let Err(e) = std::fs::create_dir_all(&module_dir) {

@@ -121,10 +121,9 @@ async fn transcribe(
         });
     }
 
-    // Determine whisper server URL from DB settings (default if not configured)
-    let whisper_url = state.db.get_bot_settings()
-        .ok()
-        .and_then(|s| s.whisper_server_url)
+    // Determine whisper server URL from bot_config.ron (default if not configured)
+    let whisper_url = crate::models::BotConfig::load()
+        .services.whisper_server_url
         .unwrap_or_else(|| crate::models::DEFAULT_WHISPER_SERVER_URL.to_string());
     let url = format!("{}/transcribe", whisper_url.trim_end_matches('/'));
 

@@ -1,10 +1,10 @@
 import { useState, useEffect, FormEvent } from 'react';
-import { Save, Settings, Ban, CreditCard, Globe, Info, ExternalLink } from 'lucide-react';
+import { Save, Ban, CreditCard, Globe, Info, ExternalLink } from 'lucide-react';
 import Card, { CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import UnicodeSpinner from '@/components/ui/UnicodeSpinner';
-import { getAgentSettings, updateAgentSettings, getBotSettings, updateBotSettings, getAiEndpointPresets, AiEndpointPreset, getCreditBalance } from '@/lib/api';
+import { getAgentSettings, updateAgentSettings, getAiEndpointPresets, AiEndpointPreset, getCreditBalance } from '@/lib/api';
 
 
 type ModelArchetype = 'kimi' | 'llama' | 'claude' | 'openai' | 'minimax';
@@ -34,21 +34,16 @@ export default function AgentSettings() {
   const [endpointOption, setEndpointOption] = useState<string>('minimax');
   const [customEndpoint, setCustomEndpoint] = useState('');
   const [modelArchetype, setModelArchetype] = useState<ModelArchetype>('minimax');
-  const [maxResponseTokens, setMaxResponseTokens] = useState(40000);
-  const [maxContextTokens, setMaxContextTokens] = useState(100000);
   const [secretKey, setSecretKey] = useState('');
   const [hasExistingSecretKey, setHasExistingSecretKey] = useState(false);
-  const [maxToolIterations, setMaxToolIterations] = useState(50);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [isSavingBehavior, setIsSavingBehavior] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [creditBalance, setCreditBalance] = useState<number | null>(null);
   const [creditBalanceLoading, setCreditBalanceLoading] = useState(false);
 
   useEffect(() => {
     loadPresets();
-    loadBotSettings();
     loadCreditBalance();
   }, []);
 
@@ -73,8 +68,6 @@ export default function AgentSettings() {
       }
     }
   }, [endpointOption, presets, paymentMode]);
-
-  const isArchetypeLocked = paymentMode !== 'custom';
 
   const loadSettings = async (loadedPresets: AiEndpointPreset[]) => {
     try {
@@ -109,25 +102,10 @@ export default function AgentSettings() {
       if (data.model_archetype && ['kimi', 'llama', 'claude', 'openai', 'minimax'].includes(data.model_archetype)) {
         setModelArchetype(data.model_archetype as ModelArchetype);
       }
-      if (data.max_response_tokens && data.max_response_tokens > 0) {
-        setMaxResponseTokens(data.max_response_tokens);
-      }
-      if (data.max_context_tokens && data.max_context_tokens > 0) {
-        setMaxContextTokens(data.max_context_tokens);
-      }
     } catch (err) {
       setMessage({ type: 'error', text: 'Failed to load settings' });
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const loadBotSettings = async () => {
-    try {
-      const data = await getBotSettings();
-      setMaxToolIterations(data.max_tool_iterations || 50);
-    } catch (err) {
-      console.error('Failed to load bot settings:', err);
     }
   };
 
@@ -147,20 +125,6 @@ export default function AgentSettings() {
     }
   };
 
-  const handleBehaviorSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    setIsSavingBehavior(true);
-    setMessage(null);
-    try {
-      await updateBotSettings({ max_tool_iterations: maxToolIterations });
-      setMessage({ type: 'success', text: 'Agent behavior settings saved successfully' });
-    } catch (err) {
-      setMessage({ type: 'error', text: 'Failed to save agent behavior settings' });
-    } finally {
-      setIsSavingBehavior(false);
-    }
-  };
-
   const saveSettings = async (overrides?: { paymentMode?: PaymentMode; endpointOption?: string }) => {
     const mode = overrides?.paymentMode ?? paymentMode;
     const selectedEndpointId = overrides?.endpointOption ?? endpointOption;
@@ -171,7 +135,7 @@ export default function AgentSettings() {
     // For "none" mode, just send payment_mode
     if (mode === 'none') {
       try {
-        await updateAgentSettings({ payment_mode: 'none', endpoint: '', model_archetype: 'kimi', max_response_tokens: maxResponseTokens, max_context_tokens: maxContextTokens });
+        await updateAgentSettings({ payment_mode: 'none', endpoint: '', model_archetype: 'kimi' });
         setMessage({ type: 'success', text: 'AI capabilities disabled' });
       } catch (err) {
         setMessage({ type: 'error', text: 'Failed to save settings' });
@@ -198,7 +162,6 @@ export default function AgentSettings() {
       return;
     }
 
-    const contextTokens = Math.max(maxContextTokens, 80000);
     const archetype = selectedPreset ? selectedPreset.model_archetype : modelArchetype;
 
     try {
@@ -208,8 +171,6 @@ export default function AgentSettings() {
         endpoint,
         model_archetype: archetype,
         model: selectedPreset?.model ?? null,
-        max_response_tokens: maxResponseTokens,
-        max_context_tokens: contextTokens,
       };
 
       if (mode === 'custom' && secretKey.trim()) {
@@ -433,8 +394,8 @@ export default function AgentSettings() {
             </Card>
           )}
 
-          {/* Common settings (shown for all active modes) */}
-          {paymentMode !== 'none' && (
+          {/* Model Archetype (only for custom mode) */}
+          {paymentMode === 'custom' && (
             <Card>
               <CardHeader>
                 <CardTitle>Model Configuration</CardTitle>
@@ -448,8 +409,7 @@ export default function AgentSettings() {
                     <select
                       value={modelArchetype}
                       onChange={(e) => setModelArchetype(e.target.value as ModelArchetype)}
-                      disabled={isArchetypeLocked}
-                      className={`w-full px-4 py-3 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-stark-500 focus:border-transparent ${isArchetypeLocked ? 'opacity-60 cursor-not-allowed' : ''}`}
+                      className="w-full px-4 py-3 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-stark-500 focus:border-transparent"
                     >
                       <option value="kimi">Kimi</option>
                       <option value="llama">Llama</option>
@@ -458,43 +418,7 @@ export default function AgentSettings() {
                       <option value="minimax">MiniMax</option>
                     </select>
                     <p className="text-xs text-slate-500 mt-1">
-                      {isArchetypeLocked
-                        ? `Locked to ${modelArchetype} for this preset`
-                        : 'Select the model family to optimize prompt formatting'}
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">
-                      Max Response Tokens
-                    </label>
-                    <input
-                      type="number"
-                      value={maxResponseTokens}
-                      onChange={(e) => setMaxResponseTokens(parseInt(e.target.value) || 40000)}
-                      min={1000}
-                      max={200000}
-                      className="w-full px-4 py-3 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-stark-500 focus:border-transparent"
-                    />
-                    <p className="text-xs text-slate-500 mt-1">
-                      Maximum tokens for AI response output (default: 40,000)
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">
-                      Max Context Tokens
-                    </label>
-                    <input
-                      type="number"
-                      value={maxContextTokens}
-                      onChange={(e) => setMaxContextTokens(parseInt(e.target.value) || 100000)}
-                      min={80000}
-                      max={200000}
-                      className="w-full px-4 py-3 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-stark-500 focus:border-transparent"
-                    />
-                    <p className="text-xs text-slate-500 mt-1">
-                      Context window limit for conversation history (min: 80,000, default: 100,000)
+                      Select the model family to optimize prompt formatting
                     </p>
                   </div>
 
@@ -507,6 +431,14 @@ export default function AgentSettings() {
             </Card>
           )}
 
+          {/* Save button for credits mode */}
+          {paymentMode === 'credits' && (
+            <Button type="submit" isLoading={isSaving} className="w-fit">
+              <Save className="w-4 h-4 mr-2" />
+              Save Settings
+            </Button>
+          )}
+
           {paymentMode === 'none' && (
             <Button type="submit" isLoading={isSaving} className="w-fit">
               <Save className="w-4 h-4 mr-2" />
@@ -514,41 +446,6 @@ export default function AgentSettings() {
             </Button>
           )}
         </form>
-
-        {/* Agent Behavior Section */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Settings className="w-5 h-5 text-stark-400" />
-              Agent Behavior
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleBehaviorSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
-                  Max Tool Iterations
-                </label>
-                <input
-                  type="number"
-                  min={10}
-                  max={200}
-                  value={maxToolIterations}
-                  onChange={(e) => setMaxToolIterations(parseInt(e.target.value) || 50)}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white focus:border-stark-500 focus:outline-none"
-                />
-                <p className="text-xs text-slate-500 mt-1">
-                  Maximum number of tool calls per request (10-200). Higher values allow for more complex tasks but may take longer.
-                </p>
-              </div>
-
-              <Button type="submit" isLoading={isSavingBehavior} className="w-fit">
-                <Save className="w-4 h-4 mr-2" />
-                Save Behavior Settings
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
 
         {message && (
           <div

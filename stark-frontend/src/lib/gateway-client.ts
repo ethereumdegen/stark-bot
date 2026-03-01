@@ -8,6 +8,8 @@ interface PendingRequest {
   timeout: ReturnType<typeof setTimeout>;
 }
 
+const EVENT_RING_BUFFER_SIZE = 500;
+
 export class GatewayClient {
   private url: string;
   private ws: WebSocket | null = null;
@@ -21,6 +23,8 @@ export class GatewayClient {
   private connectionPromise: Promise<void> | null = null;
   private connectionResolve: (() => void) | null = null;
   private authenticated = false;
+  /** Ring buffer of recent events for replaying to late-registering wildcard listeners */
+  private eventBuffer: Array<{ event: string; data: unknown }> = [];
 
   constructor(url?: string) {
     if (url) {
@@ -208,6 +212,16 @@ export class GatewayClient {
   on(event: string, callback: EventCallback): void {
     if (event === '*') {
       this.wildcardListeners.add(callback);
+      // Replay buffered events to late-registering wildcard listeners
+      if (this.eventBuffer.length > 0) {
+        for (const entry of this.eventBuffer) {
+          try {
+            callback({ event: entry.event, data: entry.data });
+          } catch (error) {
+            console.error('[Gateway] Replay handler error:', error);
+          }
+        }
+      }
     } else {
       if (!this.eventListeners.has(event)) {
         this.eventListeners.set(event, new Set());
@@ -225,6 +239,14 @@ export class GatewayClient {
   }
 
   private emitEvent(event: string, data: unknown): void {
+    // Buffer events for late-registering listeners (e.g. Debug page navigated to after connect)
+    if (event !== 'connected' && event !== 'disconnected' && event !== 'auth_failed' && event !== 'error') {
+      this.eventBuffer.push({ event, data });
+      if (this.eventBuffer.length > EVENT_RING_BUFFER_SIZE) {
+        this.eventBuffer.shift();
+      }
+    }
+
     // Log all events for debugging (except high-frequency ones)
     if (!['agent.thinking'].includes(event)) {
       console.log(`[Gateway] Event received: ${event}`, data);
@@ -272,6 +294,7 @@ export class GatewayClient {
     });
     this.pendingRequests.clear();
     this.connectionPromise = null;
+    this.eventBuffer = [];
   }
 }
 

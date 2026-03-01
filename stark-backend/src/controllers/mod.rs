@@ -7,7 +7,6 @@ pub mod channels;
 pub mod chat;
 pub mod cron;
 pub mod dashboard;
-pub mod heartbeat;
 pub mod eip8004;
 pub mod ext;
 pub mod external_channel;

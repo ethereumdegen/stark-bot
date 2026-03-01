@@ -55,6 +55,9 @@ pub struct BackupData {
     pub channel_settings: Vec<ChannelSettingEntry>,
     /// Channels (with bot tokens)
     pub channels: Vec<ChannelEntry>,
+    /// Bot config RON content (bot_config.ron)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bot_config: Option<String>,
     /// Soul document content (SOUL.md - agent's personality and truths)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub soul_document: Option<String>,
@@ -109,6 +112,7 @@ impl Default for BackupData {
             impulse_map_connections: Vec::new(),
             cron_jobs: Vec::new(),
             heartbeat_config: None,
+            bot_config: None,
             memories: None,
             bot_settings: None,
             channel_settings: Vec::new(),
@@ -158,6 +162,7 @@ impl BackupData {
             + self.memories.as_ref().map(|m| m.len()).unwrap_or(0)
             + if self.bot_settings.is_some() { 1 } else { 0 }
             + if self.heartbeat_config.is_some() { 1 } else { 0 }
+            + if self.bot_config.is_some() { 1 } else { 0 }
             + self.channel_settings.len()
             + self.channels.len()
             + if self.soul_document.is_some() { 1 } else { 0 }
@@ -683,7 +688,7 @@ pub async fn collect_backup_data(
             .collect();
     }
 
-    // Heartbeat config
+    // Heartbeat config (legacy DB-backed — kept for backward compat)
     if let Ok(configs) = db.list_heartbeat_configs() {
         if let Some(config) = configs.into_iter().next() {
             backup.heartbeat_config = Some(HeartbeatConfigEntry {
@@ -696,6 +701,12 @@ pub async fn collect_backup_data(
                 enabled: config.enabled,
             });
         }
+    }
+
+    // Bot config (RON file)
+    let bot_config_path = crate::config::bot_config_path();
+    if let Ok(content) = std::fs::read_to_string(&bot_config_path) {
+        backup.bot_config = Some(content);
     }
 
     // Memories (all types, with full metadata for edge/embedding recomputation)

@@ -1,29 +1,13 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
 import { LogOut } from 'lucide-react';
-import HeartbeatIcon from '@/components/HeartbeatIcon';
 import NavItem from './NavItem';
 import { useAuth } from '@/hooks/useAuth';
-import { getHeartbeatConfig } from '@/lib/api';
 import navigation from '@/config/navigation.json';
 import iconMap from '@/config/iconMap';
 
 export default function Sidebar() {
   const { logout } = useAuth();
-  const navigate = useNavigate();
   const [version, setVersion] = useState<string | null>(null);
-  const [heartbeatEnabled, setHeartbeatEnabled] = useState(false);
-
-  const loadHeartbeatConfig = useCallback(async () => {
-    try {
-      const config = await getHeartbeatConfig();
-      if (config) {
-        setHeartbeatEnabled(config.enabled);
-      }
-    } catch (e) {
-      console.error('Failed to load heartbeat config:', e);
-    }
-  }, []);
 
   useEffect(() => {
     fetch('/api/version')
@@ -36,28 +20,17 @@ export default function Sidebar() {
         console.warn('Failed to fetch version:', err);
         setVersion(null);
       });
-
-    loadHeartbeatConfig();
-  }, [loadHeartbeatConfig]);
+  }, []);
 
   return (
     <aside className="hidden md:flex w-64 h-screen sticky top-0 bg-slate-800 flex-col border-r border-slate-700">
       {/* Header */}
       <div className="p-6 border-b border-slate-700">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl text-stark-400" style={{ fontFamily: "'Orbitron', sans-serif" }}>StarkBot</h1>
-            {version && (
-              <span className="text-xs text-slate-500">v{version}</span>
-            )}
-          </div>
-          <button
-            onClick={() => navigate('/heartbeat')}
-            className="group cursor-pointer"
-            title="Configure heartbeat"
-          >
-            <HeartbeatIcon enabled={heartbeatEnabled} size={16} />
-          </button>
+        <div>
+          <h1 className="text-2xl text-stark-400" style={{ fontFamily: "'Orbitron', sans-serif" }}>StarkBot</h1>
+          {version && (
+            <span className="text-xs text-slate-500">v{version}</span>
+          )}
         </div>
       </div>
 

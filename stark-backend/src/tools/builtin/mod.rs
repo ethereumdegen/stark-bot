@@ -33,8 +33,8 @@ pub use bash::{
 };
 pub use code::{CommitterTool, DeployTool, IndexProjectTool, PrQualityTool, VerifyChangesTool};
 pub use core::{
-    AddTaskTool, DefineTasksTool, AgentSendTool, ApiKeysCheckTool, AskUserTool, HeartbeatConfigTool,
-    IdentityPostRegisterTool, ImportIdentityTool, InstallApiKeyTool, ManageModulesTool, ManageSkillsTool, ImpulseMapManageTool,
+    AddTaskTool, DefineTasksTool, AgentSendTool, ApiKeysCheckTool, AskUserTool,
+    IdentityPostRegisterTool, ImportIdentityTool, InstallApiKeyTool, ManageModulesTool, ManageSkillsTool, ImpulseMapManageTool, ModifyBotConfigTool,
     ReadSkillTool, RegisterNewIdentityTool, UnregisterIdentityTool, WorkstreamTool, ModifySoulTool, ModifySpecialRoleTool, SayToUserTool,
     SetAgentSubtypeTool, SubagentStatusTool, SpawnSubagentsTool, TaskFullyCompletedTool, UseSkillTool,
     // Meta tools (self-management)

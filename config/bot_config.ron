@@ -1,0 +1,34 @@
+BotConfig(
+    bot_name: "StarkBot",
+    operating_mode: Partner,
+    heartbeat: HeartbeatFileConfig(
+        enabled: true,
+        interval_minutes: 60,
+        active_hours_start: None,
+        active_hours_end: None,
+        active_days: None,
+    ),
+    hyperpacks: [
+        HyperPack(path: Git(
+            url: "https://github.com/ethereumdegen/starkbot-core-hyperpack.git",
+            commit: None,
+        )),
+    ],
+    max_tool_iterations: 100,
+    max_response_tokens: 40000,
+    max_context_tokens: 100000,
+    safe_mode_max_queries_per_10min: 5,
+    guest_dashboard_enabled: false,
+    session_memory_log: true,
+    compaction: CompactionConfig(
+        background_threshold: 0.80,
+        aggressive_threshold: 0.85,
+        emergency_threshold: 0.95,
+    ),
+    services: ServicesConfig(
+        whisper_server_url: None,
+        embeddings_server_url: None,
+        http_proxy_url: None,
+        keystore_server_url: None,
+    ),
+)

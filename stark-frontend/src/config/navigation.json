@@ -6,7 +6,6 @@
         { "to": "/dashboard", "icon": "Home", "label": "Dashboard" },
         { "to": "/agent-chat", "icon": "MessageSquare", "label": "Agent Chat" },
         { "to": "/workstream", "icon": "Columns", "label": "Workstream" },
-        { "to": "/heartbeat", "icon": "Heart", "label": "Heartbeat" },
         { "to": "/impulse-map", "icon": "Network", "label": "Impulse Map" },
         { "to": "/modules", "icon": "Package", "label": "Modules" }
       ]

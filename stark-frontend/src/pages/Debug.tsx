@@ -45,6 +45,7 @@ const categoryConfig: Record<string, { color: string; label: string }> = {
   'confirmation': { color: 'text-amber-400 bg-amber-500/20 border-amber-500/30', label: 'Confirm' },
   'telemetry': { color: 'text-slate-400 bg-slate-500/20 border-slate-500/30', label: 'Telemetry' },
   'hook': { color: 'text-fuchsia-400 bg-fuchsia-500/20 border-fuchsia-500/30', label: 'Hook' },
+  'system': { color: 'text-sky-400 bg-sky-500/20 border-sky-500/30', label: 'System' },
 };
 
 const NOISE_EVENTS = new Set([
@@ -136,6 +137,15 @@ function summarize(event: string, data: Record<string, unknown>): string {
         const err = data.error ? ` — ${truncate(String(data.error), 100)}` : '';
         return `${data.agent_key || '?'} → ${data.event || '?'} [${s}]${err}`;
       }
+      case 'system.keystore_started':
+      case 'system.keystore_success':
+      case 'system.keystore_error':
+      case 'system.keystore_no_backup':
+      case 'system.keystore_skipped':
+      case 'system.keystore_server_error':
+        return truncate(String(data.message || ''), 200);
+      case 'system.boot':
+        return truncate(String(data.message || ''), 200);
       default:
         return genericSummary(data);
     }
@@ -250,7 +260,7 @@ export default function Debug() {
 
   const hookLogs = logs.filter(l => l.event.startsWith('hook.'));
 
-  const filters = ['all', 'channel', 'agent', 'tool', 'execution', 'error'];
+  const filters = ['all', 'channel', 'agent', 'tool', 'execution', 'system', 'error'];
   const errorCount = logs.filter(l => isError(l.event)).length;
 
   const formatUptime = (seconds?: number) => {

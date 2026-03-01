@@ -2,17 +2,13 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as d3 from 'd3';
 import { animate } from 'animejs';
-import { X, Save, Trash2, Menu, Clock, MessageSquare, Zap, GitBranch } from 'lucide-react';
+import { X, Save, Trash2, Menu, Clock, MessageSquare, GitBranch } from 'lucide-react';
 import Button from '@/components/ui/Button';
-import HeartbeatIcon from '@/components/HeartbeatIcon';
 import {
   getImpulseGraph,
   createImpulseNode,
   updateImpulseNode,
   deleteImpulseNode,
-  getHeartbeatConfig,
-  updateHeartbeatConfig,
-  pulseHeartbeatOnce,
   ImpulseNodeInfo,
   ImpulseConnectionInfo,
 } from '@/lib/api';
@@ -62,11 +58,6 @@ export default function ImpulseMap() {
   // Hover tooltip state
   const [hoveredNode, setHoveredNode] = useState<ImpulseNodeInfo | null>(null);
 
-  // Heartbeat toggle state
-  const [heartbeatEnabled, setHeartbeatEnabled] = useState(false);
-  const [heartbeatLoading, setHeartbeatLoading] = useState(false);
-  const [nextBeatAt, setNextBeatAt] = useState<string | null>(null);
-  const [countdown, setCountdown] = useState<string | null>(null);
   const lastSessionIdRef = useRef<number | null>(null);
 
   // Derived state for node executions (sessions with impulse_node_id)
@@ -245,63 +236,7 @@ export default function ImpulseMap() {
     }
   }, []);
 
-  // Load heartbeat config
-  const loadHeartbeatConfig = useCallback(async () => {
-    try {
-      const config = await getHeartbeatConfig();
-      if (config) {
-        setHeartbeatEnabled(config.enabled);
-        setNextBeatAt(config.next_beat_at || null);
-      }
-    } catch (e) {
-      console.error('Failed to load heartbeat config:', e);
-    }
-  }, []);
-
-  // Toggle heartbeat
-  const handleHeartbeatToggle = async () => {
-    setHeartbeatLoading(true);
-    try {
-      const newEnabled = !heartbeatEnabled;
-      const config = await updateHeartbeatConfig({ enabled: newEnabled });
-      setHeartbeatEnabled(newEnabled);
-      setNextBeatAt(config.next_beat_at || null);
-    } catch (e) {
-      console.error('Failed to toggle heartbeat:', e);
-    } finally {
-      setHeartbeatLoading(false);
-    }
-  };
-
-  // Pulse once
-  const [isPulsing, setIsPulsing] = useState(false);
-
-  const handlePulseOnce = async () => {
-    setIsPulsing(true);
-    console.log('[ImpulseMap] Pulse once clicked');
-
-    // Ensure gateway is connected before pulsing
-    const gateway = getGateway();
-    try {
-      await gateway.connect();
-      console.log('[ImpulseMap] Gateway connected, sending pulse request');
-    } catch (e) {
-      console.error('[ImpulseMap] Failed to connect gateway before pulse:', e);
-    }
-
-    // Fire off the pulse request
-    pulseHeartbeatOnce()
-      .then(config => {
-        console.log('[ImpulseMap] Pulse request sent successfully');
-        setNextBeatAt(config.next_beat_at || null);
-      })
-      .catch(e => console.error('[ImpulseMap] Failed to pulse heartbeat:', e));
-
-    // Disable button for 5 seconds to prevent spam
-    setTimeout(() => setIsPulsing(false), 5000);
-  };
-
-  // Listen for heartbeat events via WebSocket
+  // Listen for heartbeat events via WebSocket (for animations and session refresh)
   useEffect(() => {
     const gateway = getGateway();
     let mounted = true;
@@ -310,8 +245,6 @@ export default function ImpulseMap() {
       const event = data as { impulse_node_id?: number };
       console.log('[ImpulseMap] Heartbeat started event received:', event);
       if (!mounted) return;
-      // Backend sets next_beat_at BEFORE execution, so load config now to update countdown
-      loadHeartbeatConfig();
       if (event.impulse_node_id) {
         console.log('[ImpulseMap] Triggering animation for node:', event.impulse_node_id);
         triggerHeartbeatAnimation(event.impulse_node_id);
@@ -322,8 +255,6 @@ export default function ImpulseMap() {
       const event = data as { impulse_node_id?: number };
       console.log('[ImpulseMap] Heartbeat completed event received:', event);
       if (!mounted) return;
-      // Reload config to get updated next_beat_at
-      loadHeartbeatConfig();
       // Refresh sessions list
       try {
         const sessions = await getImpulseHeartbeatSessions();
@@ -338,13 +269,10 @@ export default function ImpulseMap() {
       }
     };
 
-    // Also listen for pulse_started as fallback (uses first node if no specific node)
     const handlePulseStarted = (data: unknown) => {
       console.log('[ImpulseMap] Heartbeat pulse started:', data);
       if (!mounted) return;
-      // Backend sets next_beat_at BEFORE execution, so load config now to update countdown
-      loadHeartbeatConfig();
-      // Try to trigger animation on trunk node (node id 1) as fallback
+      // Try to trigger animation on trunk node as fallback
       if (nodes.length > 0) {
         const trunkNode = nodes.find(n => n.is_trunk) || nodes[0];
         console.log('[ImpulseMap] Triggering animation on trunk node:', trunkNode.id);
@@ -352,7 +280,6 @@ export default function ImpulseMap() {
       }
     };
 
-    // Listen for pulse completion (especially errors) and refresh sessions + config
     const handlePulseCompleted = async (data: unknown) => {
       const event = data as { success?: boolean; error?: string };
       if (event.success) {
@@ -360,10 +287,8 @@ export default function ImpulseMap() {
       } else {
         console.error('[ImpulseMap] Heartbeat pulse FAILED:', event.error);
       }
-      // Always refresh sessions list and config after pulse completes
       if (!mounted) return;
-      // Reload config to get updated next_beat_at
-      loadHeartbeatConfig();
+      // Refresh sessions list after pulse completes
       try {
         const sessions = await getImpulseHeartbeatSessions();
         if (mounted) {
@@ -377,14 +302,12 @@ export default function ImpulseMap() {
       }
     };
 
-    // Register listeners immediately (gateway will queue if not connected)
     gateway.on('heartbeat_started', handleHeartbeatStarted);
     gateway.on('heartbeat_completed', handleHeartbeatCompleted);
     gateway.on('heartbeat_pulse_started', handlePulseStarted);
     gateway.on('heartbeat_pulse_completed', handlePulseCompleted);
     console.log('[ImpulseMap] Registered heartbeat event listeners');
 
-    // Ensure connection
     gateway.connect().then(() => {
       console.log('[ImpulseMap] Gateway connected, listeners active');
     }).catch(e => {
@@ -399,57 +322,12 @@ export default function ImpulseMap() {
       gateway.off('heartbeat_pulse_completed', handlePulseCompleted);
       console.log('[ImpulseMap] Unregistered heartbeat event listeners');
     };
-  }, [triggerHeartbeatAnimation, nodes, loadHeartbeatConfig]);
+  }, [triggerHeartbeatAnimation, nodes]);
 
   useEffect(() => {
     loadGraph();
     loadHeartbeatSessions();
-    loadHeartbeatConfig();
-  }, [loadGraph, loadHeartbeatSessions, loadHeartbeatConfig]);
-
-  // Countdown timer effect
-  useEffect(() => {
-    if (!nextBeatAt || !heartbeatEnabled) {
-      setCountdown(null);
-      return;
-    }
-
-    let lastFetchTime = 0;
-    const FETCH_INTERVAL_MS = 5000; // Poll every 5 seconds when stuck on "soon..."
-
-    const updateCountdown = () => {
-      const now = new Date().getTime();
-      const target = new Date(nextBeatAt).getTime();
-      const diff = target - now;
-
-      if (diff <= 0) {
-        setCountdown('soon...');
-        // Poll periodically when stuck - backend may not have updated next_beat_at yet
-        if (now - lastFetchTime >= FETCH_INTERVAL_MS) {
-          lastFetchTime = now;
-          loadHeartbeatConfig();
-        }
-        return;
-      }
-
-      const hours = Math.floor(diff / (1000 * 60 * 60));
-      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-
-      if (hours > 0) {
-        setCountdown(`${hours}h ${minutes}m ${seconds}s`);
-      } else if (minutes > 0) {
-        setCountdown(`${minutes}m ${seconds}s`);
-      } else {
-        setCountdown(`${seconds}s`);
-      }
-    };
-
-    updateCountdown();
-    const interval = setInterval(updateCountdown, 1000);
-
-    return () => clearInterval(interval);
-  }, [nextBeatAt, heartbeatEnabled, loadHeartbeatConfig]);
+  }, [loadGraph, loadHeartbeatSessions]);
 
   // Handle click on node to open edit modal
   const handleNodeEdit = useCallback((node: D3Node) => {
@@ -823,34 +701,6 @@ export default function ImpulseMap() {
           </p>
         </div>
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            {countdown && heartbeatEnabled && (
-              <span className="text-sm text-gray-400" title="Time to next pulse">
-                {countdown}
-              </span>
-            )}
-            <button
-              onClick={() => navigate('/heartbeat')}
-              className="group cursor-pointer"
-              title="Configure heartbeat"
-            >
-              <HeartbeatIcon enabled={heartbeatEnabled} size={16} />
-            </button>
-            <button
-              onClick={handleHeartbeatToggle}
-              disabled={heartbeatLoading}
-              className={`relative w-10 h-5 rounded-full transition-colors ${
-                heartbeatEnabled ? 'bg-red-500' : 'bg-gray-600'
-              } ${heartbeatLoading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-              title={heartbeatEnabled ? 'Disable heartbeat' : 'Enable heartbeat'}
-            >
-              <span
-                className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${
-                  heartbeatEnabled ? 'translate-x-5' : 'translate-x-0'
-                }`}
-              />
-            </button>
-          </div>
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
             className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
@@ -1003,18 +853,6 @@ export default function ImpulseMap() {
             </div>
           </div>
 
-          {/* Pulse Once Button */}
-          <div className="p-4 border-t border-gray-800">
-            <Button
-              variant="secondary"
-              onClick={handlePulseOnce}
-              isLoading={isPulsing}
-              className="w-full"
-            >
-              <Zap className="w-4 h-4 mr-2" />
-              Pulse Once
-            </Button>
-          </div>
         </div>
       </div>
 
