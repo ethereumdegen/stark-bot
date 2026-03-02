@@ -35,6 +35,8 @@ pub struct ChannelManager {
     wallet_provider: Option<Arc<dyn crate::wallet::WalletProvider>>,
     tx_queue: Option<Arc<TxQueueManager>>,
     skill_registry: Option<Arc<crate::skills::SkillRegistry>>,
+    /// Credits session for Bearer-token auth (shared with dispatchers)
+    credits_session: Option<Arc<crate::credits_session::CreditsSessionClient>>,
 }
 
 impl ChannelManager {
@@ -49,6 +51,7 @@ impl ChannelManager {
             wallet_provider: None,
             tx_queue: None,
             skill_registry: None,
+            credits_session: None,
         }
     }
 
@@ -79,6 +82,7 @@ impl ChannelManager {
             wallet_provider,
             tx_queue: None,
             skill_registry: None,
+            credits_session: None,
         }
     }
 
@@ -91,6 +95,12 @@ impl ChannelManager {
     /// Set the skill registry for skill-based tools (use_skill, manage_skills)
     pub fn with_skill_registry(mut self, skill_registry: Arc<crate::skills::SkillRegistry>) -> Self {
         self.skill_registry = Some(skill_registry);
+        self
+    }
+
+    /// Set the credits session for Bearer-token auth on inference requests
+    pub fn with_credits_session(mut self, session: Arc<crate::credits_session::CreditsSessionClient>) -> Self {
+        self.credits_session = Some(session);
         self
     }
 
@@ -158,6 +168,10 @@ impl ChannelManager {
             // Add tx_queue if available (needed for web3 transactions)
             if let Some(ref tx_queue) = self.tx_queue {
                 disp = disp.with_tx_queue(tx_queue.clone());
+            }
+            // Add credits session for Bearer-token auth on inference requests
+            if let Some(ref cs) = self.credits_session {
+                disp = disp.with_credits_session(cs.clone());
             }
             Arc::new(disp)
         } else {

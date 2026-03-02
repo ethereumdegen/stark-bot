@@ -1475,12 +1475,13 @@ async fn main() -> std::io::Result<()> {
 
     // Initialize Gateway with tool registry, wallet provider, tx_queue, and skill registry for channels
     log::info!("Initializing Gateway");
-    let gateway = Arc::new(Gateway::new_with_tools_wallet_and_tx_queue(
+    let gateway = Arc::new(Gateway::new_full(
         db.clone(),
         tool_registry.clone(),
         wallet_provider.clone(),
         Some(tx_queue.clone()),
         Some(skill_registry.clone()),
+        credits_session.clone(),
     ));
 
     // Initialize Execution Tracker for progress display

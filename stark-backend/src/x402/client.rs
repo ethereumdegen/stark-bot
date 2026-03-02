@@ -35,7 +35,7 @@ pub struct X402Response {
 
 /// HTTP client that automatically handles x402 payment flow
 /// and session-based credits.
-pub struct X402Client {
+pub struct CreditsAuthClient {
     client: Client,
     signer: Arc<X402Signer>,
     wallet_provider: Arc<dyn WalletProvider>,
@@ -48,8 +48,8 @@ pub struct X402Client {
     credits_session: Option<Arc<CreditsSessionClient>>,
 }
 
-impl X402Client {
-    /// Create a new x402 client with a WalletProvider (preferred)
+impl CreditsAuthClient {
+    /// Create a new credits auth client with a WalletProvider (preferred)
     pub fn new(wallet_provider: Arc<dyn WalletProvider>) -> Result<Self, String> {
         let signer = X402Signer::new(wallet_provider.clone());
         let erc8128_signer = Erc8128Signer::new(wallet_provider.clone(), 8453); // Base mainnet
@@ -375,8 +375,8 @@ impl X402Client {
 
 }
 
-impl X402Client {
-    /// Make a regular POST request without x402 payment handling
+impl CreditsAuthClient {
+    /// Make a regular POST request without payment handling
     /// Used for custom RPC endpoints that don't require payment
     pub async fn post_regular<T: Serialize>(
         &self,

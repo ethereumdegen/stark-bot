@@ -10,7 +10,7 @@ use crate::tools::rpc_config::resolve_rpc_from_context;
 use crate::tools::types::{
     PropertySchema, ToolContext, ToolDefinition, ToolGroup, ToolInputSchema, ToolResult,
 };
-use crate::x402::X402Client;
+use crate::x402::CreditsAuthClient;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -49,7 +49,7 @@ struct JsonRpcError {
 /// x402 RPC tool for paid EVM RPC calls (preset-only)
 pub struct X402RpcTool {
     definition: ToolDefinition,
-    client: Arc<RwLock<Option<X402Client>>>,
+    client: Arc<RwLock<Option<CreditsAuthClient>>>,
 }
 
 impl X402RpcTool {
@@ -101,17 +101,17 @@ impl X402RpcTool {
 
     /// Get or create the x402 client
     /// Uses wallet_provider from context if available (Flash mode), otherwise falls back to env var
-    fn get_client(&self, context: &ToolContext) -> Result<X402Client, String> {
+    fn get_client(&self, context: &ToolContext) -> Result<CreditsAuthClient, String> {
         // Try wallet_provider from context first (works in both Standard and Flash mode)
         if let Some(ref wallet_provider) = context.wallet_provider {
-            return X402Client::new(wallet_provider.clone());
+            return CreditsAuthClient::new(wallet_provider.clone());
         }
 
         // Fall back to private key from environment (Standard mode only)
         let private_key = crate::config::burner_wallet_private_key()
             .ok_or("No wallet provider in context and BURNER_WALLET_BOT_PRIVATE_KEY not set")?;
 
-        X402Client::from_private_key(&private_key)
+        CreditsAuthClient::from_private_key(&private_key)
     }
 }
 

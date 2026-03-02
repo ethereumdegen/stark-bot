@@ -9,7 +9,7 @@ use crate::tools::registry::Tool;
 use crate::tools::types::{
     PropertySchema, ToolContext, ToolDefinition, ToolGroup, ToolInputSchema, ToolResult,
 };
-use crate::x402::X402Client;
+use crate::x402::CreditsAuthClient;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -235,14 +235,14 @@ async fn fetch_zerox_quote_direct(
 
 // ─── Standalone fetch function (for composite tools) ───────────────────────────
 
-/// Create an X402 client from the tool context
-fn get_x402_client(context: &ToolContext) -> Result<X402Client, String> {
+/// Create a credits auth client from the tool context
+fn get_x402_client(context: &ToolContext) -> Result<CreditsAuthClient, String> {
     if let Some(ref wallet_provider) = context.wallet_provider {
-        return X402Client::new(wallet_provider.clone());
+        return CreditsAuthClient::new(wallet_provider.clone());
     }
     let private_key = crate::config::burner_wallet_private_key()
         .ok_or("No wallet provider in context and BURNER_WALLET_BOT_PRIVATE_KEY not set")?;
-    X402Client::from_private_key(&private_key)
+    CreditsAuthClient::from_private_key(&private_key)
 }
 
 /// Fetch data from an x402 preset endpoint.

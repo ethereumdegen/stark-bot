@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::client::X402Client;
+use super::client::CreditsAuthClient;
 use crate::wallet::WalletProvider;
 
 /// Default RPC endpoints for defirelay (used when no custom config)
@@ -18,7 +18,7 @@ const DEFAULT_RPC_MAINNET: &str = "https://rpc.defirelay.com/rpc/light/mainnet";
 
 /// X402-backed EVM RPC client
 pub struct X402EvmRpc {
-    client: X402Client,
+    client: CreditsAuthClient,
     network: String,
     /// Custom RPC URL (overrides default based on network)
     rpc_url: Option<String>,
@@ -79,7 +79,7 @@ pub struct TxLog {
 impl X402EvmRpc {
     /// Create a new X402 EVM RPC client with default settings (x402 enabled)
     pub fn new(private_key: &str, network: &str) -> Result<Self, String> {
-        let client = X402Client::from_private_key(private_key)?;
+        let client = CreditsAuthClient::from_private_key(private_key)?;
         Ok(Self {
             client,
             network: network.to_string(),
@@ -95,7 +95,7 @@ impl X402EvmRpc {
         rpc_url: Option<String>,
         use_x402: bool,
     ) -> Result<Self, String> {
-        let client = X402Client::from_private_key(private_key)?;
+        let client = CreditsAuthClient::from_private_key(private_key)?;
         Ok(Self {
             client,
             network: network.to_string(),
@@ -112,7 +112,7 @@ impl X402EvmRpc {
         rpc_url: Option<String>,
         use_x402: bool,
     ) -> Result<Self, String> {
-        let client = X402Client::new(wallet_provider)?;
+        let client = CreditsAuthClient::new(wallet_provider)?;
         Ok(Self {
             client,
             network: network.to_string(),

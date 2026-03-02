@@ -6,7 +6,7 @@ use crate::gateway::protocol::GatewayEvent;
 use crate::tools::ToolDefinition;
 use crate::wallet::WalletProvider;
 use crate::credits_session::CreditsSessionClient;
-use crate::x402::{X402Client, X402PaymentInfo, is_x402_endpoint};
+use crate::x402::{CreditsAuthClient, X402PaymentInfo, is_x402_endpoint};
 use futures_util::StreamExt;
 use reqwest::{header, Client};
 use serde::{Deserialize, Serialize};
@@ -21,7 +21,7 @@ pub struct OpenAIClient {
     endpoint: String,
     model: Option<String>,
     max_tokens: u32,
-    x402_client: Option<Arc<X402Client>>,
+    x402_client: Option<Arc<CreditsAuthClient>>,
     /// Payment type hint sent in the request body for routers that support it
     /// Maps from PaymentMode: Credits→"credits", CustomEndpoint→None
     payment_type: Option<String>,
@@ -202,7 +202,7 @@ impl OpenAIClient {
         let mode = payment_mode.unwrap_or(crate::x402::PaymentMode::Credits);
         let x402_client = if is_x402_endpoint(&endpoint_url) {
             if let Some(provider) = wallet_provider {
-                let mut client = X402Client::new(provider)?.with_payment_mode(mode);
+                let mut client = CreditsAuthClient::new(provider)?.with_payment_mode(mode);
                 if let Some(session) = credits_session {
                     client = client.with_credits_session(session);
                 }
@@ -277,7 +277,7 @@ impl OpenAIClient {
         let x402_client = if is_x402_endpoint(&endpoint_url) {
             if let Some(pk) = burner_private_key {
                 if !pk.is_empty() {
-                    match X402Client::from_private_key(pk) {
+                    match CreditsAuthClient::from_private_key(pk) {
                         Ok(c) => {
                             log::info!("[AI] x402 enabled for endpoint {} with wallet {}", endpoint_url, c.wallet_address());
                             Some(Arc::new(c))

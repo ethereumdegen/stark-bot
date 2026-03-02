@@ -53,6 +53,18 @@ impl Gateway {
         tx_queue: Option<Arc<TxQueueManager>>,
         skill_registry: Option<Arc<crate::skills::SkillRegistry>>,
     ) -> Self {
+        Self::new_full(db, tool_registry, wallet_provider, tx_queue, skill_registry, None)
+    }
+
+    /// Create a fully-configured Gateway with all optional subsystems including credits session
+    pub fn new_full(
+        db: Arc<Database>,
+        tool_registry: Arc<ToolRegistry>,
+        wallet_provider: Option<Arc<dyn WalletProvider>>,
+        tx_queue: Option<Arc<TxQueueManager>>,
+        skill_registry: Option<Arc<crate::skills::SkillRegistry>>,
+        credits_session: Option<Arc<crate::credits_session::CreditsSessionClient>>,
+    ) -> Self {
         let broadcaster = Arc::new(EventBroadcaster::new());
         let mut channel_manager = ChannelManager::new_with_tools_and_wallet(
             db.clone(),
@@ -65,6 +77,9 @@ impl Gateway {
         }
         if let Some(sr) = skill_registry {
             channel_manager = channel_manager.with_skill_registry(sr);
+        }
+        if let Some(cs) = credits_session {
+            channel_manager = channel_manager.with_credits_session(cs);
         }
         let channel_manager = Arc::new(channel_manager);
 
