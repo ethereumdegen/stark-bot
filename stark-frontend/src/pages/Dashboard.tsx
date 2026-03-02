@@ -1,10 +1,11 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
-import { MessageSquare, Calendar, Wrench, Zap, Sparkles, Wallet, Copy, Check, Newspaper, AlertTriangle } from 'lucide-react';
+import { MessageSquare, Calendar, Wrench, Zap, Sparkles, Wallet, Copy, Check, Newspaper, AlertTriangle, ExternalLink, Package } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Card, { CardContent } from '@/components/ui/Card';
 import { useApi } from '@/hooks/useApi';
 import { useWallet } from '@/hooks/useWallet';
-import { getCortexBulletin, getAgentSettings, SkillInfo } from '@/lib/api';
+import { getCortexBulletin, getAgentSettings, getAgentPreset, SkillInfo } from '@/lib/api';
+import type { AgentPresetInfo } from '@/lib/api';
 import type { CortexBulletin } from '@/types';
 
 interface ServiceCapability {
@@ -48,6 +49,7 @@ export default function Dashboard() {
   }, [address]);
   const [bulletin, setBulletin] = useState<CortexBulletin | null>(null);
   const [aiConfigured, setAiConfigured] = useState<boolean | null>(null);
+  const [agentPreset, setAgentPreset] = useState<AgentPresetInfo | null>(null);
 
   useEffect(() => {
     getCortexBulletin()
@@ -61,6 +63,10 @@ export default function Dashboard() {
         setAiConfigured(mode ? mode !== 'none' : enabled !== false);
       })
       .catch(() => setAiConfigured(null));
+
+    getAgentPreset()
+      .then(setAgentPreset)
+      .catch(() => setAgentPreset(null));
   }, []);
 
   const { data: sessions } = useApi<Array<unknown>>('/sessions');
@@ -155,6 +161,41 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      {agentPreset && agentPreset.hyperpacks.length > 0 && (() => {
+        const hp = agentPreset.hyperpacks[0];
+        return (
+          <div className="mb-6 flex items-center gap-3 p-4 rounded-lg border border-indigo-500/30 bg-indigo-500/10">
+            <div className="p-2 rounded-lg bg-indigo-500/20">
+              <Package className="w-5 h-5 text-indigo-400" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm text-slate-300">
+                This agent is running the{' '}
+                <a
+                  href={`https://hyperpacks.org/hyperpacks/${hp.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-semibold text-indigo-300 hover:text-indigo-200 transition-colors"
+                >
+                  {hp.name}
+                </a>
+                {' '}hyperpack
+                {agentPreset.name && <span className="text-slate-500"> — preset: {agentPreset.name}</span>}
+              </p>
+            </div>
+            <a
+              href={`https://hyperpacks.org/hyperpacks/${hp.id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-indigo-300 bg-indigo-500/20 rounded-lg hover:bg-indigo-500/30 transition-colors flex-shrink-0"
+            >
+              View on hyperpacks.org
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          </div>
+        );
+      })()}
 
       {aiConfigured === false ? (
         <>

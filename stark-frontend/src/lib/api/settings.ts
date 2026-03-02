@@ -1,4 +1,4 @@
-import { apiFetch } from './core';
+import { API_BASE, apiFetch } from './core';
 
 // Agent Settings API
 export async function getAgentSettings(): Promise<Record<string, unknown>> {
@@ -129,4 +129,26 @@ export interface AutoSyncStatus {
 
 export async function getAutoSyncStatus(): Promise<AutoSyncStatus> {
   return apiFetch('/auto-sync-status');
+}
+
+// Agent Preset API
+export interface AgentPresetHyperpack {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+export interface AgentPresetInfo {
+  name: string | null;
+  hyperpacks: AgentPresetHyperpack[];
+}
+
+export async function getAgentPreset(): Promise<AgentPresetInfo | null> {
+  const token = localStorage.getItem('stark_token');
+  const res = await fetch(`${API_BASE}/agent-preset`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (res.status === 204) return null;
+  if (!res.ok) return null;
+  return res.json();
 }
