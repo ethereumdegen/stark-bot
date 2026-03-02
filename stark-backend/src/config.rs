@@ -82,6 +82,11 @@ pub fn runtime_agents_dir() -> PathBuf {
     backend_dir().join("agents")
 }
 
+/// Get the bundled hyperpacks directory (config/hyperpacks/ — ZIP archives)
+pub fn bundled_hyperpacks_dir() -> PathBuf {
+    repo_root().join("config").join("hyperpacks")
+}
+
 /// Get the notes directory
 pub fn notes_dir() -> String {
     backend_dir().join(defaults::NOTES_DIR).to_string_lossy().to_string()

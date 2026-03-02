@@ -315,6 +315,207 @@ fn hyperpack_dir_name(path: &crate::models::bot_config::HyperPackPath) -> String
     }
 }
 
+/// Parse `hyperpack.toml` from inside a ZIP archive to extract the pack name and version.
+/// Handles both root-level and single-nested-directory layouts.
+fn parse_hyperpack_toml_from_zip(data: &[u8]) -> Result<(String, String), String> {
+    use std::io::Read as _;
+    let cursor = std::io::Cursor::new(data);
+    let mut archive = zip::ZipArchive::new(cursor)
+        .map_err(|e| format!("Failed to open zip: {}", e))?;
+
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)
+            .map_err(|e| format!("Failed to read zip entry {}: {}", i, e))?;
+        let name = file.name().to_string();
+
+        // Match "hyperpack.toml" or "something/hyperpack.toml" (one level deep)
+        let is_root = name == "hyperpack.toml";
+        let is_nested = name.ends_with("/hyperpack.toml") && name.matches('/').count() == 1;
+        if !is_root && !is_nested {
+            continue;
+        }
+
+        let mut content = String::new();
+        file.read_to_string(&mut content)
+            .map_err(|e| format!("Failed to read hyperpack.toml: {}", e))?;
+
+        let parsed: toml::Value = content.parse()
+            .map_err(|e| format!("Failed to parse hyperpack.toml: {}", e))?;
+
+        let hp = parsed.get("hyperpack")
+            .ok_or("Missing [hyperpack] section in hyperpack.toml")?;
+        let pack_name = hp.get("name")
+            .and_then(|v| v.as_str())
+            .ok_or("Missing hyperpack.name")?
+            .to_string();
+        let version = hp.get("version")
+            .and_then(|v| v.as_str())
+            .ok_or("Missing hyperpack.version")?
+            .to_string();
+
+        return Ok((pack_name, version));
+    }
+
+    Err("hyperpack.toml not found in ZIP".to_string())
+}
+
+/// Read the version from an installed hyperpack's `hyperpack.toml` on disk.
+fn parse_installed_hyperpack_version(dir: &std::path::Path) -> Option<String> {
+    let toml_path = dir.join("hyperpack.toml");
+    let content = std::fs::read_to_string(&toml_path).ok()?;
+    let parsed: toml::Value = content.parse().ok()?;
+    parsed.get("hyperpack")?.get("version")?.as_str().map(|s| s.to_string())
+}
+
+/// If a directory contains exactly one child directory (and nothing else),
+/// return that child. Used to flatten ZIP archives that wrap contents in a
+/// single top-level folder.
+fn detect_single_top_dir(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let entries: Vec<_> = std::fs::read_dir(dir).ok()?
+        .filter_map(|e| e.ok())
+        .collect();
+    if entries.len() == 1 && entries[0].path().is_dir() {
+        Some(entries[0].path())
+    } else {
+        None
+    }
+}
+
+/// Seed bundled hyperpacks from `config/hyperpacks/*.zip`.
+///
+/// For each ZIP, reads `hyperpack.toml` to get the pack name and version,
+/// compares against any already-installed version in `stark-backend/hyperpacks/<name>/`,
+/// and extracts + installs only if the bundled version is newer (or the pack is missing).
+///
+/// Called once at startup, **before** `load_hyperpacks()`.
+async fn seed_bundled_hyperpacks(broadcaster: &std::sync::Arc<gateway::events::EventBroadcaster>) {
+    let bundled_dir = crate::config::bundled_hyperpacks_dir();
+    if !bundled_dir.is_dir() {
+        log::debug!("[Hyperpacks] No bundled hyperpacks directory at {}", bundled_dir.display());
+        return;
+    }
+
+    let zips: Vec<_> = match std::fs::read_dir(&bundled_dir) {
+        Ok(entries) => entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map(|ext| ext == "zip").unwrap_or(false))
+            .collect(),
+        Err(e) => {
+            log::error!("[Hyperpacks] Failed to read bundled dir {}: {}", bundled_dir.display(), e);
+            return;
+        }
+    };
+
+    if zips.is_empty() {
+        log::debug!("[Hyperpacks] No bundled ZIP files in {}", bundled_dir.display());
+        return;
+    }
+
+    let base_dir = hyperpacks_dir();
+    if let Err(e) = std::fs::create_dir_all(&base_dir) {
+        log::error!("[Hyperpacks] Failed to create hyperpacks dir: {}", e);
+        return;
+    }
+
+    log::info!(
+        "[Hyperpacks] Seeding {} bundled hyperpack(s) from {}",
+        zips.len(),
+        bundled_dir.display()
+    );
+
+    let bd = crate::config::backend_dir();
+    let skills_dir = bd.join("skills");
+    let agents_dir = bd.join("agents");
+    let modules_dir = bd.join("modules");
+
+    for entry in &zips {
+        let zip_path = entry.path();
+        let zip_name = zip_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+
+        // Read ZIP into memory
+        let data = match std::fs::read(&zip_path) {
+            Ok(d) => d,
+            Err(e) => {
+                log::error!("[Hyperpacks] Failed to read {}: {}", zip_name, e);
+                continue;
+            }
+        };
+
+        // Parse hyperpack.toml from the ZIP
+        let (pack_name, bundled_version) = match parse_hyperpack_toml_from_zip(&data) {
+            Ok(v) => v,
+            Err(e) => {
+                log::error!("[Hyperpacks] {} — {}", zip_name, e);
+                continue;
+            }
+        };
+
+        let dest = base_dir.join(&pack_name);
+
+        // Check installed version — skip if bundled is not newer
+        if let Some(installed_version) = parse_installed_hyperpack_version(&dest) {
+            if !crate::config::semver_is_newer(&bundled_version, &installed_version) {
+                log::info!(
+                    "[Hyperpacks] {} — bundled v{} <= installed v{}, skipping",
+                    pack_name, bundled_version, installed_version
+                );
+                continue;
+            }
+            log::info!(
+                "[Hyperpacks] {} — upgrading v{} → v{}",
+                pack_name, installed_version, bundled_version
+            );
+        } else {
+            log::info!("[Hyperpacks] {} — installing bundled v{}", pack_name, bundled_version);
+        }
+
+        // Clean destination
+        if dest.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&dest) {
+                log::error!("[Hyperpacks] {} — failed to remove old dir: {}", pack_name, e);
+                continue;
+            }
+        }
+
+        // Extract to a temp dir so we can flatten the top-level wrapper directory
+        let temp_dir = base_dir.join(format!(".tmp-seed-{}", pack_name));
+        if temp_dir.exists() {
+            std::fs::remove_dir_all(&temp_dir).ok();
+        }
+        if let Err(e) = std::fs::create_dir_all(&temp_dir) {
+            log::error!("[Hyperpacks] {} — failed to create temp dir: {}", pack_name, e);
+            continue;
+        }
+
+        if let Err(e) = extract_zip(&data, &temp_dir) {
+            log::error!("[Hyperpacks] {} — failed to extract ZIP: {}", pack_name, e);
+            std::fs::remove_dir_all(&temp_dir).ok();
+            continue;
+        }
+
+        // Flatten: if the ZIP had a single top-level directory, use its contents
+        let source = detect_single_top_dir(&temp_dir).unwrap_or_else(|| temp_dir.clone());
+
+        // Move to final destination (rename is atomic on the same filesystem)
+        if let Err(_) = std::fs::rename(&source, &dest) {
+            // Fallback: copy if rename fails (e.g. cross-device)
+            if let Err(e) = crate::config::copy_dir_recursive(&source, &dest) {
+                log::error!("[Hyperpacks] {} — failed to copy to destination: {}", pack_name, e);
+                std::fs::remove_dir_all(&temp_dir).ok();
+                continue;
+            }
+        }
+
+        // Clean up temp dir (may already be gone if rename succeeded on the inner dir)
+        std::fs::remove_dir_all(&temp_dir).ok();
+
+        log::info!("[Hyperpacks] {} v{} — extracted to {}", pack_name, bundled_version, dest.display());
+
+        // Install: copy skills/agents/modules, run install.sh
+        install_hyperpack_dir(&pack_name, &dest, &skills_dir, &agents_dir, &modules_dir, broadcaster).await;
+    }
+}
+
 /// Load hyperpacks declared in `bot_config.ron`.
 ///
 /// Downloads each hyperpack into `stark-backend/hyperpacks/<name>/`.
@@ -603,6 +804,100 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<u3
     Ok(count)
 }
 
+/// Install a single hyperpack directory: copy skills/agents/modules, run install.sh.
+/// Returns a JSON result object describing what happened.
+async fn install_hyperpack_dir(
+    dir_name: &str,
+    pack_dir: &std::path::Path,
+    skills_dir: &std::path::Path,
+    agents_dir: &std::path::Path,
+    modules_dir: &std::path::Path,
+    broadcaster: &std::sync::Arc<gateway::events::EventBroadcaster>,
+) -> serde_json::Value {
+    broadcaster.broadcast(gateway::protocol::GatewayEvent::new(
+        "system.hyperpack_installing",
+        serde_json::json!({
+            "name": dir_name,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+        }),
+    ));
+
+    let mut copied = serde_json::Map::new();
+
+    // Copy skills/, agents/, modules/ from the hyperpack into the main dirs
+    for (subdir, target) in [("skills", skills_dir), ("agents", agents_dir), ("modules", modules_dir)] {
+        let src = pack_dir.join(subdir);
+        if src.is_dir() {
+            std::fs::create_dir_all(target).ok();
+            match copy_dir_recursive(&src, target) {
+                Ok(n) => {
+                    log::info!("[Hyperpacks] {} — copied {} file(s) from {}/", dir_name, n, subdir);
+                    copied.insert(subdir.to_string(), serde_json::json!(n));
+                }
+                Err(e) => {
+                    log::error!("[Hyperpacks] {} — failed to copy {}/: {}", dir_name, subdir, e);
+                    copied.insert(subdir.to_string(), serde_json::json!({ "error": e }));
+                }
+            }
+        }
+    }
+
+    // Run install.sh if present
+    let install_script = pack_dir.join("install.sh");
+    if install_script.exists() {
+        log::info!("[Hyperpacks] {} — running install.sh", dir_name);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&install_script, std::fs::Permissions::from_mode(0o755)).ok();
+        }
+
+        let output = tokio::process::Command::new("bash")
+            .arg("install.sh")
+            .current_dir(pack_dir)
+            .output()
+            .await;
+
+        match output {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                let stderr = String::from_utf8_lossy(&out.stderr);
+
+                if out.status.success() {
+                    log::info!("[Hyperpacks] {} — install.sh completed successfully", dir_name);
+                    if !stdout.is_empty() {
+                        log::info!("[Hyperpacks] {} stdout: {}", dir_name, stdout.trim());
+                    }
+                    return serde_json::json!({
+                        "name": dir_name, "status": "ok", "copied": copied, "install_sh": "ok"
+                    });
+                } else {
+                    log::error!(
+                        "[Hyperpacks] {} — install.sh exited with code {:?}\nstdout: {}\nstderr: {}",
+                        dir_name, out.status.code(), stdout.trim(), stderr.trim()
+                    );
+                    return serde_json::json!({
+                        "name": dir_name, "status": "error", "copied": copied,
+                        "install_sh": { "exit_code": out.status.code(), "stderr": stderr.trim().chars().take(500).collect::<String>() }
+                    });
+                }
+            }
+            Err(e) => {
+                log::error!("[Hyperpacks] {} — failed to run install.sh: {}", dir_name, e);
+                return serde_json::json!({
+                    "name": dir_name, "status": "error", "copied": copied, "install_sh": { "error": e.to_string() }
+                });
+            }
+        }
+    }
+
+    log::debug!("[Hyperpacks] {} — no install.sh", dir_name);
+    serde_json::json!({
+        "name": dir_name, "status": "ok", "copied": copied
+    })
+}
+
 /// Install all downloaded hyperpacks.
 ///
 /// For each hyperpack:
@@ -631,88 +926,9 @@ async fn install_hyperpacks(
             continue;
         }
 
-        broadcaster.broadcast(gateway::protocol::GatewayEvent::new(
-            "system.hyperpack_installing",
-            serde_json::json!({
-                "name": dir_name,
-                "timestamp": chrono::Utc::now().to_rfc3339(),
-            }),
-        ));
-
-        let mut copied = serde_json::Map::new();
-
-        // Copy skills/, agents/, modules/ from the hyperpack into the main dirs
-        for (subdir, target) in [("skills", &skills_dir), ("agents", &agents_dir), ("modules", &modules_dir)] {
-            let src = pack_dir.join(subdir);
-            if src.is_dir() {
-                std::fs::create_dir_all(target).ok();
-                match copy_dir_recursive(&src, target) {
-                    Ok(n) => {
-                        log::info!("[Hyperpacks] {} — copied {} file(s) from {}/", dir_name, n, subdir);
-                        copied.insert(subdir.to_string(), serde_json::json!(n));
-                    }
-                    Err(e) => {
-                        log::error!("[Hyperpacks] {} — failed to copy {}/: {}", dir_name, subdir, e);
-                        copied.insert(subdir.to_string(), serde_json::json!({ "error": e }));
-                    }
-                }
-            }
-        }
-
-        // Run install.sh if present
-        let install_script = pack_dir.join("install.sh");
-        if install_script.exists() {
-            log::info!("[Hyperpacks] {} — running install.sh", dir_name);
-
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&install_script, std::fs::Permissions::from_mode(0o755)).ok();
-            }
-
-            let output = tokio::process::Command::new("bash")
-                .arg("install.sh")
-                .current_dir(&pack_dir)
-                .output()
-                .await;
-
-            match output {
-                Ok(out) => {
-                    let stdout = String::from_utf8_lossy(&out.stdout);
-                    let stderr = String::from_utf8_lossy(&out.stderr);
-
-                    if out.status.success() {
-                        log::info!("[Hyperpacks] {} — install.sh completed successfully", dir_name);
-                        if !stdout.is_empty() {
-                            log::info!("[Hyperpacks] {} stdout: {}", dir_name, stdout.trim());
-                        }
-                        results.push(serde_json::json!({
-                            "name": dir_name, "status": "ok", "copied": copied, "install_sh": "ok"
-                        }));
-                    } else {
-                        log::error!(
-                            "[Hyperpacks] {} — install.sh exited with code {:?}\nstdout: {}\nstderr: {}",
-                            dir_name, out.status.code(), stdout.trim(), stderr.trim()
-                        );
-                        results.push(serde_json::json!({
-                            "name": dir_name, "status": "error", "copied": copied,
-                            "install_sh": { "exit_code": out.status.code(), "stderr": stderr.trim().chars().take(500).collect::<String>() }
-                        }));
-                    }
-                }
-                Err(e) => {
-                    log::error!("[Hyperpacks] {} — failed to run install.sh: {}", dir_name, e);
-                    results.push(serde_json::json!({
-                        "name": dir_name, "status": "error", "copied": copied, "install_sh": { "error": e.to_string() }
-                    }));
-                }
-            }
-        } else {
-            log::debug!("[Hyperpacks] {} — no install.sh", dir_name);
-            results.push(serde_json::json!({
-                "name": dir_name, "status": "ok", "copied": copied
-            }));
-        }
+        results.push(
+            install_hyperpack_dir(&dir_name, &pack_dir, &skills_dir, &agents_dir, &modules_dir, broadcaster).await
+        );
     }
 
     broadcaster.broadcast(gateway::protocol::GatewayEvent::new(
@@ -1672,7 +1888,10 @@ async fn main() -> std::io::Result<()> {
                 log::info!("AUTO_SYNC_FROM_KEYSTORE=false — skipping keystore restore");
             }
 
-            // Resolve hyperpacks declared in bot_config.ron
+            // Seed bundled hyperpacks from config/hyperpacks/*.zip
+            seed_bundled_hyperpacks(&broadcaster_bg).await;
+
+            // Resolve remote hyperpacks declared in bot_config.ron
             load_hyperpacks(&broadcaster_bg).await;
 
             // Re-sync skills, agents, and modules that hyperpacks may have installed
