@@ -595,7 +595,7 @@ export default function Workstream() {
       </div>
 
       {/* ─── Scheduling Link ──────────────────────────────────────────────── */}
-      <div className="shrink-0 flex justify-center py-2">
+      <div className="shrink-0 flex justify-center py-2 pb-[120px] md:pb-2">
         <button
           onClick={() => navigate('/scheduling')}
           className="flex items-center gap-2 px-5 py-2 rounded-lg bg-slate-800/60 border border-slate-700/40

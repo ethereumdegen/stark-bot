@@ -34,7 +34,7 @@ pub fn get_hooks_for_event(event: &str) -> Vec<(AgentSubtypeConfig, PersonaHook)
             continue;
         }
         for hook in &config.hooks {
-            if hook.event == event && !hook.prompt_template.is_empty() {
+            if hook.event == event && hook.enabled && !hook.prompt_template.is_empty() {
                 results.push((config.clone(), hook.clone()));
             }
         }

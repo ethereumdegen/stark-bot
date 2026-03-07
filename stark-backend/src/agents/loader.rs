@@ -252,14 +252,17 @@ fn load_hooks_from_directory(agent_dir: &Path, config: &mut AgentSubtypeConfig) 
 
         // Parse optional YAML frontmatter (--- delimited) for hook settings
         let mut safe_mode = false;
+        let mut enabled = true;
         let prompt_template = if content.starts_with("---") {
             if let Some(end) = content[3..].find("---") {
                 let frontmatter = &content[3..3 + end];
-                // Simple key: value parsing for safe_mode
                 for line in frontmatter.lines() {
                     let line = line.trim();
                     if let Some(val) = line.strip_prefix("safe_mode:") {
                         safe_mode = val.trim().eq_ignore_ascii_case("true");
+                    }
+                    if let Some(val) = line.strip_prefix("enabled:") {
+                        enabled = !val.trim().eq_ignore_ascii_case("false");
                     }
                 }
                 content[3 + end + 3..].trim().to_string()
@@ -271,13 +274,14 @@ fn load_hooks_from_directory(agent_dir: &Path, config: &mut AgentSubtypeConfig) 
         };
 
         log::info!(
-            "[AGENTS] Loaded hook '{}' for agent '{}' from {} (safe_mode={})",
-            event, config.key, path.display(), safe_mode
+            "[AGENTS] Loaded hook '{}' for agent '{}' from {} (safe_mode={}, enabled={})",
+            event, config.key, path.display(), safe_mode, enabled
         );
         config.hooks.push(PersonaHook {
             event,
             prompt_template,
             safe_mode,
+            enabled,
         });
     }
 }

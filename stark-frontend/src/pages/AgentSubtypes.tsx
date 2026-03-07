@@ -65,6 +65,7 @@ export default function AgentSubtypes() {
   const [goalsSaving, setGoalsSaving] = useState(false);
 
   const [hooksContent, setHooksContent] = useState<Record<string, string | null>>({});
+  const [hooksEnabled, setHooksEnabled] = useState<Record<string, boolean>>({});
   const [hooksSaving, setHooksSaving] = useState<Record<string, boolean>>({});
   const [addingHook, setAddingHook] = useState(false);
 
@@ -165,6 +166,40 @@ export default function AgentSubtypes() {
     }
   };
 
+  /** Parse whether a hook .md file has `enabled: false` in its frontmatter. */
+  const parseHookEnabled = (raw: string | null): boolean => {
+    if (!raw) return true;
+    if (!raw.trimStart().startsWith('---')) return true;
+    const endIdx = raw.indexOf('---', 3);
+    if (endIdx === -1) return true;
+    const fm = raw.substring(3, endIdx);
+    for (const line of fm.split('\n')) {
+      const m = line.match(/^\s*enabled\s*:\s*(.+)/);
+      if (m) return m[1].trim().toLowerCase() !== 'false';
+    }
+    return true;
+  };
+
+  /** Set or update `enabled: <value>` in the frontmatter of a hook .md file. */
+  const setHookFrontmatterEnabled = (raw: string, enabled: boolean): string => {
+    const val = enabled ? 'true' : 'false';
+    if (raw.trimStart().startsWith('---')) {
+      const endIdx = raw.indexOf('---', 3);
+      if (endIdx !== -1) {
+        const fm = raw.substring(3, endIdx);
+        // Replace existing enabled line
+        if (/^\s*enabled\s*:/m.test(fm)) {
+          const newFm = fm.replace(/^(\s*enabled\s*:\s*).+$/m, `$1${val}`);
+          return raw.substring(0, 3) + newFm + raw.substring(endIdx);
+        }
+        // Add enabled line to frontmatter
+        return raw.substring(0, endIdx) + `enabled: ${val}\n` + raw.substring(endIdx);
+      }
+    }
+    // No frontmatter — wrap content with one
+    return `---\nenabled: ${val}\n---\n${raw}`;
+  };
+
   const HOOK_TYPES = [
     { event: 'heartbeat', label: 'Heartbeat', description: 'Runs on each heartbeat cycle' },
     { event: 'discord_message', label: 'Discord Message', description: 'Fires on every Discord message' },
@@ -219,6 +254,13 @@ export default function AgentSubtypes() {
 
     setCustomHookTypes(discovered);
     setHooksContent(content);
+
+    // Parse enabled state from frontmatter of each hook
+    const enabledMap: Record<string, boolean> = {};
+    for (const [event, raw] of Object.entries(content)) {
+      enabledMap[event] = parseHookEnabled(raw);
+    }
+    setHooksEnabled(enabledMap);
   };
 
   const handleSelectTab = (key: string) => {
@@ -437,6 +479,24 @@ export default function AgentSubtypes() {
       setError(`Failed to save ${event} template`);
     } finally {
       setHooksSaving(prev => ({ ...prev, [event]: false }));
+    }
+  };
+
+  const handleToggleHookEnabled = async (event: string) => {
+    if (!selectedKey) return;
+    const raw = hooksContent[event];
+    if (raw === null || raw === undefined) return;
+    const currentlyEnabled = hooksEnabled[event] !== false;
+    const newEnabled = !currentlyEnabled;
+    const updatedContent = setHookFrontmatterEnabled(raw, newEnabled);
+    try {
+      await writeIntrinsicFile(`agents/${selectedKey}/hooks/${event}.md`, updatedContent);
+      await updateAgentSubtype(selectedKey, {});
+      setHooksContent(prev => ({ ...prev, [event]: updatedContent }));
+      setHooksEnabled(prev => ({ ...prev, [event]: newEnabled }));
+      setSuccess(`${event} hook ${newEnabled ? 'enabled' : 'disabled'}`);
+    } catch {
+      setError(`Failed to ${newEnabled ? 'enable' : 'disable'} ${event} hook`);
     }
   };
 
@@ -797,11 +857,22 @@ export default function AgentSubtypes() {
                             {HOOK_TYPES.filter(ht => hooksContent[ht.event] !== null && hooksContent[ht.event] !== undefined).map(ht => {
                               const content = hooksContent[ht.event]!;
                               const saving = hooksSaving[ht.event] || false;
+                              const isEnabled = hooksEnabled[ht.event] !== false;
                               return (
-                                <div key={ht.event} className="rounded-lg border border-slate-700/50 p-3">
+                                <div key={ht.event} className={`rounded-lg border p-3 ${isEnabled ? 'border-slate-700/50' : 'border-slate-700/30 opacity-60'}`}>
                                   <div className="flex items-center justify-between mb-1">
                                     <div className="flex items-center gap-2">
-                                      <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-green-500/20 text-green-400">ON</span>
+                                      <button
+                                        onClick={() => handleToggleHookEnabled(ht.event)}
+                                        title={isEnabled ? 'Disable hook' : 'Enable hook'}
+                                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0 ${
+                                          isEnabled ? 'bg-green-500' : 'bg-slate-600'
+                                        }`}
+                                      >
+                                        <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
+                                          isEnabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
+                                        }`} />
+                                      </button>
                                       <span className="text-sm text-white font-medium">{ht.label}</span>
                                       <span className="text-xs text-slate-500">{ht.description}</span>
                                     </div>
@@ -835,11 +906,22 @@ export default function AgentSubtypes() {
                                   const content = hooksContent[ht.event];
                                   if (content === null || content === undefined) return null;
                                   const saving = hooksSaving[ht.event] || false;
+                                  const isEnabled = hooksEnabled[ht.event] !== false;
                                   return (
-                                    <div key={ht.event} className="rounded-lg border border-slate-700/50 p-3 mb-3">
+                                    <div key={ht.event} className={`rounded-lg border p-3 mb-3 ${isEnabled ? 'border-slate-700/50' : 'border-slate-700/30 opacity-60'}`}>
                                       <div className="flex items-center justify-between mb-1">
                                         <div className="flex items-center gap-2">
-                                          <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-purple-500/20 text-purple-400">PULSE</span>
+                                          <button
+                                            onClick={() => handleToggleHookEnabled(ht.event)}
+                                            title={isEnabled ? 'Disable hook' : 'Enable hook'}
+                                            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0 ${
+                                              isEnabled ? 'bg-purple-500' : 'bg-slate-600'
+                                            }`}
+                                          >
+                                            <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
+                                              isEnabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
+                                            }`} />
+                                          </button>
                                           <span className="text-sm text-white font-medium">{ht.label}</span>
                                           <code className="text-[10px] text-slate-600 bg-slate-800 px-1.5 py-0.5 rounded">{ht.event}</code>
                                         </div>
@@ -1015,13 +1097,24 @@ export default function AgentSubtypes() {
                       {HOOK_TYPES.filter(ht => hooksContent[ht.event] !== null && hooksContent[ht.event] !== undefined).map(ht => {
                         const content = hooksContent[ht.event]!;
                         const saving = hooksSaving[ht.event] || false;
+                        const isEnabled = hooksEnabled[ht.event] !== false;
                         return (
-                          <div key={ht.event} className="rounded-lg border border-slate-700/50 p-3">
+                          <div key={ht.event} className={`rounded-lg border p-3 ${isEnabled ? 'border-slate-700/50' : 'border-slate-700/30 opacity-60'}`}>
                             <div className="flex items-center justify-between mb-1">
                               <div className="flex items-center gap-2">
-                                <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-green-500/20 text-green-400">ON</span>
+                                <button
+                                  onClick={() => handleToggleHookEnabled(ht.event)}
+                                  title={isEnabled ? 'Disable hook' : 'Enable hook'}
+                                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0 ${
+                                    isEnabled ? 'bg-green-500' : 'bg-slate-600'
+                                  }`}
+                                >
+                                  <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
+                                    isEnabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
+                                  }`} />
+                                </button>
                                 <span className="text-sm text-white font-medium">{ht.label}</span>
-                                <span className="text-xs text-slate-500">{ht.description}</span>
+                                <span className="text-xs text-slate-500 hidden sm:inline">{ht.description}</span>
                               </div>
                               <div className="flex items-center gap-1">
                                 <Button size="sm" variant="ghost" onClick={() => handleSaveHookTemplate(ht.event)} isLoading={saving}>
@@ -1053,11 +1146,22 @@ export default function AgentSubtypes() {
                             const content = hooksContent[ht.event];
                             if (content === null || content === undefined) return null;
                             const saving = hooksSaving[ht.event] || false;
+                            const isEnabled = hooksEnabled[ht.event] !== false;
                             return (
-                              <div key={ht.event} className="rounded-lg border border-slate-700/50 p-3 mb-3">
+                              <div key={ht.event} className={`rounded-lg border p-3 mb-3 ${isEnabled ? 'border-slate-700/50' : 'border-slate-700/30 opacity-60'}`}>
                                 <div className="flex items-center justify-between mb-1">
                                   <div className="flex items-center gap-2">
-                                    <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-purple-500/20 text-purple-400">PULSE</span>
+                                    <button
+                                      onClick={() => handleToggleHookEnabled(ht.event)}
+                                      title={isEnabled ? 'Disable hook' : 'Enable hook'}
+                                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0 ${
+                                        isEnabled ? 'bg-purple-500' : 'bg-slate-600'
+                                      }`}
+                                    >
+                                      <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
+                                        isEnabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
+                                      }`} />
+                                    </button>
                                     <span className="text-sm text-white font-medium">{ht.label}</span>
                                     <code className="text-[10px] text-slate-600 bg-slate-800 px-1.5 py-0.5 rounded">{ht.event}</code>
                                   </div>

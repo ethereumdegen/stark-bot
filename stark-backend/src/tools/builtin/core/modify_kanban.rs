@@ -30,7 +30,7 @@ impl WorkstreamTool {
             "action".to_string(),
             PropertySchema {
                 schema_type: "string".to_string(),
-                description: "The action to perform: 'list' (show items), 'pick_task' (grab highest-priority ready task), 'update_status' (move item between columns), 'add_note' (append to result), 'create' (new kanban item), 'schedule' (create a cron job)".to_string(),
+                description: "The action to perform: 'list' (show kanban items), 'pick_task' (grab highest-priority ready task), 'update_status' (move item between columns), 'add_note' (append to result), 'create' (new kanban item), 'schedule' (create a cron job), 'list_schedules' (show all cron jobs), 'get_schedule' (details + run history), 'update_schedule' (modify a cron job), 'pause_schedule', 'resume_schedule', 'delete_schedule'".to_string(),
                 default: None,
                 items: None,
                 enum_values: Some(vec![
@@ -40,6 +40,12 @@ impl WorkstreamTool {
                     "add_note".to_string(),
                     "create".to_string(),
                     "schedule".to_string(),
+                    "list_schedules".to_string(),
+                    "get_schedule".to_string(),
+                    "update_schedule".to_string(),
+                    "pause_schedule".to_string(),
+                    "resume_schedule".to_string(),
+                    "delete_schedule".to_string(),
                 ]),
             },
         );
@@ -141,6 +147,17 @@ impl WorkstreamTool {
         );
 
         properties.insert(
+            "job_id".to_string(),
+            PropertySchema {
+                schema_type: "string".to_string(),
+                description: "Cron job UUID (required for get_schedule, update_schedule, pause_schedule, resume_schedule, delete_schedule)".to_string(),
+                default: None,
+                items: None,
+                enum_values: None,
+            },
+        );
+
+        properties.insert(
             "delete_after_run".to_string(),
             PropertySchema {
                 schema_type: "boolean".to_string(),
@@ -154,7 +171,7 @@ impl WorkstreamTool {
         WorkstreamTool {
             definition: ToolDefinition {
                 name: "workstream".to_string(),
-                description: "Manage your workstream: list/create/pick kanban tasks (auto-executed by scheduler), or schedule one-time and recurring cron jobs. Use this to work through tasks autonomously and schedule future work.".to_string(),
+                description: "Manage your workstream: list/create/pick kanban tasks (auto-executed by scheduler), and fully manage cron schedules (create, list, update, pause, resume, delete). Use this to work through tasks autonomously and schedule future work.".to_string(),
                 input_schema: ToolInputSchema {
                     schema_type: "object".to_string(),
                     properties,
@@ -185,6 +202,7 @@ struct WorkstreamParams {
     schedule_type: Option<String>,
     schedule_value: Option<String>,
     delete_after_run: Option<bool>,
+    job_id: Option<String>,
 }
 
 #[async_trait]
@@ -425,8 +443,247 @@ impl Tool for WorkstreamTool {
                 }
             }
 
+            "list_schedules" => {
+                let jobs = match db.list_cron_jobs() {
+                    Ok(jobs) => jobs,
+                    Err(e) => return ToolResult::error(format!("Database error: {}", e)),
+                };
+
+                let jobs: Vec<_> = if let Some(ref status) = params.status {
+                    jobs.into_iter().filter(|j| j.status == *status).collect()
+                } else {
+                    jobs
+                };
+
+                if jobs.is_empty() {
+                    let filter_msg = params.status.as_deref().map(|s| format!(" with status '{}'", s)).unwrap_or_default();
+                    return ToolResult::success(format!("No cron jobs found{}.", filter_msg));
+                }
+
+                let mut output = format!("{} cron job(s):\n\n", jobs.len());
+                for job in &jobs {
+                    let schedule_label = match job.schedule_type.as_str() {
+                        "at" => format!("once at {}", job.schedule_value),
+                        "every" => format!("every {}ms", job.schedule_value),
+                        "cron" => format!("cron: {}", job.schedule_value),
+                        _ => job.schedule_value.clone(),
+                    };
+                    output.push_str(&format!(
+                        "- [{}] {} — \"{}\" ({})\n  runs: {}, errors: {}, next: {}\n",
+                        job.status,
+                        job.job_id,
+                        job.name,
+                        schedule_label,
+                        job.run_count,
+                        job.error_count,
+                        job.next_run_at.as_deref().unwrap_or("none"),
+                    ));
+                }
+
+                ToolResult::success(output)
+                    .with_metadata(json!({ "count": jobs.len() }))
+            }
+
+            "get_schedule" => {
+                let job_id = match params.job_id {
+                    Some(id) => id,
+                    None => return ToolResult::error("'job_id' (UUID) is required for 'get_schedule' action"),
+                };
+
+                let job = match db.get_cron_job_by_job_id(&job_id) {
+                    Ok(Some(job)) => job,
+                    Ok(None) => return ToolResult::error(format!("Cron job '{}' not found", job_id)),
+                    Err(e) => return ToolResult::error(format!("Database error: {}", e)),
+                };
+
+                let schedule_label = match job.schedule_type.as_str() {
+                    "at" => format!("once at {}", job.schedule_value),
+                    "every" => format!("every {}ms", job.schedule_value),
+                    "cron" => format!("cron: {}", job.schedule_value),
+                    _ => job.schedule_value.clone(),
+                };
+
+                let mut output = format!(
+                    "Job: {} ({})\nStatus: {}\nSchedule: {}\nMessage: {}\nSession mode: {}\nRuns: {}, Errors: {}\nLast run: {}\nNext run: {}\nDelete after run: {}\nCreated: {}\n",
+                    job.name,
+                    job.job_id,
+                    job.status,
+                    schedule_label,
+                    job.message.as_deref().unwrap_or("(none)"),
+                    job.session_mode,
+                    job.run_count,
+                    job.error_count,
+                    job.last_run_at.as_deref().unwrap_or("never"),
+                    job.next_run_at.as_deref().unwrap_or("none"),
+                    job.delete_after_run,
+                    job.created_at,
+                );
+
+                if let Some(ref err) = job.last_error {
+                    output.push_str(&format!("Last error: {}\n", err));
+                }
+
+                // Fetch recent runs
+                let runs = db.get_cron_job_runs(job.id, 5).unwrap_or_default();
+                if !runs.is_empty() {
+                    output.push_str("\nRecent runs:\n");
+                    for run in &runs {
+                        let status = if run.success { "OK" } else { "FAIL" };
+                        let duration = run.duration_ms.map(|d| format!("{}ms", d)).unwrap_or_default();
+                        output.push_str(&format!(
+                            "  [{}] {} {} {}\n",
+                            status,
+                            run.started_at,
+                            duration,
+                            run.error.as_deref().unwrap_or(""),
+                        ));
+                    }
+                }
+
+                ToolResult::success(output)
+                    .with_metadata(json!({
+                        "job_id": job.job_id,
+                        "status": job.status,
+                        "run_count": job.run_count,
+                        "error_count": job.error_count,
+                    }))
+            }
+
+            "update_schedule" => {
+                let job_id_str = match params.job_id {
+                    Some(id) => id,
+                    None => return ToolResult::error("'job_id' (UUID) is required for 'update_schedule' action"),
+                };
+
+                let job = match db.get_cron_job_by_job_id(&job_id_str) {
+                    Ok(Some(job)) => job,
+                    Ok(None) => return ToolResult::error(format!("Cron job '{}' not found", job_id_str)),
+                    Err(e) => return ToolResult::error(format!("Database error: {}", e)),
+                };
+
+                if params.title.is_none() && params.description.is_none() && params.message.is_none()
+                    && params.schedule_type.is_none() && params.schedule_value.is_none()
+                    && params.delete_after_run.is_none()
+                {
+                    return ToolResult::error("At least one field to update is required: title, description, message, schedule_type, schedule_value, delete_after_run");
+                }
+
+                match db.update_cron_job(
+                    job.id,
+                    params.title.as_deref(),
+                    params.description.as_deref(),
+                    params.schedule_type.as_deref(),
+                    params.schedule_value.as_deref(),
+                    None, // timezone
+                    None, // session_mode
+                    params.message.as_deref(),
+                    None, // system_event
+                    None, // channel_id
+                    None, // deliver_to
+                    None, // deliver
+                    None, // model_override
+                    None, // thinking_level
+                    None, // timeout_seconds
+                    params.delete_after_run,
+                    None, // status
+                ) {
+                    Ok(updated) => {
+                        ToolResult::success(format!(
+                            "Updated cron job '{}' ({})", updated.name, updated.job_id
+                        )).with_metadata(json!({
+                            "job_id": updated.job_id,
+                            "name": updated.name,
+                        }))
+                    }
+                    Err(e) => ToolResult::error(format!("Database error: {}", e)),
+                }
+            }
+
+            "pause_schedule" => {
+                let job_id_str = match params.job_id {
+                    Some(id) => id,
+                    None => return ToolResult::error("'job_id' (UUID) is required for 'pause_schedule' action"),
+                };
+
+                let job = match db.get_cron_job_by_job_id(&job_id_str) {
+                    Ok(Some(job)) => job,
+                    Ok(None) => return ToolResult::error(format!("Cron job '{}' not found", job_id_str)),
+                    Err(e) => return ToolResult::error(format!("Database error: {}", e)),
+                };
+
+                if job.status == "paused" {
+                    return ToolResult::success(format!("Job '{}' is already paused", job.name));
+                }
+
+                match db.update_cron_job(
+                    job.id,
+                    None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                    Some("paused"),
+                ) {
+                    Ok(updated) => {
+                        ToolResult::success(format!(
+                            "Paused cron job '{}' ({})", updated.name, updated.job_id
+                        ))
+                    }
+                    Err(e) => ToolResult::error(format!("Database error: {}", e)),
+                }
+            }
+
+            "resume_schedule" => {
+                let job_id_str = match params.job_id {
+                    Some(id) => id,
+                    None => return ToolResult::error("'job_id' (UUID) is required for 'resume_schedule' action"),
+                };
+
+                let job = match db.get_cron_job_by_job_id(&job_id_str) {
+                    Ok(Some(job)) => job,
+                    Ok(None) => return ToolResult::error(format!("Cron job '{}' not found", job_id_str)),
+                    Err(e) => return ToolResult::error(format!("Database error: {}", e)),
+                };
+
+                if job.status == "active" {
+                    return ToolResult::success(format!("Job '{}' is already active", job.name));
+                }
+
+                match db.update_cron_job(
+                    job.id,
+                    None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                    Some("active"),
+                ) {
+                    Ok(updated) => {
+                        ToolResult::success(format!(
+                            "Resumed cron job '{}' ({})", updated.name, updated.job_id
+                        ))
+                    }
+                    Err(e) => ToolResult::error(format!("Database error: {}", e)),
+                }
+            }
+
+            "delete_schedule" => {
+                let job_id_str = match params.job_id {
+                    Some(id) => id,
+                    None => return ToolResult::error("'job_id' (UUID) is required for 'delete_schedule' action"),
+                };
+
+                let job = match db.get_cron_job_by_job_id(&job_id_str) {
+                    Ok(Some(job)) => job,
+                    Ok(None) => return ToolResult::error(format!("Cron job '{}' not found", job_id_str)),
+                    Err(e) => return ToolResult::error(format!("Database error: {}", e)),
+                };
+
+                match db.delete_cron_job(job.id) {
+                    Ok(true) => {
+                        ToolResult::success(format!(
+                            "Deleted cron job '{}' ({})", job.name, job.job_id
+                        ))
+                    }
+                    Ok(false) => ToolResult::error(format!("Failed to delete cron job '{}'", job_id_str)),
+                    Err(e) => ToolResult::error(format!("Database error: {}", e)),
+                }
+            }
+
             _ => ToolResult::error(format!(
-                "Unknown action: '{}'. Valid actions: list, pick_task, update_status, add_note, create, schedule",
+                "Unknown action: '{}'. Valid actions: list, pick_task, update_status, add_note, create, schedule, list_schedules, get_schedule, update_schedule, pause_schedule, resume_schedule, delete_schedule",
                 params.action
             )),
         }

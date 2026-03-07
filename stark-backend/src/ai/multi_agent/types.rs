@@ -20,6 +20,13 @@ pub struct PersonaHook {
     /// When true, hook sessions run in safe mode (restricted tools)
     #[serde(default)]
     pub safe_mode: bool,
+    /// When false, the hook exists on disk but won't fire. Default: true.
+    #[serde(default = "hook_enabled_default")]
+    pub enabled: bool,
+}
+
+fn hook_enabled_default() -> bool {
+    true
 }
 
 // =====================================================
