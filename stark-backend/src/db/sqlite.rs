@@ -205,6 +205,37 @@ impl Database {
             [],
         )?;
 
+        // Starflask agents table (capability → agent mapping)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS starflask_agents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                capability TEXT UNIQUE NOT NULL,
+                agent_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                pack_hashes TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL DEFAULT 'provisioned',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )",
+            [],
+        )?;
+
+        // Starflask command log table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS starflask_command_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                capability TEXT NOT NULL,
+                session_id TEXT,
+                message TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                result TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )",
+            [],
+        )?;
+
         // Keystore auto-sync tracking
         conn.execute(
             "CREATE TABLE IF NOT EXISTS keystore_state (

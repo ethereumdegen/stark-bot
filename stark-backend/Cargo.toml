@@ -7,6 +7,7 @@ edition = "2024"
 # Web framework
 actix-web = "4"
 actix-cors = "0.7"
+actix-files = "0.6"
 tokio = { version = "1", features = ["full"] }
 
 # Database
@@ -64,7 +65,7 @@ moka = { version = "0.12", features = ["sync"] }
 strum = { version = "0.26", features = ["derive"] }
 
 # Starflask AI orchestration
-starflask = "0.1"
+starflask = "0.1.1"
 
 [dev-dependencies]
 tempfile = "3"

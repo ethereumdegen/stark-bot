@@ -33,12 +33,29 @@ async fn get_config_status(state: web::Data<AppState>) -> impl Responder {
 
     let guest_dashboard = crate::models::BotConfig::load().guest_dashboard_enabled;
 
+    let starflask_agents_provisioned = state.db.list_starflask_agents()
+        .map(|a| a.len() as u32)
+        .unwrap_or(0);
+
+    // Check if STARFLASK_API_KEY is available (env or DB)
+    let starflask_api_key_set = std::env::var("STARFLASK_API_KEY").is_ok()
+        || state.db.get_api_key("STARFLASK_API_KEY")
+            .ok()
+            .flatten()
+            .map(|k| !k.api_key.is_empty())
+            .unwrap_or(false);
+
+    let starflask_connected = state.starflask.read().await.is_some();
+
     HttpResponse::Ok().json(serde_json::json!({
         "login_configured": state.config.login_admin_public_address.is_some(),
         "burner_wallet_configured": state.config.burner_wallet_private_key.is_some(),
         "wallet_configured": state.wallet_provider.is_some(),
         "guest_dashboard_enabled": guest_dashboard,
         "wallet_address": wallet_address,
-        "wallet_mode": wallet_mode
+        "wallet_mode": wallet_mode,
+        "starflask_configured": starflask_connected,
+        "starflask_api_key_set": starflask_api_key_set,
+        "starflask_agents_provisioned": starflask_agents_provisioned
     }))
 }

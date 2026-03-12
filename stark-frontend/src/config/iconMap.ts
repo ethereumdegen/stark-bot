@@ -23,10 +23,10 @@ import {
   Heart,
   Cloud,
   Columns,
-  Package,
   HardDrive,
   Shapes,
   ShieldCheck,
+  Send,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -55,10 +55,10 @@ const iconMap: Record<string, LucideIcon> = {
   Heart,
   Cloud,
   Columns,
-  Package,
   HardDrive,
   Shapes,
   ShieldCheck,
+  Send,
 };
 
 export default iconMap;

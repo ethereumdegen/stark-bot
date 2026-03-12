@@ -1,0 +1,9 @@
+StarflaskSeed(
+    agents: [
+        AgentSeed(capability: "crypto", name: "Starkbot Crypto Agent", description: "Crypto transaction and DeFi operations agent for Starkbot", pack_hashes: ["e5906c644b67d2133caafb7110f0fdd00a85d9b631f0bd3d9613c35075b648e6"]),
+        AgentSeed(capability: "general", name: "Starkbot General Assistant", description: "General-purpose AI assistant for the Starkbot command & control center", pack_hashes: ["72f84ee88c2257d2bfc0924cee93ac1ec314dd73e3c6822eefd3ab11958b55e5"]),
+        AgentSeed(capability: "image_gen", name: "Starkbot Image Creator", description: "AI-powered image generation agent for Starkbot", pack_hashes: ["15eeef33f9ebc63bb5a5fea9e02fb2ca0794f7c1ed1fccfb52fea163361a7368"]),
+        AgentSeed(capability: "social_media", name: "Starkbot Social Media Agent", description: "Social media posting and management agent for Starkbot", pack_hashes: ["6fdf8b9ace7fafd0e511a31d253883ce7477069328444c1ef09abf011f11ffdc"]),
+        AgentSeed(capability: "video_gen", name: "Starkbot Video Creator", description: "AI-powered video generation agent for Starkbot", pack_hashes: ["13cda412746a0089f4df24ea2fb3db35fbe9d1bf39b0ed29d72463a0212c727c"]),
+    ],
+)

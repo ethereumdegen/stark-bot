@@ -1,37 +1,66 @@
+import { useState, useEffect, useCallback } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import Layout from '@/components/layout/Layout';
 import Login from '@/pages/Login';
+import Setup from '@/pages/Setup';
 import Dashboard from '@/pages/Dashboard';
-import AgentChat from '@/pages/AgentChat';
-import AgentSettings from '@/pages/AgentSettings';
+import StarflaskAgents from '@/pages/StarflaskAgents';
+import CommandCenter from '@/pages/CommandCenter';
 import BotSettings from '@/pages/BotSettings';
-import Channels from '@/pages/Channels';
-import Tools from '@/pages/Tools';
-import Skills from '@/pages/Skills';
-import Scheduling from '@/pages/Scheduling';
-import Sessions from '@/pages/Sessions';
-import MemoryBrowser from '@/pages/MemoryBrowser';
-import Identities from '@/pages/Identities';
-import IdentityDetail from '@/pages/IdentityDetail';
-import FileBrowser from '@/pages/FileBrowser';
-import SystemFiles from '@/pages/SystemFiles';
-import Notes from '@/pages/Notes';
-import Debug from '@/pages/Debug';
-import System from '@/pages/System';
 import ApiKeys from '@/pages/ApiKeys';
 import CloudBackup from '@/pages/CloudBackup';
-import Payments from '@/pages/Payments';
-import EIP8004 from '@/pages/EIP8004';
 import CryptoTransactions from '@/pages/CryptoTransactions';
-import ImpulseMap from '@/pages/ImpulseMap';
-import Workstream from '@/pages/Workstream';
-import Modules from '@/pages/Modules';
-import ModuleDashboard from '@/pages/ModuleDashboard';
+import System from '@/pages/System';
 import GuestDashboard from '@/pages/GuestDashboard';
-import AgentSubtypes from '@/pages/AgentSubtypes';
-import SpecialRoles from '@/pages/SpecialRoles';
+
+type SetupState = 'loading' | 'needs_key' | 'needs_agents' | 'ready';
 
 function App() {
+  const [setupState, setSetupState] = useState<SetupState>('loading');
+
+  const checkSetup = useCallback(() => {
+    const token = localStorage.getItem('stark_token');
+    if (!token) {
+      setSetupState('ready');
+      return;
+    }
+
+    fetch('/api/health/config')
+      .then(r => r.json())
+      .then(data => {
+        const hasKey = data.starflask_api_key_set === true || data.starflask_configured === true;
+        const hasAgents = (data.starflask_agents_provisioned ?? 0) > 0;
+
+        if (!hasKey) {
+          setSetupState('needs_key');
+        } else if (!hasAgents) {
+          setSetupState('needs_agents');
+        } else {
+          setSetupState('ready');
+        }
+      })
+      .catch(() => setSetupState('ready'));
+  }, []);
+
+  useEffect(() => { checkSetup(); }, [checkSetup]);
+
+  if (setupState === 'loading') {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="text-slate-500">Loading...</div>
+      </div>
+    );
+  }
+
+  if (setupState === 'needs_key' || setupState === 'needs_agents') {
+    return (
+      <Setup
+        initialStep={setupState === 'needs_agents' ? 'deploy' : 'api_key'}
+        onComplete={() => { setSetupState('ready'); window.location.href = '/dashboard'; }}
+      />
+    );
+  }
+
   return (
     <Routes>
       <Route path="/" element={<Login />} />
@@ -39,34 +68,13 @@ function App() {
       <Route path="/guest_dashboard" element={<GuestDashboard />} />
       <Route element={<Layout />}>
         <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/agent-chat" element={<AgentChat />} />
-        <Route path="/agent-settings" element={<AgentSettings />} />
+        <Route path="/command-center" element={<CommandCenter />} />
+        <Route path="/starflask-agents" element={<StarflaskAgents />} />
         <Route path="/bot-settings" element={<BotSettings />} />
-        <Route path="/channels" element={<Channels />} />
-        <Route path="/tools" element={<Tools />} />
-        <Route path="/skills" element={<Skills />} />
-        <Route path="/scheduling" element={<Scheduling />} />
         <Route path="/api-keys" element={<ApiKeys />} />
         <Route path="/cloud-backup" element={<CloudBackup />} />
-        <Route path="/sessions" element={<Sessions />} />
-        <Route path="/sessions/:sessionId" element={<Sessions />} />
-        <Route path="/memories" element={<MemoryBrowser />} />
-        <Route path="/impulse-map" element={<ImpulseMap />} />
-        <Route path="/workstream" element={<Workstream />} />
-        <Route path="/identities" element={<Identities />} />
-        <Route path="/identities/:identityId" element={<IdentityDetail />} />
-        <Route path="/files" element={<FileBrowser />} />
-        <Route path="/system-files" element={<SystemFiles />} />
-        <Route path="/notes" element={<Notes />} />
-        <Route path="/system" element={<System />} />
-        <Route path="/debug" element={<Debug />} />
-        <Route path="/payments" element={<Payments />} />
-        <Route path="/eip8004" element={<EIP8004 />} />
         <Route path="/crypto-transactions" element={<CryptoTransactions />} />
-        <Route path="/agent-subtypes" element={<AgentSubtypes />} />
-        <Route path="/special-roles" element={<SpecialRoles />} />
-        <Route path="/modules" element={<Modules />} />
-        <Route path="/modules/:name" element={<ModuleDashboard />} />
+        <Route path="/system" element={<System />} />
       </Route>
     </Routes>
   );

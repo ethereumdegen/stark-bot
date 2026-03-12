@@ -24,6 +24,8 @@ mod keystore_client;
 mod identity_client;
 mod rpc_config;
 mod starflask_bridge;
+mod agent_registry;
+mod command_router;
 
 use tx_queue::TxQueueManager;
 use config::Config;
@@ -38,10 +40,36 @@ pub struct AppState {
     pub tx_queue: Arc<TxQueueManager>,
     pub broadcaster: Arc<EventBroadcaster>,
     pub crypto_executor: Option<Arc<crypto_executor::CryptoExecutor>>,
-    pub starflask: Option<Arc<starflask::Starflask>>,
+    pub starflask: tokio::sync::RwLock<Option<Arc<starflask::Starflask>>>,
     pub credits_session: Option<Arc<credits_session::CreditsSessionClient>>,
+    pub agent_registry: tokio::sync::RwLock<Option<Arc<agent_registry::AgentRegistry>>>,
+    pub command_router: tokio::sync::RwLock<Option<Arc<command_router::CommandRouter>>>,
     pub internal_token: String,
     pub started_at: std::time::Instant,
+}
+
+impl AppState {
+    /// Initialize (or re-initialize) the Starflask client, registry, and router
+    /// from the DB API key. Call this after adding a STARFLASK_API_KEY.
+    pub async fn init_starflask(&self) {
+        let sf = match starflask_bridge::create_starflask_client_with_db(&self.db) {
+            Some(c) => Arc::new(c),
+            None => return,
+        };
+        log::info!("Starflask client (re)initialized");
+
+        let registry = Arc::new(agent_registry::AgentRegistry::new(
+            sf.clone(), self.db.clone(), self.broadcaster.clone(),
+        ));
+        let router = Arc::new(command_router::CommandRouter::new(
+            registry.clone(), sf.clone(), self.crypto_executor.clone(),
+            self.db.clone(), self.broadcaster.clone(),
+        ));
+
+        *self.starflask.write().await = Some(sf);
+        *self.agent_registry.write().await = Some(registry);
+        *self.command_router.write().await = Some(router);
+    }
 }
 
 /// Auto-retrieve backup from keystore on fresh instance
@@ -172,6 +200,31 @@ async fn load_keystore_state_from_cloud(
     emit("error", &format!("Auto-sync failed after {} attempts", MAX_RETRIES));
 }
 
+/// Serve the frontend SPA from the dist directory.
+/// Falls back to index.html for client-side routing.
+fn frontend_files() -> actix_files::Files {
+    let dist_paths = [
+        "./stark-frontend/dist",
+        "../stark-frontend/dist",
+    ];
+    let dist_dir = dist_paths.iter()
+        .find(|p| std::path::Path::new(p).join("index.html").exists())
+        .unwrap_or(&dist_paths[0]);
+
+    actix_files::Files::new("/", *dist_dir)
+        .index_file("index.html")
+        .default_handler(
+            actix_files::NamedFile::open(
+                std::path::Path::new(dist_dir).join("index.html")
+            ).unwrap_or_else(|_| {
+                // Create a minimal fallback if index.html doesn't exist
+                let tmp = std::env::temp_dir().join("starkbot_fallback.html");
+                std::fs::write(&tmp, "<html><body><h1>StarkBot</h1><p>Frontend not built. Run <code>npm run build</code> in stark-frontend/</p></body></html>").ok();
+                actix_files::NamedFile::open(tmp).unwrap()
+            })
+        )
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
@@ -274,12 +327,28 @@ async fn main() -> std::io::Result<()> {
         })
     });
 
-    // Create Starflask client
-    let starflask = starflask_bridge::create_starflask_client()
+    // Create Starflask client (try env var, then DB)
+    let starflask = starflask_bridge::create_starflask_client_with_db(&db)
         .map(Arc::new);
-    if starflask.is_some() {
+    let has_starflask = starflask.is_some();
+    if has_starflask {
         log::info!("Starflask client initialized");
+    } else {
+        log::warn!("Starflask not configured — set STARFLASK_API_KEY or add it via the API keys page");
     }
+
+    // Create AgentRegistry + CommandRouter (only if Starflask is configured)
+    let (agent_registry, command_router) = if let Some(ref sf) = starflask {
+        let registry = Arc::new(agent_registry::AgentRegistry::new(
+            sf.clone(), db.clone(), broadcaster.clone(),
+        ));
+        let router = Arc::new(command_router::CommandRouter::new(
+            registry.clone(), sf.clone(), crypto_executor.clone(), db.clone(), broadcaster.clone(),
+        ));
+        (Some(registry), Some(router))
+    } else {
+        (None, None)
+    };
 
     // Generate internal token
     let internal_token = std::env::var("STARKBOT_INTERNAL_TOKEN").unwrap_or_else(|_| {
@@ -315,6 +384,9 @@ async fn main() -> std::io::Result<()> {
         });
     }
 
+    // Starflask agent provisioning is manual — use the "Provision from Seed" button
+    // on the Starflask Agents page, or POST /api/starflask/provision.
+
     log::info!("Starting StarkBot server on port {}", port);
     log::info!("WebSocket available at /ws");
 
@@ -325,6 +397,8 @@ async fn main() -> std::io::Result<()> {
     let credits_sess = credits_session.clone();
     let crypto_exec = crypto_executor.clone();
     let starflask_clone = starflask.clone();
+    let agent_registry_clone = agent_registry;
+    let command_router_clone = command_router;
     let internal_token_clone = internal_token.clone();
 
     let server = HttpServer::new(move || {
@@ -342,8 +416,10 @@ async fn main() -> std::io::Result<()> {
                 tx_queue: Arc::clone(&tx_q),
                 broadcaster: Arc::clone(&bcast),
                 crypto_executor: crypto_exec.clone(),
-                starflask: starflask_clone.clone(),
+                starflask: tokio::sync::RwLock::new(starflask_clone.clone()),
                 credits_session: credits_sess.clone(),
+                agent_registry: tokio::sync::RwLock::new(agent_registry_clone.clone()),
+                command_router: tokio::sync::RwLock::new(command_router_clone.clone()),
                 internal_token: internal_token_clone.clone(),
                 started_at: std::time::Instant::now(),
             }))
@@ -365,11 +441,14 @@ async fn main() -> std::io::Result<()> {
             .configure(controllers::x402_limits::config)
             .configure(controllers::well_known::config)
             .configure(controllers::payments::config)
+            .configure(controllers::starflask::config)
             // Crypto execution endpoints
             .route("/api/execute", web::post().to(controllers::execute::execute_instruction))
             .route("/webhook/starflask", web::post().to(controllers::execute::starflask_webhook))
             // WebSocket
             .route("/ws", web::get().to(gateway::actix_ws::ws_handler))
+            // Frontend SPA serving
+            .service(frontend_files())
     })
     .bind(("0.0.0.0", port))?
     .run();

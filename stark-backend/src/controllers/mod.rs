@@ -9,6 +9,7 @@ pub mod tx_queue;
 pub mod well_known;
 pub mod x402;
 pub mod x402_limits;
+pub mod starflask;
 
 use actix_web::{web, HttpRequest, HttpResponse};
 use crate::AppState;

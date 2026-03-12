@@ -19,7 +19,7 @@ pub struct CryptoExecutor {
     pub db: Option<Arc<crate::db::Database>>,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ExecutionResult {
     pub success: bool,
     pub data: Value,

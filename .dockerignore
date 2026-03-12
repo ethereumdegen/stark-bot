@@ -30,6 +30,9 @@ data/
 *.log
 npm-debug.log*
 
+# Workspace members with external deps (not needed in Docker)
+seed-packs/
+
 # OS
 .DS_Store
 Thumbs.db

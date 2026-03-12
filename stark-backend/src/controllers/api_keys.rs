@@ -49,6 +49,8 @@ pub enum ApiKeyId {
     XaiApiKey,
     #[strum(serialize = "ZEROX_API_KEY")]
     ZeroxApiKey,
+    #[strum(serialize = "STARFLASK_API_KEY")]
+    StarflaskApiKey,
 }
 
 impl ApiKeyId {
@@ -65,6 +67,7 @@ impl ApiKeyId {
             Self::AlchemyApiKey => "ALCHEMY_API_KEY",
             Self::XaiApiKey => "XAI_API_KEY",
             Self::ZeroxApiKey => "ZEROX_API_KEY",
+            Self::StarflaskApiKey => "STARFLASK_API_KEY",
         }
     }
 
@@ -80,6 +83,7 @@ impl ApiKeyId {
             Self::AlchemyApiKey => Some(&["ALCHEMY_API_KEY"]),
             Self::XaiApiKey => Some(&["XAI_API_KEY"]),
             Self::ZeroxApiKey => Some(&["ZEROX_API_KEY"]),
+            Self::StarflaskApiKey => Some(&["STARFLASK_API_KEY"]),
         }
     }
 
@@ -132,6 +136,17 @@ pub struct ServiceConfig {
 /// Get all hardcoded service configurations
 pub fn get_service_configs() -> Vec<ServiceConfig> {
     vec![
+        ServiceConfig {
+            group: "starflask".into(),
+            label: "Starflask".into(),
+            description: "Required. Starflask AI orchestration platform API key. Powers all agent capabilities.".into(),
+            url: "https://starflask.com".into(),
+            keys: vec![KeyConfig {
+                name: "STARFLASK_API_KEY".into(),
+                label: "API Key".into(),
+                secret: true,
+            }],
+        },
         ServiceConfig {
             group: "alchemy".into(),
             label: "Alchemy".into(),
