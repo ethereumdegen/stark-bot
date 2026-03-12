@@ -1,111 +1,70 @@
 [package]
 name = "stark-backend"
-version = "0.6.1"
+version = "2.0.0"
 edition = "2024"
-default-run = "stark-backend"
 
 [dependencies]
+# Web framework
 actix-web = "4"
-actix-files = "0.6 "
 actix-cors = "0.7"
-actix-multipart = "0.6"
 tokio = { version = "1", features = ["full"] }
+
+# Database
 rusqlite = { version = "0.31", features = ["bundled"] }
 r2d2 = "0.8"
 r2d2_sqlite = "0.24"
+
+# Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ron = "0.8"
+
+# Utilities
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 env_logger = "0.11"
 log = "0.4"
 dotenv = "0.15"
-reqwest = { version = "0.11", features = ["json", "multipart"] }
+reqwest = { version = "0.11", features = ["json"] }
 async-trait = "0.1"
-
-# Gateway WebSocket server (integrated with Actix)
-actix-ws = "0.3"
-
-# Cancellation tokens for async task management
-tokio-util = "0.7"
-futures-util = "0.3"
-
-# Telegram integration
-teloxide = { version = "0.12", features = ["macros"] }
-
-# Slack integration
-slack-morphism = { version = "2", features = ["hyper"] }
-
-# Discord integration
-serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model"] }
-
-# Concurrent state management
-dashmap = "5"
-
-# Regex for memory marker parsing
-regex = "1"
-
-# Static initialization and faster RwLock
-once_cell = "1"
-parking_lot = "0.12"
-
-# SIWE (Sign In With Ethereum) authentication and x402 payments
-ethers = "2.0"
+url = "2"
+urlencoding = "2"
 hex = "0.4"
 rand = "0.8"
 getrandom = "0.2"
 base64 = "0.22"
+regex = "1"
+
+# WebSocket
+actix-ws = "0.3"
+futures-util = "0.3"
+
+# Concurrent state management
+dashmap = "5"
+
+# Static initialization
+once_cell = "1"
+parking_lot = "0.12"
+lazy_static = "1.4"
+
+# Ethereum / crypto
+ethers = "2.0"
 
 # ECIES encryption for cloud backup
 ecies = "0.2"
 
-# URL parsing
-url = "2"
-urlencoding = "2"
-
-# Twitter OAuth 1.0a
-hmac = "0.12"
-sha1 = "0.10"
-
-# ERC-8128 Content-Digest (SHA-256)
+# Hashing (ERC-8128, OAuth)
 sha2 = "0.10"
+hmac = "0.12"
 
-# Cron scheduling
-cron = "0.12"
-
-# Lazy static for global state
-lazy_static = "1.4"
-
-# Tools system
-which = "5"
-glob = "0.3"
-walkdir = "2"
-
-# In-memory cache for hot-path DB queries
+# In-memory cache
 moka = { version = "0.12", features = ["sync"] }
 
-# Enum utilities
+# Enum utilities (Network enum in rpc_config)
 strum = { version = "0.26", features = ["derive"] }
 
-# Skills ZIP upload
-zip = "0.6"
-
-# Module manifest parsing
-toml = "0.8"
-
-# Module archive extraction (for StarkHub remote install)
-flate2 = "1"
-tar = "0.4"
-
-# Polymarket CLOB client (rs-clob-client)
-# Full-featured SDK for trading on Polymarket prediction markets
-polymarket-client-sdk = { version = "0.4", features = ["clob", "ws", "data", "gamma", "heartbeats"] }
-stop-words = "0.9.0"
-
-[[bin]]
-name = "agent_test"
-path = "src/bin/agent_test.rs"
+# Starflask AI orchestration
+starflask = "0.1"
 
 [dev-dependencies]
 tempfile = "3"

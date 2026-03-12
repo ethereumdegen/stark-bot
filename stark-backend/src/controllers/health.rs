@@ -35,7 +35,7 @@ async fn get_config_status(state: web::Data<AppState>) -> impl Responder {
 
     HttpResponse::Ok().json(serde_json::json!({
         "login_configured": state.config.login_admin_public_address.is_some(),
-        "burner_wallet_configured": crate::config::burner_wallet_private_key().is_some(),
+        "burner_wallet_configured": state.config.burner_wallet_private_key.is_some(),
         "wallet_configured": state.wallet_provider.is_some(),
         "guest_dashboard_enabled": guest_dashboard,
         "wallet_address": wallet_address,

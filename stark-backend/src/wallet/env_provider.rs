@@ -136,7 +136,7 @@ impl WalletProvider for EnvWalletProvider {
         // This requires domain, types, primaryType, and message
         let domain = typed_data.get("domain")
             .ok_or("Missing 'domain' in typed data")?;
-        let primary_type = typed_data.get("primaryType")
+        let _primary_type = typed_data.get("primaryType")
             .and_then(|v| v.as_str())
             .ok_or("Missing 'primaryType' in typed data")?;
         let message = typed_data.get("message")

@@ -20,6 +20,5 @@ pub mod payment_limits;
 pub mod verify;
 
 pub use types::*;
-pub use client::{X402Client, X402Response, X402RetryResult, PaymentMode, is_x402_endpoint, sign_402_payment, retry_with_x402_payment, check_usdc_balance};
 pub use signer::X402Signer;
-pub use evm_rpc::{TxLog, X402EvmRpc};
+pub use evm_rpc::X402EvmRpc;

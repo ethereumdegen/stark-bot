@@ -2,9 +2,8 @@
 //!
 //! Manual ABI encoding for ERC20 calls without the abigen! macro.
 
-use ethers::abi::{Token, AbiDecode, AbiEncode};
+use ethers::abi::{Token, AbiDecode};
 use ethers::types::{Address, U256};
-use ethers::utils::keccak256;
 
 /// Function selector for balanceOf(address)
 const BALANCE_OF_SELECTOR: [u8; 4] = [0x70, 0xa0, 0x82, 0x31];

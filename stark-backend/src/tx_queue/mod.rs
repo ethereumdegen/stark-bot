@@ -13,4 +13,4 @@ mod types;
 mod manager;
 
 pub use types::{QueuedTransaction, QueuedTxStatus, QueuedTxSummary};
-pub use manager::{TxQueueManager, create_tx_queue_manager};
+pub use manager::TxQueueManager;
