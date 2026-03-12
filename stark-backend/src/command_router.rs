@@ -1,18 +1,24 @@
-//! Command router — routes user commands to the appropriate Starflask agent.
+//! Command router — routes user commands via LLM-based orchestration.
+//!
+//! All user queries go to the `general` Starflask agent first. The LLM decides
+//! whether to answer directly or return a delegation instruction to a specialist.
+//! Hook-driven agents (discord_moderator, telegram_moderator) are separate —
+//! they only fire from integration hooks, never from user queries.
 
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use starflask::Starflask;
-use uuid::Uuid;
-
 use crate::agent_registry::AgentRegistry;
 use crate::crypto_executor::{CryptoExecutor, ExecutionResult};
 use crate::db::Database;
 use crate::gateway::events::EventBroadcaster;
 use crate::gateway::protocol::GatewayEvent;
 use crate::starflask_bridge;
+
+/// Capabilities that the general agent is allowed to delegate to.
+const DELEGATABLE_CAPABILITIES: &[&str] = &["crypto", "image_gen", "video_gen"];
 
 pub struct CommandRouter {
     registry: Arc<AgentRegistry>,
@@ -38,7 +44,6 @@ pub struct Command {
 pub enum CommandOutput {
     CryptoExecution { results: Vec<ExecutionResult> },
     MediaGeneration { urls: Vec<String>, media_type: String },
-    SocialPost { post_url: Option<String>, confirmation: String },
     TextResponse { text: String },
     Raw { data: Value },
 }
@@ -54,35 +59,109 @@ impl CommandRouter {
         Self { registry, starflask, crypto_executor, db, broadcaster }
     }
 
-    /// Route a command to the appropriate agent and return the result.
+    /// Route a command through the LLM orchestrator.
+    ///
+    /// If `command.capability` is explicitly set, bypass the orchestrator and
+    /// go directly to that agent (`route_direct`). Otherwise, query the
+    /// `general` agent and check whether it delegates to a specialist.
     pub async fn route(&self, command: Command) -> Result<CommandOutput, String> {
-        let capability = command.capability.clone()
-            .unwrap_or_else(|| self.detect_capability(&command.message));
+        // Manual override — explicit capability set by user
+        if let Some(ref cap) = command.capability {
+            if !cap.is_empty() {
+                return self.route_direct(cap, &command).await;
+            }
+        }
 
-        let agent_id = self.registry.get_agent_id(&capability)
+        // Phase 1: Query the general agent
+        let general_id = self.registry.get_agent_id("general")
+            .or_else(|| self.registry.get_any_agent_id())
+            .ok_or_else(|| "No agents available. Sync your Starflask agents first.".to_string())?;
+
+        let cmd_id = self.db.log_starflask_command("general", None, &command.message).unwrap_or(0);
+
+        self.broadcaster.broadcast(GatewayEvent::new(
+            "starflask.command_started",
+            serde_json::json!({
+                "command_id": cmd_id,
+                "capability": "general",
+                "message": &command.message,
+            }),
+        ));
+
+        let session = if let Some(hook) = &command.hook {
+            let payload = command.payload.clone().unwrap_or(serde_json::json!({}));
+            self.starflask.fire_hook_and_wait(&general_id, hook, payload).await
+                .map_err(|e| format!("Hook fire failed: {}", e))?
+        } else {
+            self.starflask.query(&general_id, &command.message).await
+                .map_err(|e| format!("Query failed: {}", e))?
+        };
+
+        // Phase 2: Check for delegation
+        if let Some(delegation) = starflask_bridge::parse_delegation_result(&session.result) {
+            if DELEGATABLE_CAPABILITIES.contains(&delegation.delegate.as_str()) {
+                log::info!(
+                    "[CommandRouter] General agent delegated to '{}': {}",
+                    delegation.delegate, delegation.message
+                );
+
+                self.broadcaster.broadcast(GatewayEvent::new(
+                    "starflask.delegation",
+                    serde_json::json!({
+                        "from": "general",
+                        "to": &delegation.delegate,
+                        "message": &delegation.message,
+                    }),
+                ));
+
+                // Query the delegated agent
+                let delegate_id = self.registry.get_agent_id(&delegation.delegate)
+                    .ok_or_else(|| format!(
+                        "Delegation target '{}' has no registered agent. Sync your agents.",
+                        delegation.delegate
+                    ))?;
+
+                let delegate_session = self.starflask.query(&delegate_id, &delegation.message).await
+                    .map_err(|e| format!("Delegated query to '{}' failed: {}", delegation.delegate, e))?;
+
+                let output = self.parse_output(&delegation.delegate, &delegate_session.result).await;
+
+                self.complete_command(cmd_id, &delegation.delegate, &output, true);
+                return output;
+            } else {
+                log::warn!(
+                    "[CommandRouter] General agent tried to delegate to invalid target '{}', treating as text",
+                    delegation.delegate
+                );
+            }
+        }
+
+        // Phase 3: No delegation — return general agent's response as text
+        let output = self.parse_output("general", &session.result).await;
+        self.complete_command(cmd_id, "general", &output, false);
+        output
+    }
+
+    /// Route directly to a specific agent, bypassing the orchestrator.
+    async fn route_direct(&self, capability: &str, command: &Command) -> Result<CommandOutput, String> {
+        let agent_id = self.registry.get_agent_id(capability)
             .or_else(|| {
                 log::info!("[CommandRouter] No agent for '{}', falling back to any available agent", capability);
                 self.registry.get_any_agent_id()
             })
             .ok_or_else(|| "No agents available. Sync your Starflask agents first.".to_string())?;
 
-        // Log command
-        let cmd_id = self.db.log_starflask_command(
-            &capability,
-            None,
-            &command.message,
-        ).unwrap_or(0);
+        let cmd_id = self.db.log_starflask_command(capability, None, &command.message).unwrap_or(0);
 
         self.broadcaster.broadcast(GatewayEvent::new(
             "starflask.command_started",
             serde_json::json!({
                 "command_id": cmd_id,
-                "capability": &capability,
+                "capability": capability,
                 "message": &command.message,
             }),
         ));
 
-        // Dispatch
         let session = if let Some(hook) = &command.hook {
             let payload = command.payload.clone().unwrap_or(serde_json::json!({}));
             self.starflask.fire_hook_and_wait(&agent_id, hook, payload).await
@@ -92,61 +171,36 @@ impl CommandRouter {
                 .map_err(|e| format!("Query failed: {}", e))?
         };
 
-        // Update command log with session_id
-        let _ = self.db.complete_starflask_command(
-            cmd_id,
-            "dispatched",
-            &serde_json::json!({ "session_id": session.id.to_string() }),
-        );
+        let output = self.parse_output(capability, &session.result).await;
+        self.complete_command(cmd_id, capability, &output, false);
+        output
+    }
 
-        // Parse result per capability
-        let output = self.parse_output(&capability, &session.result, &agent_id).await;
-
-        // Complete command log
+    /// Log completion and broadcast the result event.
+    fn complete_command(
+        &self,
+        cmd_id: i64,
+        capability: &str,
+        output: &Result<CommandOutput, String>,
+        delegated: bool,
+    ) {
         let status = if output.is_ok() { "completed" } else { "failed" };
-        let result_data = match &output {
+        let result_data = match output {
             Ok(o) => serde_json::to_value(o).unwrap_or(Value::Null),
             Err(e) => serde_json::json!({ "error": e }),
         };
         let _ = self.db.complete_starflask_command(cmd_id, status, &result_data);
 
-        // Broadcast result
         self.broadcaster.broadcast(GatewayEvent::new(
             "starflask.command_completed",
             serde_json::json!({
                 "command_id": cmd_id,
-                "capability": &capability,
+                "capability": capability,
                 "status": status,
+                "delegated": delegated,
                 "result": &result_data,
             }),
         ));
-
-        output
-    }
-
-    /// Keyword heuristic for capability detection.
-    fn detect_capability(&self, message: &str) -> String {
-        let lower = message.to_lowercase();
-
-        let crypto_keywords = ["swap", "bridge", "send", "transfer", "wallet", "balance", "token", "eth", "usdc", "address"];
-        let image_keywords = ["image", "picture", "photo", "draw", "illustration", "art", "generate an image", "create an image"];
-        let video_keywords = ["video", "clip", "animate", "animation", "footage"];
-        let social_keywords = ["tweet", "post", "twitter", "x.com"];
-
-        if crypto_keywords.iter().any(|kw| lower.contains(kw)) {
-            return "crypto".to_string();
-        }
-        if image_keywords.iter().any(|kw| lower.contains(kw)) {
-            return "image_gen".to_string();
-        }
-        if video_keywords.iter().any(|kw| lower.contains(kw)) {
-            return "video_gen".to_string();
-        }
-        if social_keywords.iter().any(|kw| lower.contains(kw)) {
-            return "social_media".to_string();
-        }
-
-        "general".to_string()
     }
 
     /// Parse session result into typed output based on capability.
@@ -154,13 +208,11 @@ impl CommandRouter {
         &self,
         capability: &str,
         result: &Option<Value>,
-        _agent_id: &Uuid,
     ) -> Result<CommandOutput, String> {
         match capability {
             "crypto" => {
                 let instructions = starflask_bridge::parse_session_result(result);
                 if instructions.is_empty() {
-                    // No crypto instructions — treat as text response
                     let text = starflask_bridge::parse_text_result(result);
                     return Ok(CommandOutput::TextResponse { text });
                 }
@@ -191,13 +243,7 @@ impl CommandRouter {
                 Ok(CommandOutput::MediaGeneration { urls, media_type: "video".to_string() })
             }
 
-            "social_media" => {
-                let (post_url, confirmation) = starflask_bridge::parse_social_result(result);
-                Ok(CommandOutput::SocialPost { post_url, confirmation })
-            }
-
             _ => {
-                // General or unknown — return as text or raw
                 let text = starflask_bridge::parse_text_result(result);
                 if text.is_empty() {
                     Ok(CommandOutput::Raw { data: result.clone().unwrap_or(Value::Null) })

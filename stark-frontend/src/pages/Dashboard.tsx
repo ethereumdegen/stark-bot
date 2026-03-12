@@ -54,7 +54,8 @@ export default function Dashboard() {
     crypto: '/icons/wallet.svg',
     image_gen: '/icons/image_generation.svg',
     video_gen: '/icons/video_generation.svg',
-    social_media: '/icons/twitter.svg',
+    discord_moderator: '/icons/erc20.svg',
+    telegram_moderator: '/icons/erc20.svg',
     general: '/icons/erc20.svg',
   };
 
@@ -62,7 +63,8 @@ export default function Dashboard() {
     crypto: 'text-amber-400 bg-amber-500/20',
     image_gen: 'text-pink-400 bg-pink-500/20',
     video_gen: 'text-purple-400 bg-purple-500/20',
-    social_media: 'text-blue-400 bg-blue-500/20',
+    discord_moderator: 'text-indigo-400 bg-indigo-500/20',
+    telegram_moderator: 'text-sky-400 bg-sky-500/20',
     general: 'text-green-400 bg-green-500/20',
   };
 

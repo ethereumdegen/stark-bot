@@ -147,11 +147,48 @@ impl AgentRegistry {
         let mut provisioned = Vec::new();
 
         for agent_seed in &seed.agents {
-            // Skip if already in DB
-            if let Ok(Some(_)) = self.db.get_starflask_agent(&agent_seed.capability) {
+            // Check if this capability already exists in DB
+            let existing = self.db.get_starflask_agent(&agent_seed.capability).ok().flatten();
+
+            if let Some(ref existing_agent) = existing {
+                // Agent exists — check if it already has packs installed
+                if !existing_agent.pack_hashes.is_empty() {
+                    continue;
+                }
+                // Agent was synced without packs — install seed packs on it
+                log::info!(
+                    "[AgentRegistry] Installing seed packs on existing agent: {} ({})",
+                    agent_seed.name, agent_seed.capability
+                );
+                if let Ok(agent_id) = Uuid::parse_str(&existing_agent.agent_id) {
+                    for hash in &agent_seed.pack_hashes {
+                        if let Err(e) = self.starflask.install_agent_pack(&agent_id, hash).await {
+                            log::warn!("[AgentRegistry] Failed to install pack {} on '{}': {}", hash, agent_seed.name, e);
+                        }
+                    }
+                    // Update description too if it was empty
+                    if existing_agent.description.is_empty() {
+                        let _ = self.starflask.update_agent(&agent_id, None, Some(&agent_seed.description)).await;
+                    }
+                    // Update DB row with pack hashes and provisioned status
+                    let _ = self.db.upsert_starflask_agent(
+                        &agent_seed.capability, &agent_id, &agent_seed.name,
+                        &agent_seed.description, &agent_seed.pack_hashes, "provisioned",
+                    );
+                    provisioned.push(agent_seed.capability.clone());
+                    self.broadcaster.broadcast(GatewayEvent::new(
+                        "starflask.agent_provisioned",
+                        serde_json::json!({
+                            "capability": &agent_seed.capability,
+                            "agent_id": agent_id.to_string(),
+                            "name": &agent_seed.name,
+                        }),
+                    ));
+                }
                 continue;
             }
 
+            // No existing agent — create a new one
             log::info!("[AgentRegistry] Provisioning agent: {} ({})", agent_seed.name, agent_seed.capability);
 
             let agent = match self.starflask.create_agent(&agent_seed.name).await {
@@ -270,8 +307,10 @@ impl AgentRegistry {
             "image_gen".to_string()
         } else if name_lower.contains("video") || name_lower.contains("clip") {
             "video_gen".to_string()
-        } else if name_lower.contains("social") || name_lower.contains("twitter") || name_lower.contains("x.com") {
-            "social_media".to_string()
+        } else if name_lower.contains("discord") {
+            "discord_moderator".to_string()
+        } else if name_lower.contains("telegram") {
+            "telegram_moderator".to_string()
         } else {
             "general".to_string()
         }

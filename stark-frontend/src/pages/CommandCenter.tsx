@@ -27,12 +27,11 @@ interface CommandOutput {
 }
 
 const CAPABILITIES = [
-  { value: '', label: 'Auto-detect' },
+  { value: '', label: 'Auto (AI-routed)' },
+  { value: 'general', label: 'General' },
   { value: 'crypto', label: 'Crypto' },
   { value: 'image_gen', label: 'Image Generation' },
   { value: 'video_gen', label: 'Video Generation' },
-  { value: 'social_media', label: 'Social Media' },
-  { value: 'general', label: 'General' },
 ];
 
 export default function CommandCenter() {
@@ -75,7 +74,8 @@ export default function CommandCenter() {
     crypto: 'bg-amber-500/20 text-amber-400',
     image_gen: 'bg-pink-500/20 text-pink-400',
     video_gen: 'bg-purple-500/20 text-purple-400',
-    social_media: 'bg-blue-500/20 text-blue-400',
+    discord_moderator: 'bg-indigo-500/20 text-indigo-400',
+    telegram_moderator: 'bg-sky-500/20 text-sky-400',
     general: 'bg-green-500/20 text-green-400',
   };
 
@@ -151,14 +151,6 @@ export default function CommandCenter() {
                   {lastResult.urls.map((url, i) => (
                     <a key={i} href={url} target="_blank" rel="noopener noreferrer" className="text-stark-400 text-sm hover:underline block truncate">{url}</a>
                   ))}
-                </div>
-              )}
-              {lastResult.type === 'SocialPost' && (
-                <div>
-                  <p className="text-white text-sm">{lastResult.confirmation}</p>
-                  {lastResult.post_url && (
-                    <a href={lastResult.post_url} target="_blank" rel="noopener noreferrer" className="text-stark-400 text-sm hover:underline mt-1 block">{lastResult.post_url}</a>
-                  )}
                 </div>
               )}
               {(lastResult.type === 'CryptoExecution' || lastResult.type === 'Raw') && (

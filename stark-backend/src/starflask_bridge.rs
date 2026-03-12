@@ -135,6 +135,74 @@ pub fn parse_social_result(result: &Option<Value>) -> (Option<String>, String) {
     (post_url, confirmation)
 }
 
+/// A delegation instruction from the general agent to a specialist.
+#[derive(Debug, Clone)]
+pub struct DelegationInstruction {
+    pub delegate: String,
+    pub message: String,
+}
+
+/// Check if a Starflask session result contains a delegation instruction.
+///
+/// The general agent may return `{"delegate": "<capability>", "message": "..."}` either
+/// as the structured result directly, or embedded as JSON within a text field.
+pub fn parse_delegation_result(result: &Option<Value>) -> Option<DelegationInstruction> {
+    let value = result.as_ref()?;
+
+    // Try direct JSON: result is {"delegate": "...", "message": "..."}
+    if let Some(instr) = try_parse_delegation(value) {
+        return Some(instr);
+    }
+
+    // Try nested objects that might directly contain delegation keys
+    for key in &["structured_data"] {
+        if let Some(obj) = value.get(key) {
+            if let Some(instr) = try_parse_delegation(obj) {
+                return Some(instr);
+            }
+        }
+    }
+
+    // Try extracting from text fields — the LLM might wrap JSON in prose
+    for key in &["text", "message", "response", "summary", "structured_data"] {
+        if let Some(text) = value.get(key).and_then(|v| v.as_str()) {
+            if let Some(instr) = extract_delegation_from_text(text) {
+                return Some(instr);
+            }
+        }
+    }
+
+    // Try if the result itself is a string containing JSON
+    if let Some(text) = value.as_str() {
+        if let Some(instr) = extract_delegation_from_text(text) {
+            return Some(instr);
+        }
+    }
+
+    None
+}
+
+fn try_parse_delegation(value: &Value) -> Option<DelegationInstruction> {
+    let delegate = value.get("delegate")?.as_str()?;
+    let message = value.get("message").and_then(|v| v.as_str()).unwrap_or("");
+    Some(DelegationInstruction {
+        delegate: delegate.to_string(),
+        message: message.to_string(),
+    })
+}
+
+fn extract_delegation_from_text(text: &str) -> Option<DelegationInstruction> {
+    // Find first '{' and last '}' to extract embedded JSON
+    let start = text.find('{')?;
+    let end = text.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    let json_str = &text[start..=end];
+    let parsed: Value = serde_json::from_str(json_str).ok()?;
+    try_parse_delegation(&parsed)
+}
+
 /// Extract plain text from a session result.
 pub fn parse_text_result(result: &Option<Value>) -> String {
     let Some(value) = result else {

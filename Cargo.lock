@@ -4103,9 +4103,9 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "starflask"
-version = "0.1.0"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c7d83dbb7be51eb42a81ee08f19ef51f9a9f07da0a32f10057befb99f99ac4a"
+checksum = "3ae5743adfcfd70bde7b8f32105cafa521ea486b23f9fb8faac3bea76369fed5"
 dependencies = [
  "reqwest 0.12.28",
  "serde",
