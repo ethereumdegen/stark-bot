@@ -560,6 +560,21 @@ export default function StarflaskAgents() {
                 </div>
               </div>
 
+              {/* Pack hashes */}
+              {selectedAgent.pack_hashes.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-4">
+                  {selectedAgent.pack_hashes.map((hash) => (
+                    <span
+                      key={hash}
+                      className="inline-flex items-center px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-[10px] font-mono text-slate-500"
+                      title={hash}
+                    >
+                      pack:{hash.slice(0, 12)}…
+                    </span>
+                  ))}
+                </div>
+              )}
+
               {/* Tabs */}
               <div className="flex gap-1 mb-4 bg-slate-800/50 rounded-lg p-1">
                 {([
