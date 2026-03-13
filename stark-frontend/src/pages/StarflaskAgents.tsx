@@ -564,13 +564,14 @@ export default function StarflaskAgents() {
               {selectedAgent.pack_hashes.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mb-4">
                   {selectedAgent.pack_hashes.map((hash) => (
-                    <span
+                    <button
                       key={hash}
-                      className="inline-flex items-center px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-[10px] font-mono text-slate-500"
-                      title={hash}
+                      className="inline-flex items-center px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-[10px] font-mono text-slate-500 cursor-pointer transition-colors hover:bg-slate-700 hover:text-slate-300"
+                      title={`Click to copy: ${hash}`}
+                      onClick={() => navigator.clipboard.writeText(hash)}
                     >
                       pack:{hash.slice(0, 12)}…
-                    </span>
+                    </button>
                   ))}
                 </div>
               )}
