@@ -49,15 +49,16 @@ function parseMarkdown(text: string): string {
     '<a href="$2" target="_blank" rel="noopener noreferrer"><img src="$2" alt="$1" loading="lazy" class="max-w-full rounded-lg my-2 cursor-pointer hover:opacity-90 transition-opacity" /></a>'
   );
 
-  // Auto-link URLs (after HTML escaping, before line breaks)
+  // Auto-link URLs that aren't already inside an HTML attribute (href="..." or src="...")
   parsed = parsed.replace(
-    /(https?:\/\/[^\s<>"'`)\]]+)/g,
+    /(?<!["=])(https?:\/\/[^\s<>"'`)\]]+)/g,
     '<a href="$1" target="_blank" rel="noopener noreferrer" class="text-cyan-400 hover:text-cyan-300 underline break-all">$1</a>'
   );
 
   // Auto-detect linked image URLs and render inline
+  // Match URLs ending in image extensions OR from known image CDNs (fal.media, replicate.delivery)
   parsed = parsed.replace(
-    /<a href="(https?:\/\/[^\s"]+\.(?:png|svg|jpe?g|gif|webp))"[^>]*>[^<]*<\/a>/gi,
+    /<a href="(https?:\/\/[^\s"]+(?:\.(?:png|svg|jpe?g|gif|webp)|fal\.media\/files\/[^\s"]+))"[^>]*>[^<]*<\/a>/gi,
     '<a href="$1" target="_blank" rel="noopener noreferrer"><img src="$1" alt="image" loading="lazy" class="max-w-full rounded-lg my-2 cursor-pointer hover:opacity-90 transition-opacity" /></a>'
   );
 
