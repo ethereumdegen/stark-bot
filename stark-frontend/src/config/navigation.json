@@ -4,7 +4,7 @@
       "label": null,
       "items": [
         { "to": "/dashboard", "icon": "Home", "label": "Dashboard" },
-        { "to": "/command-center", "icon": "Send", "label": "Command Center" },
+        { "to": "/command-center", "icon": "Send", "label": "Chat" },
         { "to": "/starflask-agents", "icon": "Bot", "label": "Agents" },
         { "to": "/crypto-transactions", "icon": "Wallet", "label": "Transactions" }
       ]

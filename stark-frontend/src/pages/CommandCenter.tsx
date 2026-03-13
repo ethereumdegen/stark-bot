@@ -222,7 +222,7 @@ export default function CommandCenter() {
     <div className="flex flex-col h-[calc(100vh-4rem)]">
       {/* Header */}
       <div className="px-6 py-4 border-b border-slate-700/50">
-        <h1 className="text-lg font-bold text-white">Command Center</h1>
+        <h1 className="text-lg font-bold text-white">Chat</h1>
         <p className="text-slate-500 text-xs">Chat with your Starflask orchestrator</p>
       </div>
 
