@@ -56,50 +56,9 @@ impl AgentRegistry {
 
         let mut synced = Vec::new();
         let existing = self.db.list_starflask_agents().unwrap_or_default();
-        let existing_agent_ids: Vec<String> = existing.iter().map(|a| a.agent_id.clone()).collect();
-
-        for agent in &agents {
-            // Skip if already tracked
-            if existing_agent_ids.contains(&agent.id.to_string()) {
-                continue;
-            }
-
-            // Infer capability from agent name
-            let name_lower = agent.name.to_lowercase();
-            let capability = self.infer_capability(&name_lower);
-
-            // If this capability already exists, use a unique slug
-            let final_capability = if self.db.get_starflask_agent(&capability).ok().flatten().is_some() {
-                format!("{}_{}", capability, &agent.id.to_string()[..8])
-            } else {
-                capability
-            };
-
-            let description = agent.description.as_deref().unwrap_or("");
-
-            self.db.upsert_starflask_agent_str(
-                &final_capability,
-                &agent.id.to_string(),
-                &agent.name,
-                description,
-                &[],
-                "synced",
-            )?;
-
-            synced.push(final_capability.clone());
-
-            self.broadcaster.broadcast(GatewayEvent::new(
-                "starflask.agent_synced",
-                serde_json::json!({
-                    "capability": &final_capability,
-                    "agent_id": agent.id.to_string(),
-                    "name": &agent.name,
-                }),
-            ));
-        }
+        let remote_agent_ids: Vec<String> = agents.iter().map(|a| a.id.to_string()).collect();
 
         // Prune local agents that no longer exist remotely
-        let remote_agent_ids: Vec<String> = agents.iter().map(|a| a.id.to_string()).collect();
         for local in &existing {
             if !remote_agent_ids.contains(&local.agent_id) {
                 log::info!(
@@ -114,6 +73,77 @@ impl AgentRegistry {
                         "agent_id": &local.agent_id,
                     }),
                 ));
+            }
+        }
+
+        // Re-read after pruning
+        let existing = self.db.list_starflask_agents().unwrap_or_default();
+        let existing_agent_ids: Vec<String> = existing.iter().map(|a| a.agent_id.clone()).collect();
+
+        for agent in &agents {
+            // Skip if already tracked by agent_id
+            if existing_agent_ids.contains(&agent.id.to_string()) {
+                continue;
+            }
+
+            // Infer capability from agent name
+            let name_lower = agent.name.to_lowercase();
+            let capability = self.infer_capability(&name_lower);
+
+            // If this capability already exists with a DIFFERENT agent_id, update it
+            // rather than creating a slugged duplicate
+            let description = agent.description.as_deref().unwrap_or("");
+
+            if let Some(existing_agent) = self.db.get_starflask_agent(&capability).ok().flatten() {
+                if existing_agent.agent_id != agent.id.to_string() {
+                    log::info!(
+                        "[AgentRegistry] Updating capability '{}': {} -> {}",
+                        capability, existing_agent.agent_id, agent.id
+                    );
+                    self.db.upsert_starflask_agent_str(
+                        &capability,
+                        &agent.id.to_string(),
+                        &agent.name,
+                        description,
+                        &existing_agent.pack_hashes,
+                        "synced",
+                    )?;
+                    synced.push(capability);
+                    continue;
+                }
+            }
+
+            self.db.upsert_starflask_agent_str(
+                &capability,
+                &agent.id.to_string(),
+                &agent.name,
+                description,
+                &[],
+                "synced",
+            )?;
+
+            synced.push(capability.clone());
+
+            self.broadcaster.broadcast(GatewayEvent::new(
+                "starflask.agent_synced",
+                serde_json::json!({
+                    "capability": &capability,
+                    "agent_id": agent.id.to_string(),
+                    "name": &agent.name,
+                }),
+            ));
+        }
+
+        // Deduplicate: if multiple capabilities point to the same agent_id, keep only the first
+        let all_agents = self.db.list_starflask_agents().unwrap_or_default();
+        let mut seen_ids = std::collections::HashSet::new();
+        for agent in &all_agents {
+            if !seen_ids.insert(agent.agent_id.clone()) {
+                log::info!(
+                    "[AgentRegistry] Removing duplicate capability '{}' (agent_id {} already mapped)",
+                    agent.capability, agent.agent_id
+                );
+                let _ = self.db.delete_starflask_agent(&agent.capability);
             }
         }
 
@@ -170,44 +200,57 @@ impl AgentRegistry {
             let existing = self.db.get_starflask_agent(&agent_seed.capability).ok().flatten();
 
             if let Some(ref existing_agent) = existing {
-                // Agent exists — check if it already has packs installed
-                if !existing_agent.pack_hashes.is_empty() {
+                // Verify the agent still exists on Starflask
+                let agent_exists = if let Ok(agent_id) = Uuid::parse_str(&existing_agent.agent_id) {
+                    self.starflask.get_agent(&agent_id).await.is_ok()
+                } else {
+                    false
+                };
+
+                if !agent_exists {
+                    // Ghost agent — delete local row and fall through to create new
+                    log::info!(
+                        "[AgentRegistry] Agent '{}' no longer exists on Starflask, re-provisioning",
+                        agent_seed.capability
+                    );
+                    let _ = self.db.delete_starflask_agent(&agent_seed.capability);
+                } else if !existing_agent.pack_hashes.is_empty() {
+                    // Already fully provisioned
+                    continue;
+                } else {
+                    // Agent exists but has no packs — install seed packs on it
+                    log::info!(
+                        "[AgentRegistry] Installing seed packs on existing agent: {} ({})",
+                        agent_seed.name, agent_seed.capability
+                    );
+                    if let Ok(agent_id) = Uuid::parse_str(&existing_agent.agent_id) {
+                        for hash in &agent_seed.pack_hashes {
+                            if let Err(e) = self.starflask.install_agent_pack(&agent_id, hash).await {
+                                log::warn!("[AgentRegistry] Failed to install pack {} on '{}': {}", hash, agent_seed.name, e);
+                            }
+                        }
+                        if existing_agent.description.is_empty() {
+                            let _ = self.starflask.update_agent(&agent_id, None, Some(&agent_seed.description)).await;
+                        }
+                        let _ = self.db.upsert_starflask_agent(
+                            &agent_seed.capability, &agent_id, &agent_seed.name,
+                            &agent_seed.description, &agent_seed.pack_hashes, "provisioned",
+                        );
+                        provisioned.push(agent_seed.capability.clone());
+                        self.broadcaster.broadcast(GatewayEvent::new(
+                            "starflask.agent_provisioned",
+                            serde_json::json!({
+                                "capability": &agent_seed.capability,
+                                "agent_id": agent_id.to_string(),
+                                "name": &agent_seed.name,
+                            }),
+                        ));
+                    }
                     continue;
                 }
-                // Agent was synced without packs — install seed packs on it
-                log::info!(
-                    "[AgentRegistry] Installing seed packs on existing agent: {} ({})",
-                    agent_seed.name, agent_seed.capability
-                );
-                if let Ok(agent_id) = Uuid::parse_str(&existing_agent.agent_id) {
-                    for hash in &agent_seed.pack_hashes {
-                        if let Err(e) = self.starflask.install_agent_pack(&agent_id, hash).await {
-                            log::warn!("[AgentRegistry] Failed to install pack {} on '{}': {}", hash, agent_seed.name, e);
-                        }
-                    }
-                    // Update description too if it was empty
-                    if existing_agent.description.is_empty() {
-                        let _ = self.starflask.update_agent(&agent_id, None, Some(&agent_seed.description)).await;
-                    }
-                    // Update DB row with pack hashes and provisioned status
-                    let _ = self.db.upsert_starflask_agent(
-                        &agent_seed.capability, &agent_id, &agent_seed.name,
-                        &agent_seed.description, &agent_seed.pack_hashes, "provisioned",
-                    );
-                    provisioned.push(agent_seed.capability.clone());
-                    self.broadcaster.broadcast(GatewayEvent::new(
-                        "starflask.agent_provisioned",
-                        serde_json::json!({
-                            "capability": &agent_seed.capability,
-                            "agent_id": agent_id.to_string(),
-                            "name": &agent_seed.name,
-                        }),
-                    ));
-                }
-                continue;
             }
 
-            // No existing agent — create a new one
+            // No existing agent (or ghost was pruned) — create a new one
             log::info!("[AgentRegistry] Provisioning agent: {} ({})", agent_seed.name, agent_seed.capability);
 
             let agent = match self.starflask.create_agent(&agent_seed.name).await {
