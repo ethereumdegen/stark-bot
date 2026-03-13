@@ -1,7 +1,9 @@
 //! Agent registry — syncs Starflask agents and manages local capability mappings.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use serde_json::Value;
 use starflask::Starflask;
 use uuid::Uuid;
 
@@ -9,6 +11,25 @@ use crate::db::Database;
 use crate::gateway::events::EventBroadcaster;
 use crate::gateway::protocol::GatewayEvent;
 use crate::models::StarflaskSeed;
+
+/// Load the pack definition JSON for a capability from the seed-packs directory.
+///
+/// Returns the full JSON object (with `soul`, `personas`, `pack` fields)
+/// ready to be sent to `Starflask::provision_pack`.
+fn load_pack_definition(capability: &str) -> Option<Value> {
+    let candidates = [
+        PathBuf::from(format!("seed-packs/packs/{}.json", capability)),
+        PathBuf::from(format!("../seed-packs/packs/{}.json", capability)),
+    ];
+    for path in &candidates {
+        if path.exists() {
+            let content = std::fs::read_to_string(path).ok()?;
+            let value: Value = serde_json::from_str(&content).ok()?;
+            return Some(value);
+        }
+    }
+    None
+}
 
 pub struct AgentRegistry {
     starflask: Arc<Starflask>,
@@ -218,16 +239,14 @@ impl AgentRegistry {
                     // Already fully provisioned
                     continue;
                 } else {
-                    // Agent exists but has no packs — install seed packs on it
+                    // Agent exists but has no packs — provision pack on it
                     log::info!(
                         "[AgentRegistry] Installing seed packs on existing agent: {} ({})",
                         agent_seed.name, agent_seed.capability
                     );
                     if let Ok(agent_id) = Uuid::parse_str(&existing_agent.agent_id) {
-                        for hash in &agent_seed.pack_hashes {
-                            if let Err(e) = self.starflask.install_agent_pack(&agent_id, hash).await {
-                                log::warn!("[AgentRegistry] Failed to install pack {} on '{}': {}", hash, agent_seed.name, e);
-                            }
+                        if let Err(e) = self.provision_or_install_pack(&agent_id, &agent_seed.capability, &agent_seed.pack_hashes).await {
+                            log::warn!("[AgentRegistry] Failed to install pack on '{}': {}", agent_seed.name, e);
                         }
                         if existing_agent.description.is_empty() {
                             let _ = self.starflask.update_agent(&agent_id, None, Some(&agent_seed.description)).await;
@@ -265,10 +284,8 @@ impl AgentRegistry {
                 log::warn!("[AgentRegistry] Failed to set description for '{}': {}", agent_seed.name, e);
             }
 
-            for hash in &agent_seed.pack_hashes {
-                if let Err(e) = self.starflask.install_agent_pack(&agent.id, hash).await {
-                    log::warn!("[AgentRegistry] Failed to install pack {} on '{}': {}", hash, agent_seed.name, e);
-                }
+            if let Err(e) = self.provision_or_install_pack(&agent.id, &agent_seed.capability, &agent_seed.pack_hashes).await {
+                log::error!("[AgentRegistry] Failed to install pack on '{}': {}", agent_seed.name, e);
             }
 
             if let Err(e) = self.db.upsert_starflask_agent(
@@ -296,6 +313,52 @@ impl AgentRegistry {
         }
 
         Ok(provisioned)
+    }
+
+    /// Provision or install a pack on an agent.
+    ///
+    /// Prefers `provision_pack` (sends full pack definition from seed-packs JSON)
+    /// because it also sets `axoniac_agent_hash` + `inference_source` on the
+    /// Starflask agent record. Falls back to `install_agent_pack` (hash-only)
+    /// if the pack definition file isn't available.
+    async fn provision_or_install_pack(
+        &self,
+        agent_id: &Uuid,
+        capability: &str,
+        pack_hashes: &[String],
+    ) -> Result<(), String> {
+        // Try provision_pack with full definition first
+        if let Some(pack_def) = load_pack_definition(capability) {
+            log::info!("[AgentRegistry] Using provision_pack for '{}' (full definition)", capability);
+            match self.starflask.provision_pack(agent_id, pack_def).await {
+                Ok(result) => {
+                    log::info!(
+                        "[AgentRegistry] Pack provisioned on '{}': hash={}",
+                        capability,
+                        result.content_hash
+                    );
+                    return Ok(());
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[AgentRegistry] provision_pack failed for '{}': {} — falling back to install_agent_pack",
+                        capability, e
+                    );
+                }
+            }
+        }
+
+        // Fallback: install by hash
+        for hash in pack_hashes {
+            if let Err(e) = self.starflask.install_agent_pack(agent_id, hash).await {
+                log::error!(
+                    "[AgentRegistry] install_agent_pack failed for '{}' hash {}: {}",
+                    capability, hash, e
+                );
+                return Err(format!("Pack install failed for hash {}: {}", hash, e));
+            }
+        }
+        Ok(())
     }
 
     /// Look up agent_id for a capability.
@@ -360,22 +423,8 @@ impl AgentRegistry {
 
         let _ = self.starflask.update_agent(&agent.id, None, Some(&agent_seed.description)).await;
 
-        let mut installed_packs = Vec::new();
-        for hash in &agent_seed.pack_hashes {
-            match self.starflask.install_agent_pack(&agent.id, hash).await {
-                Ok(_) => installed_packs.push(hash.clone()),
-                Err(e) => {
-                    log::error!(
-                        "[AgentRegistry] Failed to install pack {} on '{}': {} — agent was created but is missing packs!",
-                        hash, agent_seed.name, e
-                    );
-                    return Err(format!(
-                        "Agent created (id={}) but pack install failed for hash {}: {}",
-                        agent.id, hash, e
-                    ));
-                }
-            }
-        }
+        self.provision_or_install_pack(&agent.id, capability, &agent_seed.pack_hashes).await
+            .map_err(|e| format!("Agent created (id={}) but pack install failed: {}", agent.id, e))?;
 
         self.db.upsert_starflask_agent(
             capability, &agent.id, &agent_seed.name,
