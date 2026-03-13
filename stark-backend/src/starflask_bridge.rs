@@ -4,7 +4,7 @@
 
 pub use starflask::Starflask;
 
-use crate::crypto_executor::{CryptoInstruction, ExecutionResult};
+use crate::crypto_executor::CryptoInstruction;
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -83,13 +83,6 @@ pub fn parse_session_result(result: &Option<Value>) -> Vec<CryptoInstruction> {
     vec![]
 }
 
-/// Format execution results for reporting back to Starflask.
-pub fn format_results(results: &[ExecutionResult]) -> Value {
-    serde_json::json!({
-        "results": results,
-    })
-}
-
 /// Extract URLs from free-form text by whitespace-splitting and checking for URL prefixes.
 pub fn extract_urls_from_text(text: &str) -> Vec<String> {
     text.split_whitespace()
@@ -152,95 +145,6 @@ pub fn parse_media_result(result: &Option<Value>, result_summary: Option<&str>) 
     }
 
     vec![]
-}
-
-/// Extract social media post result (post URL + confirmation text).
-pub fn parse_social_result(result: &Option<Value>) -> (Option<String>, String) {
-    let Some(value) = result else {
-        return (None, "No result".to_string());
-    };
-
-    let post_url = value.get("post_url")
-        .or_else(|| value.get("url"))
-        .and_then(|v| v.as_str())
-        .map(String::from);
-
-    let confirmation = value.get("confirmation")
-        .or_else(|| value.get("message"))
-        .or_else(|| value.get("text"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("Post submitted")
-        .to_string();
-
-    (post_url, confirmation)
-}
-
-/// A delegation instruction from the general agent to a specialist.
-#[derive(Debug, Clone)]
-pub struct DelegationInstruction {
-    pub delegate: String,
-    pub message: String,
-}
-
-/// Check if a Starflask session result contains a delegation instruction.
-///
-/// The general agent may return `{"delegate": "<capability>", "message": "..."}` either
-/// as the structured result directly, or embedded as JSON within a text field.
-pub fn parse_delegation_result(result: &Option<Value>) -> Option<DelegationInstruction> {
-    let value = result.as_ref()?;
-
-    // Try direct JSON: result is {"delegate": "...", "message": "..."}
-    if let Some(instr) = try_parse_delegation(value) {
-        return Some(instr);
-    }
-
-    // Try nested objects that might directly contain delegation keys
-    for key in &["structured_data"] {
-        if let Some(obj) = value.get(key) {
-            if let Some(instr) = try_parse_delegation(obj) {
-                return Some(instr);
-            }
-        }
-    }
-
-    // Try extracting from text fields — the LLM might wrap JSON in prose
-    for key in &["text", "message", "response", "summary", "structured_data"] {
-        if let Some(text) = value.get(key).and_then(|v| v.as_str()) {
-            if let Some(instr) = extract_delegation_from_text(text) {
-                return Some(instr);
-            }
-        }
-    }
-
-    // Try if the result itself is a string containing JSON
-    if let Some(text) = value.as_str() {
-        if let Some(instr) = extract_delegation_from_text(text) {
-            return Some(instr);
-        }
-    }
-
-    None
-}
-
-fn try_parse_delegation(value: &Value) -> Option<DelegationInstruction> {
-    let delegate = value.get("delegate")?.as_str()?;
-    let message = value.get("message").and_then(|v| v.as_str()).unwrap_or("");
-    Some(DelegationInstruction {
-        delegate: delegate.to_string(),
-        message: message.to_string(),
-    })
-}
-
-fn extract_delegation_from_text(text: &str) -> Option<DelegationInstruction> {
-    // Find first '{' and last '}' to extract embedded JSON
-    let start = text.find('{')?;
-    let end = text.rfind('}')?;
-    if end <= start {
-        return None;
-    }
-    let json_str = &text[start..=end];
-    let parsed: Value = serde_json::from_str(json_str).ok()?;
-    try_parse_delegation(&parsed)
 }
 
 /// Extract plain text from a session result.

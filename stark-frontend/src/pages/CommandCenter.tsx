@@ -1,8 +1,11 @@
-import { useState, useCallback } from 'react';
-import { Send, Clock, ChevronDown, ChevronUp } from 'lucide-react';
-import Card, { CardContent } from '@/components/ui/Card';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { Send, ChevronDown } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useApi } from '@/hooks/useApi';
+import { useGateway } from '@/hooks/useGateway';
+import ChatMessageComponent from '@/components/chat/ChatMessage';
+import TypingIndicator from '@/components/chat/TypingIndicator';
+import type { ChatMessage } from '@/types';
 
 interface CommandLog {
   id: number;
@@ -10,7 +13,7 @@ interface CommandLog {
   session_id?: string;
   message: string;
   status: string;
-  result?: unknown;
+  result?: CommandOutput;
   created_at: string;
   updated_at: string;
 }
@@ -27,186 +30,312 @@ interface CommandOutput {
 }
 
 const CAPABILITIES = [
-  { value: '', label: 'Auto (AI-routed)' },
+  { value: '', label: 'Orchestrator' },
   { value: 'general', label: 'General' },
   { value: 'crypto', label: 'Crypto' },
-  { value: 'image_gen', label: 'Image Generation' },
-  { value: 'video_gen', label: 'Video Generation' },
+  { value: 'image_gen', label: 'Image Gen' },
+  { value: 'video_gen', label: 'Video Gen' },
 ];
 
-export default function CommandCenter() {
-  const [message, setMessage] = useState('');
-  const [capability, setCapability] = useState('');
-  const [hook, setHook] = useState('');
-  const [sending, setSending] = useState(false);
-  const [lastResult, setLastResult] = useState<CommandOutput | null>(null);
-  const [lastError, setLastError] = useState<string | null>(null);
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+const capabilityColor: Record<string, string> = {
+  '': 'bg-stark-500/20 text-stark-400 border-stark-500/30',
+  crypto: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+  image_gen: 'bg-pink-500/20 text-pink-400 border-pink-500/30',
+  video_gen: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
+  general: 'bg-green-500/20 text-green-400 border-green-500/30',
+};
 
-  const { data: commands, refetch: refetchCommands } = useApi<CommandLog[]>('/starflask/commands?limit=50');
+function formatCommandResult(result: CommandOutput): string {
+  if (result.type === 'TextResponse' && result.text) {
+    return result.text;
+  }
+  if (result.type === 'MediaGeneration' && result.urls) {
+    const lines = result.urls.map((url) => `![generated](${url})`);
+    return lines.join('\n');
+  }
+  return JSON.stringify(result, null, 2);
+}
+
+function commandsToMessages(commands: CommandLog[]): ChatMessage[] {
+  const msgs: ChatMessage[] = [];
+  // Commands come newest-first; reverse so oldest is first
+  const sorted = [...commands].reverse();
+  for (const cmd of sorted) {
+    msgs.push({
+      id: `cmd-user-${cmd.id}`,
+      role: 'user',
+      content: cmd.message,
+      timestamp: new Date(cmd.created_at),
+    });
+    if (cmd.status === 'failed') {
+      msgs.push({
+        id: `cmd-err-${cmd.id}`,
+        role: 'error',
+        content: cmd.result ? formatCommandResult(cmd.result) : 'Command failed',
+        timestamp: new Date(cmd.updated_at),
+      });
+    } else if (cmd.result) {
+      msgs.push({
+        id: `cmd-resp-${cmd.id}`,
+        role: 'assistant',
+        content: formatCommandResult(cmd.result),
+        timestamp: new Date(cmd.updated_at),
+      });
+    }
+  }
+  return msgs;
+}
+
+export default function CommandCenter() {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState('');
+  const [capability, setCapability] = useState('');
+  const [sending, setSending] = useState(false);
+  const [showCapPicker, setShowCapPicker] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const capPickerRef = useRef<HTMLDivElement>(null);
+
+  const { data: commands } = useApi<CommandLog[]>('/starflask/commands?limit=50');
+  const { on, off } = useGateway();
+
+  // Load history on mount
+  useEffect(() => {
+    if (commands) {
+      setMessages(commandsToMessages(commands));
+    }
+  }, [commands]);
+
+  // Auto-scroll to bottom
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [messages, sending]);
+
+  // Close capability picker on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (capPickerRef.current && !capPickerRef.current.contains(e.target as Node)) {
+        setShowCapPicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  // WebSocket events
+  useEffect(() => {
+    const onDelegation = (data: unknown) => {
+      const d = data as { capability?: string };
+      if (d.capability) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `delegation-${Date.now()}`,
+            role: 'system',
+            content: `Routing to ${d.capability}...`,
+            timestamp: new Date(),
+          },
+        ]);
+      }
+    };
+
+    const onStarted = () => {
+      // typing indicator is shown via `sending` state already
+    };
+
+    const onCompleted = (data: unknown) => {
+      const d = data as { result?: CommandOutput; error?: string };
+      setSending(false);
+      if (d.error) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `ws-err-${Date.now()}`,
+            role: 'error',
+            content: d.error!,
+            timestamp: new Date(),
+          },
+        ]);
+      } else if (d.result) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `ws-resp-${Date.now()}`,
+            role: 'assistant',
+            content: formatCommandResult(d.result!),
+            timestamp: new Date(),
+          },
+        ]);
+      }
+    };
+
+    on('starflask.delegation', onDelegation);
+    on('starflask.command_started', onStarted);
+    on('starflask.command_completed', onCompleted);
+
+    return () => {
+      off('starflask.delegation', onDelegation);
+      off('starflask.command_started', onStarted);
+      off('starflask.command_completed', onCompleted);
+    };
+  }, [on, off]);
 
   const handleSend = useCallback(async () => {
-    if (!message.trim()) return;
+    const text = input.trim();
+    if (!text) return;
+
+    // Add user message immediately
+    const userMsg: ChatMessage = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: text,
+      timestamp: new Date(),
+    };
+    setMessages((prev) => [...prev, userMsg]);
+    setInput('');
     setSending(true);
-    setLastResult(null);
-    setLastError(null);
 
     try {
-      const body: Record<string, unknown> = { message };
+      const body: Record<string, unknown> = { message: text };
       if (capability) body.capability = capability;
-      if (hook) body.hook = hook;
 
       const result = await apiFetch<CommandOutput>('/starflask/command', {
         method: 'POST',
         body: JSON.stringify(body),
       });
-      setLastResult(result);
-      setMessage('');
-      refetchCommands();
+
+      // Only add response if we didn't get it from WebSocket already
+      // Use a small delay to let WS events arrive first
+      setTimeout(() => {
+        setSending((current) => {
+          if (current) {
+            // WS didn't deliver; use REST response
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `resp-${Date.now()}`,
+                role: 'assistant',
+                content: formatCommandResult(result),
+                timestamp: new Date(),
+              },
+            ]);
+            return false;
+          }
+          return current;
+        });
+      }, 300);
     } catch (e) {
-      setLastError(e instanceof Error ? e.message : 'Command failed');
-    } finally {
       setSending(false);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `err-${Date.now()}`,
+          role: 'error',
+          content: e instanceof Error ? e.message : 'Command failed',
+          timestamp: new Date(),
+        },
+      ]);
     }
-  }, [message, capability, hook, refetchCommands]);
+  }, [input, capability]);
 
-  const capabilityColor: Record<string, string> = {
-    crypto: 'bg-amber-500/20 text-amber-400',
-    image_gen: 'bg-pink-500/20 text-pink-400',
-    video_gen: 'bg-purple-500/20 text-purple-400',
-    discord_moderator: 'bg-indigo-500/20 text-indigo-400',
-    telegram_moderator: 'bg-sky-500/20 text-sky-400',
-    general: 'bg-green-500/20 text-green-400',
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
   };
 
-  const statusColor = (status: string) => {
-    if (status === 'completed') return 'text-green-400';
-    if (status === 'failed') return 'text-red-400';
-    return 'text-amber-400';
-  };
+  const selectedCap = CAPABILITIES.find((c) => c.value === capability) || CAPABILITIES[0];
 
   return (
-    <div className="p-8">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-white mb-1">Command Center</h1>
-        <p className="text-slate-400 text-sm">Send commands to your Starflask agents</p>
+    <div className="flex flex-col h-[calc(100vh-4rem)]">
+      {/* Header */}
+      <div className="px-6 py-4 border-b border-slate-700/50">
+        <h1 className="text-lg font-bold text-white">Command Center</h1>
+        <p className="text-slate-500 text-xs">Chat with your Starflask orchestrator</p>
       </div>
 
-      {/* Command Input */}
-      <Card>
-        <CardContent>
-          <div className="space-y-4">
-            <div>
-              <textarea
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-                placeholder="Enter a command... (e.g. 'what is my wallet address', 'generate an image of a sunset')"
-                className="w-full h-24 px-4 py-3 rounded-lg bg-slate-700/50 border border-slate-600 text-white placeholder-slate-500 focus:outline-none focus:border-stark-500/50 resize-none text-sm"
-              />
-            </div>
-            <div className="flex items-center gap-3 flex-wrap">
-              <select
-                value={capability}
-                onChange={(e) => setCapability(e.target.value)}
-                className="px-3 py-2 rounded-lg bg-slate-700 border border-slate-600 text-slate-300 text-sm focus:outline-none focus:border-stark-500/50"
-              >
-                {CAPABILITIES.map(c => (
-                  <option key={c.value} value={c.value}>{c.label}</option>
-                ))}
-              </select>
-              <input
-                type="text"
-                value={hook}
-                onChange={(e) => setHook(e.target.value)}
-                placeholder="Hook (optional)"
-                className="px-3 py-2 rounded-lg bg-slate-700 border border-slate-600 text-slate-300 text-sm placeholder-slate-500 focus:outline-none focus:border-stark-500/50 w-40"
-              />
-              <div className="flex-1" />
-              <button
-                onClick={handleSend}
-                disabled={sending || !message.trim()}
-                className="flex items-center gap-2 px-5 py-2 rounded-lg bg-stark-500 hover:bg-stark-600 text-white text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Send className="w-4 h-4" />
-                {sending ? 'Sending...' : 'Send Command'}
-              </button>
-            </div>
+      {/* Message area */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-4 space-y-1">
+        {messages.length === 0 && !sending && (
+          <div className="flex items-center justify-center h-full">
+            <p className="text-slate-600 text-sm">Send a command to get started</p>
           </div>
-        </CardContent>
-      </Card>
+        )}
+        {messages.map((msg) => (
+          <ChatMessageComponent
+            key={msg.id}
+            role={msg.role}
+            content={msg.content}
+            timestamp={msg.timestamp}
+          />
+        ))}
+        {sending && <TypingIndicator />}
+      </div>
 
-      {/* Last Result */}
-      {lastResult && (
-        <div className="mt-4">
-          <Card>
-            <CardContent>
-              <h3 className="text-sm font-medium text-slate-300 mb-2">Result</h3>
-              {lastResult.type === 'TextResponse' && (
-                <p className="text-white text-sm whitespace-pre-wrap">{lastResult.text}</p>
-              )}
-              {lastResult.type === 'MediaGeneration' && lastResult.urls && (
-                <div className="space-y-2">
-                  <p className="text-slate-400 text-xs">{lastResult.media_type} generated:</p>
-                  {lastResult.urls.map((url, i) => (
-                    <a key={i} href={url} target="_blank" rel="noopener noreferrer" className="text-stark-400 text-sm hover:underline block truncate">{url}</a>
-                  ))}
-                </div>
-              )}
-              {(lastResult.type === 'CryptoExecution' || lastResult.type === 'Raw') && (
-                <pre className="text-xs text-slate-400 overflow-auto max-h-64 whitespace-pre-wrap">
-                  {JSON.stringify(lastResult, null, 2)}
-                </pre>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {lastError && (
-        <div className="mt-4 p-4 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-sm">
-          {lastError}
-        </div>
-      )}
-
-      {/* Command History */}
-      <div className="mt-8">
-        <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-          <Clock className="w-5 h-5 text-slate-400" />
-          Command History
-        </h2>
-        <div className="space-y-2">
-          {(!commands || commands.length === 0) ? (
-            <p className="text-slate-500 text-sm text-center py-8">No commands sent yet</p>
-          ) : (
-            commands.map((cmd) => (
-              <div key={cmd.id} className="rounded-lg bg-slate-800/50 border border-slate-700">
-                <button
-                  onClick={() => setExpandedId(expandedId === cmd.id ? null : cmd.id)}
-                  className="w-full flex items-center justify-between p-3 text-left"
-                >
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${capabilityColor[cmd.capability] || 'bg-slate-500/20 text-slate-400'}`}>
-                      {cmd.capability}
-                    </span>
-                    <span className="text-sm text-slate-300 truncate">{cmd.message}</span>
-                  </div>
-                  <div className="flex items-center gap-3 flex-shrink-0 ml-3">
-                    <span className={`text-xs ${statusColor(cmd.status)}`}>{cmd.status}</span>
-                    <span className="text-xs text-slate-600">{new Date(cmd.created_at).toLocaleString()}</span>
-                    {expandedId === cmd.id ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
-                  </div>
-                </button>
-                {expandedId === cmd.id && cmd.result != null ? (
-                  <div className="px-3 pb-3 border-t border-slate-700/50">
-                    <pre className="text-xs text-slate-400 overflow-auto max-h-48 whitespace-pre-wrap mt-2">
-                      {JSON.stringify(cmd.result, null, 2)}
-                    </pre>
-                  </div>
-                ) : null}
+      {/* Input bar */}
+      <div className="border-t border-slate-700/50 px-6 py-3 bg-slate-900/80">
+        <div className="flex items-end gap-2">
+          {/* Capability pill */}
+          <div className="relative" ref={capPickerRef}>
+            <button
+              onClick={() => setShowCapPicker(!showCapPicker)}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium border transition-colors ${capabilityColor[capability] || capabilityColor['']}`}
+            >
+              {selectedCap.label}
+              <ChevronDown className="w-3 h-3" />
+            </button>
+            {showCapPicker && (
+              <div className="absolute bottom-full mb-2 left-0 bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-1 min-w-[160px] z-50">
+                {CAPABILITIES.map((c) => (
+                  <button
+                    key={c.value}
+                    onClick={() => {
+                      setCapability(c.value);
+                      setShowCapPicker(false);
+                    }}
+                    className={`w-full text-left px-3 py-2 text-sm transition-colors ${
+                      capability === c.value
+                        ? 'bg-slate-700 text-white'
+                        : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'
+                    }`}
+                  >
+                    <span className={`inline-block w-2 h-2 rounded-full mr-2 ${
+                      c.value === '' ? 'bg-stark-400' :
+                      c.value === 'crypto' ? 'bg-amber-400' :
+                      c.value === 'image_gen' ? 'bg-pink-400' :
+                      c.value === 'video_gen' ? 'bg-purple-400' :
+                      'bg-green-400'
+                    }`} />
+                    {c.label}
+                  </button>
+                ))}
               </div>
-            ))
-          )}
+            )}
+          </div>
+
+          {/* Text input */}
+          <textarea
+            ref={inputRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Send a command..."
+            rows={1}
+            className="flex-1 px-4 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:border-stark-500/50 resize-none text-sm leading-6 max-h-[4.5rem] overflow-y-auto"
+          />
+
+          {/* Send button */}
+          <button
+            onClick={handleSend}
+            disabled={sending || !input.trim()}
+            className="p-2.5 rounded-xl bg-stark-500 hover:bg-stark-600 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Send className="w-4 h-4" />
+          </button>
         </div>
       </div>
     </div>
