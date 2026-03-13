@@ -56,6 +56,7 @@ export default function StarflaskAgents() {
   const [addingIntegration, setAddingIntegration] = useState(false);
   const [firingHook, setFiringHook] = useState<string | null>(null);
   const [hookPayload, setHookPayload] = useState('{}');
+  const [deletingAgent, setDeletingAgent] = useState<string | null>(null);
 
   const fetchAgents = useCallback(async () => {
     setLoading(true);
@@ -135,6 +136,26 @@ export default function StarflaskAgents() {
       await apiFetch(`/starflask/reprovision/${capability}`, { method: 'POST' });
       await fetchAgents();
       if (selectedCapability === capability) loadDetail(capability, activeTab);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleDeleteAgent = async (capability: string) => {
+    if (deletingAgent !== capability) {
+      // First click — arm the button
+      setDeletingAgent(capability);
+      return;
+    }
+    // Second click — confirm delete
+    try {
+      await apiFetch(`/starflask/agents/${capability}`, { method: 'DELETE' });
+      setDeletingAgent(null);
+      if (selectedCapability === capability) {
+        setSelectedCapability(null);
+        setDetailData(null);
+      }
+      await fetchAgents();
     } catch {
       // ignore
     }
@@ -523,6 +544,18 @@ export default function StarflaskAgents() {
                   >
                     <RefreshCw className="w-3.5 h-3.5" />
                     Reprovision
+                  </button>
+                  <button
+                    onClick={() => handleDeleteAgent(selectedAgent.capability)}
+                    onBlur={() => setDeletingAgent(null)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${
+                      deletingAgent === selectedAgent.capability
+                        ? 'bg-red-600 hover:bg-red-500 text-white'
+                        : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+                    }`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    {deletingAgent === selectedAgent.capability ? 'Confirm Delete' : 'Delete'}
                   </button>
                 </div>
               </div>

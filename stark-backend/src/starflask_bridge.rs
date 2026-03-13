@@ -84,11 +84,27 @@ pub fn parse_session_result(result: &Option<Value>) -> Vec<CryptoInstruction> {
 }
 
 /// Extract URLs from free-form text by whitespace-splitting and checking for URL prefixes.
+///
+/// Handles both bare URLs and URLs wrapped in quotes (common in JSON strings).
 pub fn extract_urls_from_text(text: &str) -> Vec<String> {
     text.split_whitespace()
+        .map(|word| word.trim_start_matches(|c: char| c == '"' || c == '\'' || c == '<' || c == '[' || c == '('))
         .filter(|word| word.starts_with("http://") || word.starts_with("https://"))
-        .map(|url| url.trim_end_matches(|c: char| c == ',' || c == ')' || c == ']' || c == '>' || c == '"' || c == '\'').to_string())
+        .map(|url| url.trim_end_matches(|c: char| c == ',' || c == ')' || c == ']' || c == '>' || c == '"' || c == '\'' || c == '}' || c == '{').to_string())
         .collect()
+}
+
+/// Extract `structured_data` from a session result blob.
+///
+/// The session result is shaped like `{ summary, structured_data, iterations, actions_taken, ... }`.
+/// Returns the `structured_data` value if present and not null.
+pub fn parse_structured_data(result: &Option<Value>) -> Option<Value> {
+    let value = result.as_ref()?;
+    let sd = value.get("structured_data")?;
+    if sd.is_null() {
+        return None;
+    }
+    Some(sd.clone())
 }
 
 /// Extract media URLs from a session result (image/video generation).
@@ -161,6 +177,9 @@ pub fn parse_text_result(result: &Option<Value>) -> String {
         return text.to_string();
     }
     if let Some(text) = value.get("response").and_then(|v| v.as_str()) {
+        return text.to_string();
+    }
+    if let Some(text) = value.get("summary").and_then(|v| v.as_str()) {
         return text.to_string();
     }
 

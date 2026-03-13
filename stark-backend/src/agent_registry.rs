@@ -315,6 +315,30 @@ impl AgentRegistry {
             .and_then(|a| Uuid::parse_str(&a.agent_id).ok())
     }
 
+    /// Delete a single agent by capability (remote + local).
+    pub async fn delete_agent(&self, capability: &str) -> Result<(), String> {
+        if let Ok(Some(existing)) = self.db.get_starflask_agent(capability) {
+            if let Ok(uuid) = Uuid::parse_str(&existing.agent_id) {
+                if let Err(e) = self.starflask.delete_agent(&uuid).await {
+                    log::warn!("[AgentRegistry] Failed to delete agent on Starflask: {}", e);
+                }
+            }
+            self.db.delete_starflask_agent(capability)
+                .map_err(|e| format!("Failed to delete local agent: {}", e))?;
+
+            self.broadcaster.broadcast(GatewayEvent::new(
+                "starflask.agent_deleted",
+                serde_json::json!({
+                    "capability": capability,
+                }),
+            ));
+
+            Ok(())
+        } else {
+            Err(format!("Agent '{}' not found", capability))
+        }
+    }
+
     /// Re-provision a single capability (delete + re-create).
     pub async fn reprovision(&self, capability: &str) -> Result<Uuid, String> {
         let seed = StarflaskSeed::load().ok_or("No seed config found")?;
@@ -336,8 +360,21 @@ impl AgentRegistry {
 
         let _ = self.starflask.update_agent(&agent.id, None, Some(&agent_seed.description)).await;
 
+        let mut installed_packs = Vec::new();
         for hash in &agent_seed.pack_hashes {
-            let _ = self.starflask.install_agent_pack(&agent.id, hash).await;
+            match self.starflask.install_agent_pack(&agent.id, hash).await {
+                Ok(_) => installed_packs.push(hash.clone()),
+                Err(e) => {
+                    log::error!(
+                        "[AgentRegistry] Failed to install pack {} on '{}': {} — agent was created but is missing packs!",
+                        hash, agent_seed.name, e
+                    );
+                    return Err(format!(
+                        "Agent created (id={}) but pack install failed for hash {}: {}",
+                        agent.id, hash, e
+                    ));
+                }
+            }
         }
 
         self.db.upsert_starflask_agent(

@@ -193,12 +193,60 @@ impl CommandRouter {
     }
 
     /// Parse session result into typed output based on capability.
+    ///
+    /// Checks `structured_data` first (if the agent provided it), then falls back
+    /// to capability-specific parsing and text extraction.
     async fn parse_output(
         &self,
         capability: &str,
         result: &Option<Value>,
         result_summary: Option<&str>,
     ) -> Result<CommandOutput, String> {
+        // 1. Check structured_data first — agents that use report_result with
+        //    structured_data give us a clean, typed payload.
+        if let Some(sd) = starflask_bridge::parse_structured_data(result) {
+            match sd.get("type").and_then(|v| v.as_str()) {
+                Some("media") => {
+                    let urls = sd.get("urls")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>())
+                        .unwrap_or_default();
+                    if !urls.is_empty() {
+                        let media_type = sd.get("media_type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("image")
+                            .to_string();
+                        return Ok(CommandOutput::MediaGeneration { urls, media_type });
+                    }
+                }
+                Some("crypto") => {
+                    let instructions = sd.get("instructions")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.iter()
+                            .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                            .collect::<Vec<_>>())
+                        .unwrap_or_default();
+                    if !instructions.is_empty() {
+                        let executor = self.crypto_executor.as_ref()
+                            .ok_or("Crypto executor not available (no wallet configured)")?;
+                        let mut results = Vec::new();
+                        for instruction in instructions {
+                            match executor.execute(instruction).await {
+                                Ok(r) => results.push(r),
+                                Err(e) => results.push(ExecutionResult {
+                                    success: false,
+                                    data: serde_json::json!({ "error": e }),
+                                }),
+                            }
+                        }
+                        return Ok(CommandOutput::CryptoExecution { results });
+                    }
+                }
+                _ => {} // unknown type — fall through to legacy parsing
+            }
+        }
+
+        // 2. Capability-specific fallbacks (legacy parsing for agents without structured_data)
         match capability {
             "crypto" => {
                 let instructions = starflask_bridge::parse_session_result(result);

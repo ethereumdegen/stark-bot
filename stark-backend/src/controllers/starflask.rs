@@ -17,6 +17,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
             // ── Starkbot registry & command routing ──────────
             .route("/agents", web::get().to(list_agents))
             .route("/agents/{capability}", web::get().to(get_agent))
+            .route("/agents/{capability}", web::delete().to(delete_agent_by_capability))
             .route("/provision", web::post().to(provision))
             .route("/reprovision/{capability}", web::post().to(reprovision))
             .route("/command", web::post().to(send_command))
@@ -223,6 +224,24 @@ async fn provision(state: web::Data<AppState>, req: HttpRequest) -> HttpResponse
         "provisioned": all_synced,
         "agents": agents,
     }))
+}
+
+/// DELETE /api/starflask/agents/{capability}
+async fn delete_agent_by_capability(state: web::Data<AppState>, req: HttpRequest, path: web::Path<String>) -> HttpResponse {
+    if let Err(resp) = super::validate_session(&state, &req) { return resp; }
+
+    let guard = state.agent_registry.read().await;
+    let registry = match guard.as_ref() {
+        Some(r) => r.clone(),
+        None => return HttpResponse::ServiceUnavailable().json(json!({ "error": "Starflask not configured" })),
+    };
+    drop(guard);
+
+    let capability = path.into_inner();
+    match registry.delete_agent(&capability).await {
+        Ok(()) => HttpResponse::Ok().json(json!({ "status": "ok", "capability": capability })),
+        Err(e) => HttpResponse::BadRequest().json(json!({ "error": e })),
+    }
 }
 
 /// POST /api/starflask/reprovision/{capability}
