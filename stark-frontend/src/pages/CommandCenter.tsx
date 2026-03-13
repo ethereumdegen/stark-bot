@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { Send } from 'lucide-react';
+import { Send, ChevronDown } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useApi } from '@/hooks/useApi';
 import { useGateway } from '@/hooks/useGateway';
@@ -29,6 +29,12 @@ interface CommandOutput {
   data?: unknown;
 }
 
+interface ChatAgent {
+  capability: string;
+  name: string;
+  description: string;
+  agent_id: string;
+}
 
 function formatCommandResult(result: CommandOutput): string {
   if (result.type === 'TextResponse' && result.text) {
@@ -43,7 +49,6 @@ function formatCommandResult(result: CommandOutput): string {
 
 function commandsToMessages(commands: CommandLog[]): ChatMessage[] {
   const msgs: ChatMessage[] = [];
-  // Commands come newest-first; reverse so oldest is first
   const sorted = [...commands].reverse();
   for (const cmd of sorted) {
     msgs.push({
@@ -74,12 +79,23 @@ function commandsToMessages(commands: CommandLog[]): ChatMessage[] {
 export default function CommandCenter() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
+  const [capability, setCapability] = useState('');
   const [sending, setSending] = useState(false);
+  const [showAgentPicker, setShowAgentPicker] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const pickerRef = useRef<HTMLDivElement>(null);
 
   const { data: commands } = useApi<CommandLog[]>('/starflask/commands?limit=50');
+  const { data: chatAgents } = useApi<ChatAgent[]>('/starflask/chat_agents');
   const { on, off } = useGateway();
+
+  // Auto-select first chat agent
+  useEffect(() => {
+    if (chatAgents?.length && !capability) {
+      setCapability(chatAgents[0].capability);
+    }
+  }, [chatAgents, capability]);
 
   // Load history on mount
   useEffect(() => {
@@ -95,6 +111,17 @@ export default function CommandCenter() {
       el.scrollTop = el.scrollHeight;
     }
   }, [messages, sending]);
+
+  // Close picker on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setShowAgentPicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   // WebSocket events
   useEffect(() => {
@@ -113,9 +140,7 @@ export default function CommandCenter() {
       }
     };
 
-    const onStarted = () => {
-      // typing indicator is shown via `sending` state already
-    };
+    const onStarted = () => {};
 
     const onCompleted = (data: unknown) => {
       const d = data as { result?: CommandOutput; error?: string };
@@ -158,7 +183,6 @@ export default function CommandCenter() {
     const text = input.trim();
     if (!text) return;
 
-    // Add user message immediately
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
       role: 'user',
@@ -171,18 +195,16 @@ export default function CommandCenter() {
 
     try {
       const body: Record<string, unknown> = { message: text };
+      if (capability) body.capability = capability;
 
       const result = await apiFetch<CommandOutput>('/starflask/command', {
         method: 'POST',
         body: JSON.stringify(body),
       });
 
-      // Only add response if we didn't get it from WebSocket already
-      // Use a small delay to let WS events arrive first
       setTimeout(() => {
         setSending((current) => {
           if (current) {
-            // WS didn't deliver; use REST response
             setMessages((prev) => [
               ...prev,
               {
@@ -209,7 +231,7 @@ export default function CommandCenter() {
         },
       ]);
     }
-  }, [input]);
+  }, [input, capability]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -218,19 +240,24 @@ export default function CommandCenter() {
     }
   };
 
+  const selectedAgent = chatAgents?.find((a) => a.capability === capability);
+  const showPicker = chatAgents && chatAgents.length > 1;
+
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)]">
       {/* Header */}
       <div className="px-6 py-4 border-b border-slate-700/50">
         <h1 className="text-lg font-bold text-white">Chat</h1>
-        <p className="text-slate-500 text-xs">Chat with your Starflask orchestrator</p>
+        <p className="text-slate-500 text-xs">
+          {selectedAgent ? `Chatting with ${selectedAgent.name}` : 'Chat with your Starflask orchestrator'}
+        </p>
       </div>
 
       {/* Message area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-4 space-y-1">
         {messages.length === 0 && !sending && (
           <div className="flex items-center justify-center h-full">
-            <p className="text-slate-600 text-sm">Send a command to get started</p>
+            <p className="text-slate-600 text-sm">Send a message to get started</p>
           </div>
         )}
         {messages.map((msg) => (
@@ -247,13 +274,47 @@ export default function CommandCenter() {
       {/* Input bar */}
       <div className="border-t border-slate-700/50 px-6 py-3 bg-slate-900/80">
         <div className="flex items-end gap-2">
+          {/* Agent picker — only shown when multiple chat agents exist */}
+          {showPicker && (
+            <div className="relative" ref={pickerRef}>
+              <button
+                onClick={() => setShowAgentPicker(!showAgentPicker)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium border transition-colors bg-stark-500/20 text-stark-400 border-stark-500/30"
+              >
+                {selectedAgent?.name || 'Agent'}
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              {showAgentPicker && (
+                <div className="absolute bottom-full mb-2 left-0 bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-1 min-w-[200px] z-50">
+                  {chatAgents!.map((agent) => (
+                    <button
+                      key={agent.capability}
+                      onClick={() => {
+                        setCapability(agent.capability);
+                        setShowAgentPicker(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm transition-colors ${
+                        capability === agent.capability
+                          ? 'bg-slate-700 text-white'
+                          : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'
+                      }`}
+                    >
+                      <span className="inline-block w-2 h-2 rounded-full mr-2 bg-stark-400" />
+                      {agent.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Text input */}
           <textarea
             ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Send a command..."
+            placeholder="Send a message..."
             rows={1}
             className="flex-1 px-4 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:border-stark-500/50 resize-none text-sm leading-6 max-h-[4.5rem] overflow-y-auto"
           />

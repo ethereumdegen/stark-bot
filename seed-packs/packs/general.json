@@ -32,6 +32,10 @@
           "persona": { "name": "starkbot_general_query", "hash": "" }
         },
         {
+          "event": "chat",
+          "persona": { "name": "starkbot_general_query", "hash": "" }
+        },
+        {
           "event": "discord_mention",
           "persona": { "name": "starkbot_general_discord_mention", "hash": "" },
           "options": { "reaction_emoji": "👀" }

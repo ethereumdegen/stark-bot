@@ -69,6 +69,9 @@ pub fn config(cfg: &mut web::ServiceConfig) {
             .route("/agents/{capability}/memories", web::get().to(capability_list_memories))
             .route("/agents/{capability}/tasks", web::get().to(capability_list_tasks))
             .route("/agents/{capability}/integrations", web::get().to(capability_list_integrations))
+
+            // ── Chat agents (agents with "chat" hook) ─────────
+            .route("/chat_agents", web::get().to(list_chat_agents))
     );
 }
 
@@ -137,6 +140,43 @@ async fn list_agents(state: web::Data<AppState>, req: HttpRequest) -> HttpRespon
         Ok(agents) => HttpResponse::Ok().json(agents),
         Err(e) => HttpResponse::InternalServerError().json(json!({ "error": e })),
     }
+}
+
+/// GET /api/starflask/chat_agents — list agents that have a "chat" hook
+async fn list_chat_agents(state: web::Data<AppState>, req: HttpRequest) -> HttpResponse {
+    if let Err(resp) = super::validate_session(&state, &req) { return resp; }
+    let sf = match require_starflask(&state).await { Ok(sf) => sf, Err(resp) => return resp };
+
+    let guard = state.agent_registry.read().await;
+    let registry = match guard.as_ref() {
+        Some(r) => r,
+        None => return HttpResponse::ServiceUnavailable().json(json!({ "error": "Starflask not configured" })),
+    };
+
+    let agents = match registry.list_agents() {
+        Ok(a) => a,
+        Err(e) => return HttpResponse::InternalServerError().json(json!({ "error": e })),
+    };
+
+    let mut chat_agents = Vec::new();
+    for agent in &agents {
+        let Ok(agent_id) = uuid::Uuid::parse_str(&agent.agent_id) else { continue };
+        if let Ok(hooks_resp) = sf.get_hooks(&agent_id).await {
+            let has_chat = hooks_resp.hooks.iter().any(|h| {
+                h.get("event").and_then(|v| v.as_str()) == Some("chat")
+            });
+            if has_chat {
+                chat_agents.push(json!({
+                    "capability": &agent.capability,
+                    "name": &agent.name,
+                    "description": &agent.description,
+                    "agent_id": &agent.agent_id,
+                }));
+            }
+        }
+    }
+
+    HttpResponse::Ok().json(chat_agents)
 }
 
 /// GET /api/starflask/agents/{capability}
