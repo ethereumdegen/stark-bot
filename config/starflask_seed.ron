@@ -1,8 +1,8 @@
 StarflaskSeed(
     agents: [
         AgentSeed(capability: "crypto", name: "Starkbot Crypto Agent", description: "Crypto transaction and DeFi operations agent for Starkbot", pack_hashes: ["e5906c644b67d2133caafb7110f0fdd00a85d9b631f0bd3d9613c35075b648e6"]),
-        AgentSeed(capability: "discord_moderator", name: "Starkbot Discord Moderator", description: "Autonomous Discord community guardian for Starkbot — spam detection, 3-strike ban system, and organic engagement", pack_hashes: ["90e06eaede05efe710b62331521d9ab79731455928ce238e2453067596ea093d"]),
-        AgentSeed(capability: "general", name: "Starkbot General Assistant", description: "Central orchestrator for the Starkbot command & control center", pack_hashes: ["9a4871559d5122ec09aa526534f0b7dbab0f0628edb9b04783e756915e6d4156"]),
+        AgentSeed(capability: "discord_moderator", name: "Starkbot Discord Moderator", description: "Autonomous Discord community guardian for Starkbot — spam detection, 3-strike ban system, and organic engagement", pack_hashes: ["7712bf4dfa87f4a0340e4ae4112ce4fdbe2665ed1716532fe9a94ff06d9e8239"]),
+        AgentSeed(capability: "general", name: "Starkbot General Assistant", description: "Central orchestrator for the Starkbot command & control center", pack_hashes: ["27a8eef9844eddb5e835308bf16cbf8f0d6788117e7fafa5d03fc98afa3306d4"]),
         AgentSeed(capability: "image_gen", name: "Starkbot Image Creator", description: "AI-powered image generation agent for Starkbot", pack_hashes: ["15eeef33f9ebc63bb5a5fea9e02fb2ca0794f7c1ed1fccfb52fea163361a7368"]),
         AgentSeed(capability: "telegram_moderator", name: "Starkbot Telegram Moderator", description: "Autonomous Telegram community guardian for Starkbot — spam detection, moderation, and organic engagement", pack_hashes: ["5eb62da3052f02f0cceae5cddf45cf1bc2f42db9e301cbcfccbe1e7d5fbef0c1"]),
         AgentSeed(capability: "video_gen", name: "Starkbot Video Creator", description: "AI-powered video generation agent for Starkbot", pack_hashes: ["13cda412746a0089f4df24ea2fb3db35fbe9d1bf39b0ed29d72463a0212c727c"]),
