@@ -29,6 +29,8 @@ fn capability_from_filename(stem: &str) -> &str {
         "crypto" => "crypto",
         "image_gen" => "image_gen",
         "video_gen" => "video_gen",
+        "video_gen_ltx_t2v" => "video_gen_ltx_t2v",
+        "video_gen_ltx_i2v" => "video_gen_ltx_i2v",
         "discord_moderator" => "discord_moderator",
         "telegram_moderator" => "telegram_moderator",
         other => other,

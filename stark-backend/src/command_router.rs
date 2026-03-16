@@ -192,10 +192,10 @@ impl CommandRouter {
         ));
     }
 
-    /// Parse session result into typed output based on capability.
+    /// Parse session result into typed output.
     ///
     /// Checks `structured_data` first (if the agent provided it), then falls back
-    /// to capability-specific parsing and text extraction.
+    /// to `output_type` from the pack definition, defaulting to `"text"`.
     async fn parse_output(
         &self,
         capability: &str,
@@ -242,12 +242,20 @@ impl CommandRouter {
                         return Ok(CommandOutput::CryptoExecution { results });
                     }
                 }
-                _ => {} // unknown type — fall through to legacy parsing
+                _ => {} // unknown type — fall through
             }
         }
 
-        // 2. Capability-specific fallbacks (legacy parsing for agents without structured_data)
-        match capability {
+        // 2. Use output_type from the pack definition (defaults to "text")
+        let output_type = self.registry.get_output_type(capability);
+
+        match output_type.as_str() {
+            t if t.starts_with("media:") => {
+                let media_type = t.strip_prefix("media:").unwrap_or("image").to_string();
+                let urls = starflask_bridge::parse_media_result(result, result_summary);
+                Ok(CommandOutput::MediaGeneration { urls, media_type })
+            }
+
             "crypto" => {
                 let instructions = starflask_bridge::parse_session_result(result);
                 if instructions.is_empty() {
@@ -271,18 +279,8 @@ impl CommandRouter {
                 Ok(CommandOutput::CryptoExecution { results })
             }
 
-            "image_gen" => {
-                let urls = starflask_bridge::parse_media_result(result, result_summary);
-                Ok(CommandOutput::MediaGeneration { urls, media_type: "image".to_string() })
-            }
-
-            "video_gen" => {
-                let urls = starflask_bridge::parse_media_result(result, result_summary);
-                Ok(CommandOutput::MediaGeneration { urls, media_type: "video".to_string() })
-            }
-
+            // "text" or anything else — default to text, but still detect media URLs
             _ => {
-                // Try to detect media URLs in the result (e.g. general agent generated an image)
                 let media_urls = starflask_bridge::parse_media_result(result, result_summary);
                 if !media_urls.is_empty() {
                     return Ok(CommandOutput::MediaGeneration { urls: media_urls, media_type: "image".to_string() });
@@ -292,7 +290,6 @@ impl CommandRouter {
                 if text.is_empty() {
                     Ok(CommandOutput::Raw { data: result.clone().unwrap_or(Value::Null) })
                 } else {
-                    // Also check if the text response contains media URLs
                     let urls = starflask_bridge::extract_urls_from_text(&text);
                     let has_media_url = urls.iter().any(|u| {
                         u.contains(".jpg") || u.contains(".jpeg") || u.contains(".png")

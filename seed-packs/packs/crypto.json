@@ -18,6 +18,7 @@
     "version": "1.0.0",
     "definition": {
       "role": "crypto-agent",
+      "output_type": "crypto",
       "tool_sets": ["bash"],
       "soul": { "name": "starkbot_crypto", "hash": "" },
       "skills": [],

@@ -18,6 +18,7 @@
     "version": "1.0.0",
     "definition": {
       "role": "image-creator",
+      "output_type": "media:image",
       "tool_sets": ["fal_ai"],
       "soul": { "name": "starkbot_image_creator", "hash": "" },
       "skills": [],
