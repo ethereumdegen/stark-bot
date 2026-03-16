@@ -7,5 +7,7 @@ StarflaskSeed(
         AgentSeed(capability: "telegram_moderator", name: "Starkbot Telegram Moderator", description: "Autonomous Telegram community guardian for Starkbot — spam detection, moderation, and organic engagement", pack_hash: "5eb62da3052f02f0cceae5cddf45cf1bc2f42db9e301cbcfccbe1e7d5fbef0c1"),
         AgentSeed(capability: "stock_analyst", name: "Starkbot Stock Analyst", description: "AI-powered stock and market analysis agent for Starkbot", pack_hash: "71648583440ca67eb3e7207b6060296d58350fbe74a3fa5f1cea67fbde5ff571"),
         AgentSeed(capability: "video_gen", name: "Starkbot Video Creator", description: "AI-powered video generation agent for Starkbot", pack_hash: "febde27fccea1e9c9973abea6d4377ab186bfd9e6c5ffb5ad17cc68e608c59ee"),
+        AgentSeed(capability: "video_gen_ltx_t2v", name: "Starkbot Video Creator LTX", description: "AI-powered text-to-video generation agent for Starkbot using LTX-Video 2.3 Fast", pack_hash: "278705972bd70ec84f3755aaa38c38fe5af6118440621a6c7928d7b4cc8d4d25"),
+        AgentSeed(capability: "video_gen_ltx_i2v", name: "Starkbot Video Creator LTX I2V", description: "AI-powered image-to-video generation agent for Starkbot using LTX-Video 2.3 Fast", pack_hash: "ee58d73d171739395e47d736641b094d2b85195dea823063151aff9bc41b9276"),
     ],
 )
