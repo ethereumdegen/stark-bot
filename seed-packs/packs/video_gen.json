@@ -18,6 +18,7 @@
     "version": "1.0.0",
     "definition": {
       "role": "video-creator",
+      "output_type": "media:video",
       "tool_sets": ["fal_ai"],
       "soul": { "name": "starkbot_video_creator", "hash": "" },
       "skills": [],

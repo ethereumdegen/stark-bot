@@ -11,16 +11,15 @@
 //!   AXONIAC_API_KEY=ax_... cargo run -p seed-packs -- --only crypto   # re-provision one
 
 use axoniac::{Axoniac, ProvisionPackRequest};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct AgentSeed {
     capability: String,
     name: String,
     description: String,
-    pack_hashes: Vec<String>,
+    pack_hash: String,
 }
 
 fn capability_from_filename(stem: &str) -> &str {
@@ -29,27 +28,34 @@ fn capability_from_filename(stem: &str) -> &str {
         "crypto" => "crypto",
         "image_gen" => "image_gen",
         "video_gen" => "video_gen",
+        "video_gen_ltx_t2v" => "video_gen_ltx_t2v",
+        "video_gen_ltx_i2v" => "video_gen_ltx_i2v",
         "discord_moderator" => "discord_moderator",
         "telegram_moderator" => "telegram_moderator",
         other => other,
     }
 }
 
-fn load_existing_hashes(config_path: &Path) -> HashMap<String, Vec<String>> {
-    let mut map = HashMap::new();
+fn load_existing_entries(config_path: &Path) -> Vec<AgentSeed> {
+    let mut entries = Vec::new();
     if let Ok(content) = std::fs::read_to_string(config_path) {
         for line in content.lines() {
             let line = line.trim();
             if line.starts_with("AgentSeed(") {
                 let cap = extract_field(line, "capability");
-                let hashes = extract_hashes(line);
+                let hash = extract_field(line, "pack_hash");
                 if !cap.is_empty() {
-                    map.insert(cap, hashes);
+                    entries.push(AgentSeed {
+                        capability: cap,
+                        name: extract_field(line, "name"),
+                        description: extract_field(line, "description"),
+                        pack_hash: if hash.contains("...") { String::new() } else { hash },
+                    });
                 }
             }
         }
     }
-    map
+    entries
 }
 
 fn extract_field(line: &str, field: &str) -> String {
@@ -61,23 +67,6 @@ fn extract_field(line: &str, field: &str) -> String {
         }
     }
     String::new()
-}
-
-fn extract_hashes(line: &str) -> Vec<String> {
-    let mut hashes = Vec::new();
-    if let Some(start) = line.find("pack_hashes: [") {
-        let rest = &line[start + 14..];
-        if let Some(end) = rest.find(']') {
-            let inner = &rest[..end];
-            for part in inner.split(',') {
-                let h = part.trim().trim_matches('"').to_string();
-                if !h.is_empty() && !h.contains("...") {
-                    hashes.push(h);
-                }
-            }
-        }
-    }
-    hashes
 }
 
 fn find_packs_dir() -> PathBuf {
@@ -170,37 +159,38 @@ async fn main() {
     }
     println!();
 
-    let existing = load_existing_hashes(&config_path);
+    let existing_entries = load_existing_entries(&config_path);
+    let existing: HashMap<String, String> = existing_entries.iter()
+        .filter(|e| !e.pack_hash.is_empty())
+        .map(|e| (e.capability.clone(), e.pack_hash.clone()))
+        .collect();
 
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(&packs_dir)
+    let mut pack_files: Vec<PathBuf> = std::fs::read_dir(&packs_dir)
         .expect("Cannot read packs directory")
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| p.extension().map(|e| e == "json").unwrap_or(false))
         .collect();
-    entries.sort();
+    pack_files.sort();
 
     let mut results: Vec<AgentSeed> = Vec::new();
 
-    for path in &entries {
+    for path in &pack_files {
         let stem = path.file_stem().unwrap().to_str().unwrap();
         let capability = capability_from_filename(stem).to_string();
 
-        // --only filter
+        // --only filter: keep existing entry for non-targeted capabilities
         if let Some(ref only) = args.only {
             if &capability != only {
-                // Keep existing hash if present
-                if let Some(hashes) = existing.get(&capability) {
-                    if !hashes.is_empty() {
-                        let content = std::fs::read_to_string(path).unwrap_or_default();
-                        let pack_def: serde_json::Value = serde_json::from_str(&content).unwrap_or_default();
-                        results.push(AgentSeed {
-                            capability,
-                            name: pack_def["pack"]["name"].as_str().unwrap_or(stem).to_string(),
-                            description: pack_def["pack"]["description"].as_str().unwrap_or("").to_string(),
-                            pack_hashes: hashes.clone(),
-                        });
-                    }
+                if let Some(hash) = existing.get(&capability) {
+                    let content = std::fs::read_to_string(path).unwrap_or_default();
+                    let pack_def: serde_json::Value = serde_json::from_str(&content).unwrap_or_default();
+                    results.push(AgentSeed {
+                        capability,
+                        name: pack_def["pack"]["name"].as_str().unwrap_or(stem).to_string(),
+                        description: pack_def["pack"]["description"].as_str().unwrap_or("").to_string(),
+                        pack_hash: hash.clone(),
+                    });
                 }
                 continue;
             }
@@ -214,19 +204,17 @@ async fn main() {
         let pack_name = pack_def["pack"]["name"].as_str().unwrap_or(stem).to_string();
         let pack_desc = pack_def["pack"]["description"].as_str().unwrap_or("").to_string();
 
-        // Skip if we already have real hashes (unless --force)
+        // Skip if we already have a hash (unless --force)
         if !args.force {
-            if let Some(hashes) = existing.get(&capability) {
-                if !hashes.is_empty() {
-                    println!("[{}] SKIP — already has hash: {}", capability, hashes[0]);
-                    results.push(AgentSeed {
-                        capability,
-                        name: pack_name,
-                        description: pack_desc,
-                        pack_hashes: hashes.clone(),
-                    });
-                    continue;
-                }
+            if let Some(hash) = existing.get(&capability) {
+                println!("[{}] SKIP — already has hash: {}", capability, hash);
+                results.push(AgentSeed {
+                    capability,
+                    name: pack_name,
+                    description: pack_desc,
+                    pack_hash: hash.clone(),
+                });
+                continue;
             }
         }
 
@@ -240,7 +228,7 @@ async fn main() {
                     capability,
                     name: pack_name,
                     description: pack_desc,
-                    pack_hashes: vec![],
+                    pack_hash: String::new(),
                 });
                 continue;
             }
@@ -254,7 +242,7 @@ async fn main() {
                     capability,
                     name: pack_name,
                     description: pack_desc,
-                    pack_hashes: vec![result.content_hash],
+                    pack_hash: result.content_hash,
                 });
             }
             Err(e) => {
@@ -263,9 +251,17 @@ async fn main() {
                     capability,
                     name: pack_name,
                     description: pack_desc,
-                    pack_hashes: vec![],
+                    pack_hash: String::new(),
                 });
             }
+        }
+    }
+
+    // Preserve existing config entries that have no pack file (e.g. externally provisioned)
+    let seen: std::collections::HashSet<String> = results.iter().map(|r| r.capability.clone()).collect();
+    for entry in &existing_entries {
+        if !seen.contains(&entry.capability) && !entry.pack_hash.is_empty() {
+            results.push(entry.clone());
         }
     }
 
@@ -276,7 +272,7 @@ async fn main() {
     println!();
     println!("Hashes:");
     for r in &results {
-        let hash = r.pack_hashes.first().map(|h| h.as_str()).unwrap_or("NONE");
+        let hash = if r.pack_hash.is_empty() { "NONE" } else { &r.pack_hash };
         println!("  {} -> {}", r.capability, hash);
     }
 }
@@ -285,13 +281,12 @@ fn write_seed_config(path: &Path, agents: &[AgentSeed]) {
     let mut ron = String::from("StarflaskSeed(\n    agents: [\n");
 
     for agent in agents {
-        let hashes: Vec<String> = agent.pack_hashes.iter().map(|h| format!("\"{}\"", h)).collect();
         ron.push_str(&format!(
-            "        AgentSeed(capability: \"{}\", name: \"{}\", description: \"{}\", pack_hashes: [{}]),\n",
+            "        AgentSeed(capability: \"{}\", name: \"{}\", description: \"{}\", pack_hash: \"{}\"),\n",
             agent.capability,
             agent.name.replace('"', "\\\""),
             agent.description.replace('"', "\\\""),
-            hashes.join(", "),
+            agent.pack_hash,
         ));
     }
 

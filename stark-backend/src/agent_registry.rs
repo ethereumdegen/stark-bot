@@ -361,6 +361,20 @@ impl AgentRegistry {
         Ok(())
     }
 
+    /// Look up the `output_type` from a capability's pack definition.
+    /// Returns `"text"` if not set.
+    pub fn get_output_type(&self, capability: &str) -> String {
+        load_pack_definition(capability)
+            .and_then(|def| {
+                def.get("pack")
+                    .and_then(|p| p.get("definition"))
+                    .and_then(|d| d.get("output_type"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            })
+            .unwrap_or_else(|| "text".to_string())
+    }
+
     /// Look up agent_id for a capability.
     pub fn get_agent_id(&self, capability: &str) -> Option<Uuid> {
         self.db
