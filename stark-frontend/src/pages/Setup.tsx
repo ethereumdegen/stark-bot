@@ -32,7 +32,7 @@ export default function Setup({ initialStep = 'api_key', onComplete }: SetupProp
     try {
       await apiFetch('/keys', {
         method: 'POST',
-        body: JSON.stringify({ service_name: 'STARFLASK_API_KEY', api_key: apiKey.trim() }),
+        body: JSON.stringify({ key_name: 'STARFLASK_API_KEY', api_key: apiKey.trim() }),
       });
 
       setKeyStep('initializing');

@@ -1,11 +1,11 @@
 StarflaskSeed(
     agents: [
-        AgentSeed(capability: "crypto", name: "Starkbot Crypto Agent", description: "Crypto transaction and DeFi operations agent for Starkbot", pack_hashes: ["672c5f650c003ef35e0b0089c71d39fae24761aaa12aa378bbf5610a71603ca7"]),
-        AgentSeed(capability: "discord_moderator", name: "Starkbot Discord Moderator", description: "Autonomous Discord community guardian for Starkbot — spam detection, 3-strike ban system, and organic engagement", pack_hashes: ["7712bf4dfa87f4a0340e4ae4112ce4fdbe2665ed1716532fe9a94ff06d9e8239"]),
-        AgentSeed(capability: "general", name: "Starkbot General Assistant", description: "Central orchestrator for the Starkbot command & control center", pack_hashes: ["621fe3ceb592b4e89a6e5dce2eb18f25a14692789c5df60e6142108adb5e78e3"]),
-        AgentSeed(capability: "image_gen", name: "Starkbot Image Creator", description: "AI-powered image generation agent for Starkbot", pack_hashes: ["50e5b05bbcdcd7dad3c7b9d4e28a44dfd889a2caf0e791e055609e99dbb7d3d2"]),
-        AgentSeed(capability: "stock_analyst", name: "Starkbot Stock Analyst", description: "Stock and ETF technical analysis agent for Starkbot", pack_hashes: ["71648583440ca67eb3e7207b6060296d58350fbe74a3fa5f1cea67fbde5ff571"]),
-        AgentSeed(capability: "telegram_moderator", name: "Starkbot Telegram Moderator", description: "Autonomous Telegram community guardian for Starkbot — spam detection, moderation, and organic engagement", pack_hashes: ["5eb62da3052f02f0cceae5cddf45cf1bc2f42db9e301cbcfccbe1e7d5fbef0c1"]),
-        AgentSeed(capability: "video_gen", name: "Starkbot Video Creator", description: "AI-powered video generation agent for Starkbot", pack_hashes: ["febde27fccea1e9c9973abea6d4377ab186bfd9e6c5ffb5ad17cc68e608c59ee"]),
+        AgentSeed(capability: "crypto", name: "Starkbot Crypto Agent", description: "Crypto transaction and DeFi operations agent for Starkbot", pack_hash: "672c5f650c003ef35e0b0089c71d39fae24761aaa12aa378bbf5610a71603ca7"),
+        AgentSeed(capability: "discord_moderator", name: "Starkbot Discord Moderator", description: "Autonomous Discord community guardian for Starkbot — spam detection, 3-strike ban system, and organic engagement", pack_hash: "7712bf4dfa87f4a0340e4ae4112ce4fdbe2665ed1716532fe9a94ff06d9e8239"),
+        AgentSeed(capability: "general", name: "Starkbot General Assistant", description: "Central orchestrator for the Starkbot command & control center", pack_hash: "621fe3ceb592b4e89a6e5dce2eb18f25a14692789c5df60e6142108adb5e78e3"),
+        AgentSeed(capability: "image_gen", name: "Starkbot Image Creator", description: "AI-powered image generation agent for Starkbot", pack_hash: "50e5b05bbcdcd7dad3c7b9d4e28a44dfd889a2caf0e791e055609e99dbb7d3d2"),
+        AgentSeed(capability: "stock_analyst", name: "Starkbot Stock Analyst", description: "Stock and ETF technical analysis agent for Starkbot", pack_hash: "71648583440ca67eb3e7207b6060296d58350fbe74a3fa5f1cea67fbde5ff571"),
+        AgentSeed(capability: "telegram_moderator", name: "Starkbot Telegram Moderator", description: "Autonomous Telegram community guardian for Starkbot — spam detection, moderation, and organic engagement", pack_hash: "5eb62da3052f02f0cceae5cddf45cf1bc2f42db9e301cbcfccbe1e7d5fbef0c1"),
+        AgentSeed(capability: "video_gen", name: "Starkbot Video Creator", description: "AI-powered video generation agent for Starkbot", pack_hash: "febde27fccea1e9c9973abea6d4377ab186bfd9e6c5ffb5ad17cc68e608c59ee"),
     ],
 )

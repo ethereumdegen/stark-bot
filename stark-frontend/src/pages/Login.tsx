@@ -123,7 +123,8 @@ export default function Login() {
 
       // Store token and navigate
       localStorage.setItem('stark_token', result.token);
-      navigate('/dashboard');
+      // Full reload so App re-runs setup check with the new token
+      window.location.href = '/dashboard';
     } catch (err) {
       console.error('Login error:', err);
       if (err instanceof Error) {

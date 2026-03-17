@@ -12,7 +12,7 @@ pub struct AgentSeed {
     pub capability: String,
     pub name: String,
     pub description: String,
-    pub pack_hashes: Vec<String>,
+    pub pack_hash: String,
 }
 
 impl StarflaskSeed {

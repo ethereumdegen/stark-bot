@@ -1,5 +1,6 @@
 //! Agent registry — syncs Starflask agents and manages local capability mappings.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -47,8 +48,8 @@ impl AgentRegistry {
     }
 
     /// Sync agents from the remote Starflask account into the local DB.
-    /// Maps each remote agent to a capability based on its name/description.
-    /// If no agents exist remotely, creates a "General Assistant".
+    /// Matches remote agents to capabilities by pack hash (from seed config) first,
+    /// falling back to name-based inference for agents without a known pack.
     pub async fn sync_remote_agents(&self) -> Result<Vec<String>, String> {
         let agents = self.starflask.list_agents().await
             .map_err(|e| format!("Failed to list remote agents: {}", e))?;
@@ -74,6 +75,15 @@ impl AgentRegistry {
 
             return Ok(vec!["general".to_string()]);
         }
+
+        // Build pack_hash → capability lookup from seed config
+        let hash_to_capability: HashMap<String, String> = StarflaskSeed::load()
+            .map(|seed| {
+                seed.agents.iter()
+                    .map(|a| (a.pack_hash.clone(), a.capability.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         let mut synced = Vec::new();
         let existing = self.db.list_starflask_agents().unwrap_or_default();
@@ -107,14 +117,23 @@ impl AgentRegistry {
                 continue;
             }
 
-            // Infer capability from agent name
-            let name_lower = agent.name.to_lowercase();
-            let capability = self.infer_capability(&name_lower);
+            // Match by pack hash first, fall back to name inference
+            let capability = agent.axoniac_agent_hash.as_deref()
+                .and_then(|hash| hash_to_capability.get(hash))
+                .cloned()
+                .unwrap_or_else(|| {
+                    let name_lower = agent.name.to_lowercase();
+                    let inferred = self.infer_capability(&name_lower);
+                    log::info!(
+                        "[AgentRegistry] No pack hash match for '{}', inferred capability: {}",
+                        agent.name, inferred
+                    );
+                    inferred
+                });
 
-            // If this capability already exists with a DIFFERENT agent_id, update it
-            // rather than creating a slugged duplicate
             let description = agent.description.as_deref().unwrap_or("");
 
+            // If this capability already exists with a DIFFERENT agent_id, update it
             if let Some(existing_agent) = self.db.get_starflask_agent(&capability).ok().flatten() {
                 if existing_agent.agent_id != agent.id.to_string() {
                     log::info!(
@@ -189,9 +208,7 @@ impl AgentRegistry {
         };
 
         // Skip if seed has placeholder hashes
-        let has_real_hashes = seed.agents.iter().any(|a|
-            a.pack_hashes.iter().any(|h| !h.contains("..."))
-        );
+        let has_real_hashes = seed.agents.iter().any(|a| !a.pack_hash.contains("..."));
         if !has_real_hashes {
             log::info!("[AgentRegistry] Seed config has placeholder hashes, skipping pack provisioning");
             return Ok(vec![]);
@@ -228,15 +245,16 @@ impl AgentRegistry {
                         agent_seed.name, agent_seed.capability
                     );
                     if let Ok(agent_id) = Uuid::parse_str(&existing_agent.agent_id) {
-                        if let Err(e) = self.provision_or_install_pack(&agent_id, &agent_seed.capability, &agent_seed.pack_hashes).await {
+                        if let Err(e) = self.provision_or_install_pack(&agent_id, &agent_seed.capability, &agent_seed.pack_hash).await {
                             log::warn!("[AgentRegistry] Failed to install pack on '{}': {}", agent_seed.name, e);
                         }
                         if existing_agent.description.is_empty() {
                             let _ = self.starflask.update_agent(&agent_id, None, Some(&agent_seed.description)).await;
                         }
+                        let pack_hashes = std::slice::from_ref(&agent_seed.pack_hash);
                         let _ = self.db.upsert_starflask_agent(
                             &agent_seed.capability, &agent_id, &agent_seed.name,
-                            &agent_seed.description, &agent_seed.pack_hashes, "provisioned",
+                            &agent_seed.description, pack_hashes, "provisioned",
                         );
                         provisioned.push(agent_seed.capability.clone());
                         self.broadcaster.broadcast(GatewayEvent::new(
@@ -267,13 +285,14 @@ impl AgentRegistry {
                 log::warn!("[AgentRegistry] Failed to set description for '{}': {}", agent_seed.name, e);
             }
 
-            if let Err(e) = self.provision_or_install_pack(&agent.id, &agent_seed.capability, &agent_seed.pack_hashes).await {
+            if let Err(e) = self.provision_or_install_pack(&agent.id, &agent_seed.capability, &agent_seed.pack_hash).await {
                 log::error!("[AgentRegistry] Failed to install pack on '{}': {}", agent_seed.name, e);
             }
 
+            let pack_hashes = std::slice::from_ref(&agent_seed.pack_hash);
             if let Err(e) = self.db.upsert_starflask_agent(
                 &agent_seed.capability, &agent.id, &agent_seed.name,
-                &agent_seed.description, &agent_seed.pack_hashes, "provisioned",
+                &agent_seed.description, pack_hashes, "provisioned",
             ) {
                 log::error!("[AgentRegistry] Failed to save agent '{}' to DB: {}", agent_seed.name, e);
                 continue;
@@ -308,7 +327,7 @@ impl AgentRegistry {
         &self,
         agent_id: &Uuid,
         capability: &str,
-        pack_hashes: &[String],
+        pack_hash: &str,
     ) -> Result<(), String> {
         // Try provision_pack with full definition first
         if let Some(pack_def) = load_pack_definition(capability) {
@@ -332,14 +351,12 @@ impl AgentRegistry {
         }
 
         // Fallback: install by hash
-        for hash in pack_hashes {
-            if let Err(e) = self.starflask.install_agent_pack(agent_id, hash).await {
-                log::error!(
-                    "[AgentRegistry] install_agent_pack failed for '{}' hash {}: {}",
-                    capability, hash, e
-                );
-                return Err(format!("Pack install failed for hash {}: {}", hash, e));
-            }
+        if let Err(e) = self.starflask.install_agent_pack(agent_id, pack_hash).await {
+            log::error!(
+                "[AgentRegistry] install_agent_pack failed for '{}' hash {}: {}",
+                capability, pack_hash, e
+            );
+            return Err(format!("Pack install failed for hash {}: {}", pack_hash, e));
         }
         Ok(())
     }
@@ -406,12 +423,13 @@ impl AgentRegistry {
 
         let _ = self.starflask.update_agent(&agent.id, None, Some(&agent_seed.description)).await;
 
-        self.provision_or_install_pack(&agent.id, capability, &agent_seed.pack_hashes).await
+        self.provision_or_install_pack(&agent.id, capability, &agent_seed.pack_hash).await
             .map_err(|e| format!("Agent created (id={}) but pack install failed: {}", agent.id, e))?;
 
+        let pack_hashes = std::slice::from_ref(&agent_seed.pack_hash);
         self.db.upsert_starflask_agent(
             capability, &agent.id, &agent_seed.name,
-            &agent_seed.description, &agent_seed.pack_hashes, "provisioned",
+            &agent_seed.description, pack_hashes, "provisioned",
         )?;
 
         self.broadcaster.broadcast(GatewayEvent::new(
@@ -432,7 +450,9 @@ impl AgentRegistry {
 
     /// Infer capability from agent name.
     fn infer_capability(&self, name_lower: &str) -> String {
-        if name_lower.contains("crypto") || name_lower.contains("wallet") || name_lower.contains("swap") {
+        if name_lower.contains("stock") || name_lower.contains("analyst") || name_lower.contains("market") {
+            "stock_analyst".to_string()
+        } else if name_lower.contains("crypto") || name_lower.contains("wallet") || name_lower.contains("swap") {
             "crypto".to_string()
         } else if name_lower.contains("image") || name_lower.contains("art") || name_lower.contains("picture") {
             "image_gen".to_string()
