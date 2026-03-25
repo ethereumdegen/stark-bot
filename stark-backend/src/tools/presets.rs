@@ -55,6 +55,7 @@ pub struct Web3Preset {
     #[serde(default)]
     pub contracts: HashMap<String, String>,
     /// Register key to read contract address from (for dynamic contracts like any ERC20)
+    #[serde(default)]
     pub contract_register: Option<String>,
     /// Function name to call
     pub function: String,
@@ -62,6 +63,7 @@ pub struct Web3Preset {
     #[serde(default)]
     pub params_registers: Vec<String>,
     /// Register key for ETH value (for payable functions)
+    #[serde(default)]
     pub value_register: Option<String>,
     /// Static params (not from registers)
     #[serde(default)]
@@ -71,6 +73,7 @@ pub struct Web3Preset {
     pub params_registers_after_static: Vec<String>,
     pub description: String,
     /// If set, auto-format raw uint return values using decimals from this register (e.g. "token_address_decimals")
+    #[serde(default)]
     pub format_decimals_register: Option<String>,
 }
 
@@ -385,6 +388,8 @@ pub fn load_all_skill_presets_from_db(db: &crate::db::Database) {
             }
             if total > 0 {
                 log::info!("[presets] Loaded {} skill web3 presets from database", total);
+            } else {
+                log::warn!("[presets] No skill web3 presets loaded from database (0 parsed successfully)");
             }
         }
         Err(e) => log::error!("[presets] Failed to load skill presets from database: {}", e),
