@@ -368,16 +368,19 @@ pub fn get_explorer_url(network: &str) -> String {
 /// Called at startup after skill loading.
 pub fn load_all_skill_presets_from_db(db: &crate::db::Database) {
     match db.get_all_skill_presets() {
-        Ok(presets) => {
+        Ok(preset_rows) => {
+            log::info!("[presets] Found {} skill preset rows in database", preset_rows.len());
             let mut total = 0;
-            for preset_row in presets {
+            for preset_row in preset_rows {
                 let presets: HashMap<String, Web3Preset> = match ron::from_str(&preset_row.content) {
                     Ok(p) => p,
                     Err(e) => {
-                        log::error!("[presets] Failed to parse skill presets for skill_id={}: {}", preset_row.skill_id, e);
+                        log::error!("[presets] Failed to parse skill presets for skill_id={}: {} | content preview: {:.120}", preset_row.skill_id, e, preset_row.content);
                         continue;
                     }
                 };
+                let names: Vec<&str> = presets.keys().map(|s| s.as_str()).collect();
+                log::info!("[presets] Parsed {} presets from skill_id={}: {:?}", presets.len(), preset_row.skill_id, names);
                 let count = presets.len();
                 if let Ok(mut store) = skill_web3_presets().lock() {
                     for (name, preset) in presets {
@@ -387,9 +390,13 @@ pub fn load_all_skill_presets_from_db(db: &crate::db::Database) {
                 total += count;
             }
             if total > 0 {
-                log::info!("[presets] Loaded {} skill web3 presets from database", total);
+                // Log the final merged set of preset names
+                if let Ok(store) = skill_web3_presets().lock() {
+                    let all_names: Vec<&str> = store.keys().map(|s| s.as_str()).collect();
+                    log::info!("[presets] Loaded {} skill web3 presets from database: {:?}", total, all_names);
+                }
             } else {
-                log::warn!("[presets] No skill web3 presets loaded from database (0 parsed successfully)");
+                log::warn!("[presets] No skill web3 presets loaded from database (0 parsed successfully out of {} rows)", 0);
             }
         }
         Err(e) => log::error!("[presets] Failed to load skill presets from database: {}", e),

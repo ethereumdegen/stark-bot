@@ -943,10 +943,10 @@ async fn install_hyperpacks(
 
 /// Re-sync skills from disk after hyperpacks have been installed.
 async fn sync_skills(skill_registry: &std::sync::Arc<skills::SkillRegistry>) {
-    log::info!("[Hyperpacks] Re-syncing skills from disk");
-    match skill_registry.sync_to_db().await {
-        Ok(count) => log::info!("[Hyperpacks] Synced {} skills from disk", count),
-        Err(e) => log::error!("[Hyperpacks] Failed to sync skills: {}", e),
+    log::info!("[Hyperpacks] Re-syncing skills from disk (full reload with preset/ABI refresh)");
+    match skill_registry.reload().await {
+        Ok(count) => log::info!("[Hyperpacks] Reloaded {} skills (presets + ABIs refreshed)", count),
+        Err(e) => log::error!("[Hyperpacks] Failed to reload skills: {}", e),
     }
 }
 
@@ -1610,38 +1610,59 @@ async fn main() -> std::io::Result<()> {
     let wallet_provider: Option<Arc<dyn wallet::WalletProvider>> = if is_flash_mode {
         // Flash mode - wallet managed by Privy via Flash control plane
         // BURNER_WALLET_BOT_PRIVATE_KEY is ignored in this mode
+        // Retry with exponential backoff since the control plane may not be ready at boot
         log::info!("Flash mode: initializing FlashWalletProvider (Privy embedded wallet)...");
-        match wallet::FlashWalletProvider::new().await {
-            Ok(provider) => {
-                // Extract and save agent_preset before the Arc cast erases the concrete type
-                if let Some(preset_json) = provider.agent_preset().cloned() {
-                    match models::bot_config::AgentPreset::save_from_json(&preset_json) {
-                        Ok(()) => log::info!("Saved agent_preset.ron from control plane"),
-                        Err(e) => log::warn!("Failed to save agent_preset: {}", e),
-                    }
-
-                    // Fetch hyperpacks API key from flash control plane and inject into preset
-                    match provider.fetch_hyperpacks_api_key().await {
-                        Ok(key) => {
-                            if let Some(mut preset) = models::bot_config::AgentPreset::load() {
-                                preset.api_key = Some(key);
-                                match preset.save() {
-                                    Ok(()) => log::info!("Injected hyperpacks API key into agent_preset.ron"),
-                                    Err(e) => log::warn!("Failed to save API key to agent_preset: {}", e),
-                                }
-                            }
-                        }
-                        Err(e) => log::warn!("Could not fetch hyperpacks API key: {}", e),
+        const FLASH_INIT_MAX_RETRIES: u32 = 4;
+        const FLASH_INIT_BACKOFF_SECS: u64 = 2;
+        let mut flash_provider = None;
+        let mut last_err = String::new();
+        for attempt in 1..=FLASH_INIT_MAX_RETRIES {
+            match wallet::FlashWalletProvider::new().await {
+                Ok(provider) => {
+                    flash_provider = Some(provider);
+                    break;
+                }
+                Err(e) => {
+                    last_err = e.to_string();
+                    if attempt < FLASH_INIT_MAX_RETRIES {
+                        let delay = FLASH_INIT_BACKOFF_SECS * (1 << (attempt - 1));
+                        log::warn!(
+                            "Flash wallet init attempt {}/{} failed: {} — retrying in {}s",
+                            attempt, FLASH_INIT_MAX_RETRIES, last_err, delay
+                        );
+                        tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
                     }
                 }
-                log::info!("Flash wallet provider initialized: {} (mode: {})",
-                    provider.get_address(), provider.mode_name());
-                Some(Arc::new(provider) as Arc<dyn wallet::WalletProvider>)
             }
-            Err(e) => {
-                log::error!("Failed to create Flash wallet provider: {}", e);
-                None
+        }
+        if let Some(provider) = flash_provider {
+            // Extract and save agent_preset before the Arc cast erases the concrete type
+            if let Some(preset_json) = provider.agent_preset().cloned() {
+                match models::bot_config::AgentPreset::save_from_json(&preset_json) {
+                    Ok(()) => log::info!("Saved agent_preset.ron from control plane"),
+                    Err(e) => log::warn!("Failed to save agent_preset: {}", e),
+                }
+
+                // Fetch hyperpacks API key from flash control plane and inject into preset
+                match provider.fetch_hyperpacks_api_key().await {
+                    Ok(key) => {
+                        if let Some(mut preset) = models::bot_config::AgentPreset::load() {
+                            preset.api_key = Some(key);
+                            match preset.save() {
+                                Ok(()) => log::info!("Injected hyperpacks API key into agent_preset.ron"),
+                                Err(e) => log::warn!("Failed to save API key to agent_preset: {}", e),
+                            }
+                        }
+                    }
+                    Err(e) => log::warn!("Could not fetch hyperpacks API key: {}", e),
+                }
             }
+            log::info!("Flash wallet provider initialized: {} (mode: {})",
+                provider.get_address(), provider.mode_name());
+            Some(Arc::new(provider) as Arc<dyn wallet::WalletProvider>)
+        } else {
+            log::error!("Failed to create Flash wallet provider after {} attempts: {}", FLASH_INIT_MAX_RETRIES, last_err);
+            None
         }
     } else if let Some(ref pk) = config.burner_wallet_private_key {
         // Standard mode - use raw private key from environment

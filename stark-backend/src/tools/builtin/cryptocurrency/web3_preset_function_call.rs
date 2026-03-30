@@ -116,10 +116,15 @@ impl Tool for Web3PresetFunctionCallTool {
         let preset = match get_web3_preset(&params.preset) {
             Some(p) => p,
             None => {
-                let available = list_web3_presets().join(", ");
+                let available = list_web3_presets();
+                let available_str = if available.is_empty() {
+                    "(none loaded — skill presets may not have been synced yet)".to_string()
+                } else {
+                    available.join(", ")
+                };
                 return ToolResult::error(format!(
                     "Unknown preset '{}'. Available: {}",
-                    params.preset, available
+                    params.preset, available_str
                 ));
             }
         };
